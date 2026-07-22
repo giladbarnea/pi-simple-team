@@ -81,7 +81,7 @@ Note::this step is relatively smelly. It works, but making bash commands and par
 pi --list-models <model-pattern>
 ```
 
-These checks run concurrently. They answer whether each model pattern resolves <!-- resolves as in 100% match? pick a more specific word --> to at least one model available under the user's current Pi configuration and authentication.
+These checks run concurrently. They answer whether each model pattern matches at least one model available under the user's current Pi configuration and authentication. The match may be fuzzy and may return multiple models; it is not necessarily an exact model-ID match. Note::this should be fixed to strict exact match in a future iteration. No guesswork.
 
 These checks do **not** determine which thinking levels the resolved model supports. `--list-models` exposes only whether the model supports thinking at all.
 
@@ -162,7 +162,7 @@ It records the teammate's `spawn` log entry and parent-owned `idle / Spawned` st
 
 The current implementation stores and logs the **requested** thinking level. It does not ask the child which level Pi actually selected after clamping.
 
-`startTeammate()` then returns the `TeammateState` synchronously. There is no startup-ready RPC handshake, so the parent can finish `team_spawn` while a child is still completing Pi initialization. <!-- are you pointing out a potential flaw in the architecture, or a strength? --> this The process exists and its stdin can buffer subsequent RPC commands, but successful OS process creation is not proof that child initialization has completed.
+`startTeammate()` then returns the `TeammateState` synchronously. There is no startup-ready RPC handshake, so the parent can finish `team_spawn` while a child is still completing Pi initialization. This is a limitation: `accepted` confirms process creation, not successful child initialization. The process exists and its stdin can buffer subsequent RPC commands, so normal delivery can still work, but buffering does not make the spawn result authoritative.
 
 ### Step 9: `team_spawn` returns acceptance to the main agent
 
