@@ -367,11 +367,11 @@ function startTeammate(team: TeamState, teammateSpec: TeammateSpec, participants
 		stdio: ["pipe", "pipe", "pipe"],
 		env: {
 			...process.env,
-			PI_TEAM_LITE_CHILD: "1",
-			PI_TEAM_LITE_CALLBACK_URL: callbackUrl,
-			PI_TEAM_LITE_CALLBACK_TOKEN: callbackToken,
-			PI_TEAM_LITE_TEAM: team.name,
-			PI_TEAM_LITE_MEMBER: teammateName,
+			PI_SIMPLE_TEAM_CHILD: "1",
+			PI_SIMPLE_TEAM_CALLBACK_URL: callbackUrl,
+			PI_SIMPLE_TEAM_CALLBACK_TOKEN: callbackToken,
+			PI_SIMPLE_TEAM_TEAM: team.name,
+			PI_SIMPLE_TEAM_MEMBER: teammateName,
 		},
 	});
 

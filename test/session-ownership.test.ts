@@ -119,13 +119,13 @@ if (process.argv[2] === "--list-models") {
 
 setTimeout(() => {
 	const body = JSON.stringify({
-		token: process.env.PI_TEAM_LITE_CALLBACK_TOKEN,
-		team: process.env.PI_TEAM_LITE_TEAM,
-		from: process.env.PI_TEAM_LITE_MEMBER,
+		token: process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN,
+		team: process.env.PI_SIMPLE_TEAM_TEAM,
+		from: process.env.PI_SIMPLE_TEAM_MEMBER,
 		tool: "teammain",
 		args: { message: "callback ownership test" },
 	});
-	const request = http.request(process.env.PI_TEAM_LITE_CALLBACK_URL, {
+	const request = http.request(process.env.PI_SIMPLE_TEAM_CALLBACK_URL, {
 		method: "POST",
 		headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) },
 	}, (response) => response.resume());

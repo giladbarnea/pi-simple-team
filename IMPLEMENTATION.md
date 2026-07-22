@@ -17,7 +17,7 @@ The biggest practical finding was that teammate model names should be explicit p
 
 Current persistence behavior uses Pi's default session storage for teammate child processes. The extension does not set a custom session directory or session name, so teammate sessions land wherever normal Pi sessions for that working directory land and can be named by the user's existing auto-session naming extension.
 
-Child processes now load normal extension discovery. `pi-simple-team` marks them with `PI_TEAM_LITE_CHILD=1`, so the same extension registers only the child callback tools (`teamsend`, `teammain`, `teamstatus`) inside teammate processes instead of recursively exposing the parent orchestration tools.
+Child processes now load normal extension discovery. `pi-simple-team` marks them with `PI_SIMPLE_TEAM_CHILD=1`, so the same extension registers only the child callback tools (`teamsend`, `teammain`, `teamstatus`) inside teammate processes instead of recursively exposing the parent orchestration tools.
 
 ## Rendering
 

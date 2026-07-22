@@ -18,15 +18,15 @@ function requiredEnvironmentVariable(name: string): string {
 
 function readRequiredChildRuntimeConfig(): ChildRuntimeConfig {
 	return {
-		callbackUrl: requiredEnvironmentVariable("PI_TEAM_LITE_CALLBACK_URL"),
-		callbackToken: requiredEnvironmentVariable("PI_TEAM_LITE_CALLBACK_TOKEN"),
-		teamName: requiredEnvironmentVariable("PI_TEAM_LITE_TEAM"),
-		teammateName: requiredEnvironmentVariable("PI_TEAM_LITE_MEMBER"),
+		callbackUrl: requiredEnvironmentVariable("PI_SIMPLE_TEAM_CALLBACK_URL"),
+		callbackToken: requiredEnvironmentVariable("PI_SIMPLE_TEAM_CALLBACK_TOKEN"),
+		teamName: requiredEnvironmentVariable("PI_SIMPLE_TEAM_TEAM"),
+		teammateName: requiredEnvironmentVariable("PI_SIMPLE_TEAM_MEMBER"),
 	};
 }
 
 export function readChildRuntimeConfig(): ChildRuntimeConfig | undefined {
-	if (process.env.PI_TEAM_LITE_CHILD !== "1") return undefined;
+	if (process.env.PI_SIMPLE_TEAM_CHILD !== "1") return undefined;
 	return readRequiredChildRuntimeConfig();
 }
 
