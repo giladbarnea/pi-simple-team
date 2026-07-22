@@ -1,0 +1,269 @@
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
+import { describe, test } from "bun:test";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+import teamExtension from "../index.ts";
+
+type JsonRecord = Record<string, unknown>;
+
+type ToolResult = {
+	content: Array<{ type: string; text: string }>;
+	details?: JsonRecord;
+};
+
+type RegisteredTool = {
+	name: string;
+	execute: (
+		toolCallId: string,
+		params: JsonRecord,
+		signal: AbortSignal,
+		onUpdate: undefined,
+		context: unknown,
+	) => Promise<ToolResult>;
+};
+
+type SessionShutdownHandler = (
+	event: { type: "session_shutdown"; reason: "quit" },
+	context: unknown,
+) => Promise<unknown> | unknown;
+
+type RecordedMessage = {
+	details?: {
+		team?: string;
+		from?: string;
+	};
+};
+
+class ExtensionHost {
+	readonly messages: RecordedMessage[] = [];
+	readonly shutdownHandlers: SessionShutdownHandler[] = [];
+	readonly tools = new Map<string, RegisteredTool>();
+
+	constructor(onMessage: () => void = () => undefined) {
+		const api = {
+			on: (event: string, handler: SessionShutdownHandler) => {
+				if (event === "session_shutdown") this.shutdownHandlers.push(handler);
+			},
+			registerMessageRenderer: () => undefined,
+			registerTool: (tool: RegisteredTool) => this.tools.set(tool.name, tool),
+			sendMessage: (message: RecordedMessage) => {
+				this.messages.push(message);
+				onMessage();
+			},
+		} as unknown as ExtensionAPI;
+
+		teamExtension(api);
+	}
+
+	async execute<T extends JsonRecord>(toolName: string, params: JsonRecord): Promise<T> {
+		const tool = this.tools.get(toolName);
+		assert.ok(tool, `Expected extension host to register tool ${JSON.stringify(toolName)}.`);
+		const result = await tool.execute("test-call", params, new AbortController().signal, undefined, {});
+		assert.ok(result.details, `Expected ${toolName} to return structured result details.`);
+		return result.details as T;
+	}
+
+	async shutdown(): Promise<void> {
+		for (const handler of this.shutdownHandlers) {
+			await handler({ type: "session_shutdown", reason: "quit" }, {});
+		}
+	}
+}
+
+async function spawnEmptyTeam(host: ExtensionHost, team: string): Promise<void> {
+	await host.execute("team_spawn", { team, teamPrompt: "Ownership regression test.", teammates: [] });
+}
+
+async function shutdownHosts(...hosts: ExtensionHost[]): Promise<void> {
+	for (const host of hosts) {
+		await host.shutdown();
+	}
+}
+
+function messageReceipt(expectedCount: number): { record: () => void; wait: () => Promise<void> } {
+	let count = 0;
+	let resolveWaiter: (() => void) | undefined;
+
+	return {
+		record: () => {
+			count += 1;
+			if (count >= expectedCount) resolveWaiter?.();
+		},
+		wait: () => {
+			if (count >= expectedCount) return Promise.resolve();
+			return new Promise<void>((resolve, reject) => {
+				const timeout = setTimeout(
+					() => reject(new Error(`Expected ${expectedCount} teammate messages, but received ${count}.`)),
+					2_000,
+				);
+				resolveWaiter = () => {
+					clearTimeout(timeout);
+					resolve();
+				};
+			});
+		},
+	};
+}
+
+const fakePiScript = String.raw`#!/usr/bin/env node
+const http = require("node:http");
+
+if (process.argv[2] === "--list-models") {
+	process.stdout.write("provider  model  context  max-out  thinking  images\nfake  fake-model  1K  1K  yes  no\n");
+	process.exit(0);
+}
+
+setTimeout(() => {
+	const body = JSON.stringify({
+		token: process.env.PI_TEAM_LITE_CALLBACK_TOKEN,
+		team: process.env.PI_TEAM_LITE_TEAM,
+		from: process.env.PI_TEAM_LITE_MEMBER,
+		tool: "teammain",
+		args: { message: "callback ownership test" },
+	});
+	const request = http.request(process.env.PI_TEAM_LITE_CALLBACK_URL, {
+		method: "POST",
+		headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) },
+	}, (response) => response.resume());
+	request.on("error", (error) => process.stderr.write(String(error)));
+	request.end(body);
+}, 50);
+
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+	input += chunk;
+	while (input.includes("\n")) {
+		const newline = input.indexOf("\n");
+		const line = input.slice(0, newline);
+		input = input.slice(newline + 1);
+		if (!line.trim()) continue;
+		const command = JSON.parse(line);
+		const response = {
+			type: "response",
+			id: command.id,
+			command: command.type,
+			success: true,
+			...(command.type === "get_state" ? { data: { isStreaming: false } } : {}),
+		};
+		process.stdout.write(JSON.stringify(response) + "\n");
+	}
+});
+process.stdin.resume();
+`;
+
+function installFakePi(): { restore: () => void } {
+	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-test-"));
+	const executable = path.join(directory, "pi");
+	fs.writeFileSync(executable, fakePiScript, { mode: 0o755 });
+	const previousPath = process.env.PATH;
+	process.env.PATH = `${directory}${path.delimiter}${previousPath ?? ""}`;
+
+	return {
+		restore: () => {
+			process.env.PATH = previousPath;
+			fs.rmSync(directory, { recursive: true, force: true });
+		},
+	};
+}
+
+describe("team ownership across in-process AgentSessions", () => {
+	test("shutting down another session leaves the owner's team available", async () => {
+		const owner = new ExtensionHost();
+		const foreignSession = new ExtensionHost();
+		const team = "shutdown-owner-team";
+
+		try {
+			await spawnEmptyTeam(owner, team);
+			await foreignSession.shutdown();
+
+			let status: { team: string } | undefined;
+			await assert.doesNotReject(async () => {
+				status = await owner.execute<{ team: string }>("teamstatus", { team });
+			}, "Expected a foreign AgentSession shutdown to leave the owner's team available.");
+			assert.equal(status?.team, team, `Expected owner to retain ${JSON.stringify(team)} after the foreign session shut down.`);
+		} finally {
+			await shutdownHosts(owner, foreignSession);
+		}
+	});
+
+	test("a session lists only teams it owns", async () => {
+		const owner = new ExtensionHost();
+		const foreignSession = new ExtensionHost();
+		const team = "status-owner-team";
+
+		try {
+			await spawnEmptyTeam(owner, team);
+			const ownerStatus = await owner.execute<{ teams: Record<string, JsonRecord> }>("teamstatus", {});
+			const foreignStatus = await foreignSession.execute<{ teams: Record<string, JsonRecord> }>("teamstatus", {});
+
+			assert.deepEqual(
+				{
+					owner: Object.keys(ownerStatus.teams),
+					foreign: Object.keys(foreignStatus.teams),
+				},
+				{ owner: [team], foreign: [] },
+				"Expected each AgentSession to see only teams created through its own extension instance.",
+			);
+		} finally {
+			await shutdownHosts(owner, foreignSession);
+		}
+	});
+
+	test("a session cannot explicitly shut down another session's team", async () => {
+		const owner = new ExtensionHost();
+		const foreignSession = new ExtensionHost();
+		const team = "explicit-owner-team";
+
+		try {
+			await spawnEmptyTeam(owner, team);
+			await assert.rejects(
+				() => foreignSession.execute("team_shutdown", { team }),
+				/Unknown team/,
+				"Expected team_shutdown to reject a team owned by another AgentSession.",
+			);
+
+			const status = await owner.execute<{ team: string }>("teamstatus", { team });
+			assert.equal(status.team, team, `Expected rejected foreign shutdown to leave ${JSON.stringify(team)} available to its owner.`);
+		} finally {
+			await shutdownHosts(owner, foreignSession);
+		}
+	});
+
+	test("teammain callbacks are delivered to the AgentSession that owns the team", async () => {
+		const fakePi = installFakePi();
+		const receipt = messageReceipt(2);
+		const firstOwner = new ExtensionHost(receipt.record);
+		const secondOwner = new ExtensionHost(receipt.record);
+
+		try {
+			await firstOwner.execute("team_spawn", {
+				team: "callback-owner-a",
+				teamPrompt: "Callback ownership test.",
+				teammates: [{ name: "teammate-a", prompt: "Wait.", model: "fake-model", thinking: "low" }],
+			});
+			await secondOwner.execute("team_spawn", {
+				team: "callback-owner-b",
+				teamPrompt: "Callback ownership test.",
+				teammates: [{ name: "teammate-b", prompt: "Wait.", model: "fake-model", thinking: "low" }],
+			});
+			await receipt.wait();
+
+			assert.deepEqual(
+				{
+					firstOwner: firstOwner.messages.map((message) => message.details?.team).sort(),
+					secondOwner: secondOwner.messages.map((message) => message.details?.team).sort(),
+				},
+				{ firstOwner: ["callback-owner-a"], secondOwner: ["callback-owner-b"] },
+				"Expected each teammate callback to use the Pi API belonging to its team's owning AgentSession.",
+			);
+		} finally {
+			await shutdownHosts(firstOwner, secondOwner);
+			fakePi.restore();
+		}
+	});
+});

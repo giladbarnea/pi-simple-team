@@ -1,0 +1,43 @@
+{
+  "name": "@giladbarnea/pi-simple-team",
+  "version": "1.0.0",
+  "description": "A flat, live team of Pi agents.",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-agent",
+    "pi-coding-agent",
+    "team",
+    "multi-agent"
+  ],
+  "author": "Gilad Barnea",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/giladbarnea/pi-simple-team.git"
+  },
+  "homepage": "https://github.com/giladbarnea/pi-simple-team",
+  "bugs": {
+    "url": "https://github.com/giladbarnea/pi-simple-team/issues"
+  },
+  "files": [
+    "*.ts",
+    "render-support",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
