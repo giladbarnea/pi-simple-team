@@ -1,0 +1,67 @@
+name: Publish
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Prepare patch release
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch origin main --tags
+          git checkout -B main origin/main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          package_name="$(node -p "require('./package.json').name")"
+          local_version="$(node -p "require('./package.json').version")"
+          published_version="$(npm view "$package_name" version)"
+          next_version="$(node -e 'const [major, minor, patch] = process.argv[1].split(".").map(Number); console.log(`${major}.${minor}.${patch + 1}`)' "$published_version")"
+
+          case "$local_version" in
+            "$published_version")
+              npm version patch -m "Release %s [skip ci]"
+              release_version="$(node -p "require('./package.json').version")"
+              git push origin HEAD:main --follow-tags
+              ;;
+            "$next_version")
+              release_version="$local_version"
+              git rev-parse "v$release_version" >/dev/null 2>&1 || git tag -a "v$release_version" -m "Release $release_version"
+              git push origin "v$release_version"
+              ;;
+            *)
+              echo "Expected repository version $published_version or $next_version, found $local_version." >&2
+              exit 1
+              ;;
+          esac
+
+          echo "version=$release_version" >> "$GITHUB_OUTPUT"
+
+      - name: Publish ${{ steps.release.outputs.version }}
+        run: npm publish

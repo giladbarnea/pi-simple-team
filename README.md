@@ -1,10 +1,10 @@
 # pi-simple-team
 
-> The team extension with no features.
+> **The team extension with no features.**
 
 No roles. No org chart. No mailboxes. No routing rules.
 
-`pi-simple-team` spawns a flat team of Pi agents that can all talk to each other, **and then stays out of the way.**
+`pi-simple-team` spawns a flat team of Pi agents that can all talk to each other, like the responsible adults they are, **and then stays out of the way.**
 
 ## Why
 
@@ -20,9 +20,13 @@ That's the whole design. Not a swarm, not a company. *A room.*
 
 ## The mechanics
 
-The team is *live*.
+The team is *live*, *dynamic*, and *scales* in proportion to the task's complexity.
 
-Teammates react to each other, know what everyone else is on, and take the shape of the task — because no shape is imposed on them.
+It doesn't force itself into a pre-existing box. It maps itself to the shape of the problem space.
+
+Teammates react to each other, know what everyone else is on, and take the shape of the problem space — because no shape is imposed on them.
+
+![A live team status map above its timestamped event log](screenshots/2.png)
 
 #### Push, not pull.
 
@@ -44,6 +48,8 @@ Teammates publish a one-liner — "done, awaiting review". Your main agent reads
 #### Work in the open.
 
 Every team action lands in a timestamped, filterable log. Main agent reads it to catch up rather than calling a status meeting.
+
+![Spawning a designer–adversary team, checking its status, and sending both teammates a shared instruction](screenshots/1.png)
 
 #### Teams shaped by the task.
 

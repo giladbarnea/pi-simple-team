@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+remote_name="${1:-origin}"
+pushes_main=false
+
+while read -r _local_ref _local_oid remote_ref _remote_oid; do
+  if [[ "$remote_ref" == "refs/heads/main" ]]; then
+    pushes_main=true
+  fi
+done
+
+$pushes_main || exit 0
+
+git fetch --quiet "$remote_name" main
+
+if git merge-base --is-ancestor "$remote_name/main" HEAD; then
+  exit 0
+fi
+
+cat >&2 <<EOF
+main has advanced on $remote_name, usually because the release workflow bumped the version.
+
+Run:
+  git pull --rebase $remote_name main
+
+Then push again.
+EOF
+exit 1
