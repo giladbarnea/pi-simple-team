@@ -98,19 +98,16 @@ pi install npm:@giladbarnea/pi-simple-team
 ## Tools
 <!-- Honestly I'm not sure this section deserves its place. It's a rather sharp turn from the rest of the doc to implementation details. -->
 
-Kept it to a minimum:
+Kept minimal:
 
-#### Main agent
-
-Team lifecycle: `team_spawn` and `team_shutdown`.
-With team: `teamsend`.
-On team: `teamstatus` and `teamlog`.
-
-#### Teammates
-
-With teammates: `teamsend`.
-With main: `teammain`.
-With everyone: `teamstatus`.
+| Role           | For            | Tools                         |
+| -------------- | -------------- | ----------------------------- |
+| **Main agent** | Team lifecycle | `team_spawn`, `team_shutdown` |
+|                | With team      | `teamsend`                    |
+|                | On team        | `teamstatus`, `teamlog`       |
+| **Teammates**  | With teammates | `teamsend`                    |
+|                | With main      | `teammain`                    |
+|                | With everyone  | `teamstatus`                  |
 
 ---
 
@@ -119,6 +116,6 @@ With everyone: `teamstatus`.
 ### User involvement track
 
 Slash commands:
-- [ ] Fancy control panel.
-- [ ] Joining and steering teams.
-- [ ] Spawning teams directly.
+- [ ] 💠 Live control panel.
+- [ ] 👋 Joining and steering teams.
+- [ ] 🪄 Spawning teams directly.
