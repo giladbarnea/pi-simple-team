@@ -38,10 +38,10 @@ Ask your main agent for a team.
 **You:** "Create an implementer–reviewer team to complete `PLAN.md`."  
 **Main:** "Created the pair. They'll work through it together; they'll let me know when they're done."
 
-**Chase a bug across boundaries.**
+**Follow the breach wherever it leads.**
 
-**You:** "Find why checkout sometimes charges a customer twice. Trace it end to end."  
-**Main:** "Created a debugging team. They'll trade findings and redirect each other until one explanation fits every layer."
+**You:** "Find how the model got into our systems and trace everything it touched."  
+**Main:** "Created an eight-agent incident team. They're tracing the intrusion from different angles, sharing each new lead as it surfaces. The net will tighten around the model and stretch to the edges of the blast radius."
 
 <br>
 
@@ -73,11 +73,11 @@ Your main agent calls `teamstatus` and understands exactly what's going on witho
 
 ### Interrupts, when the situation calls for it.
 
-_Team is retiring an old production stack._
+_Team has finished a production hotfix and started to wrap up._
 
-- Traffic scout discovers the "legacy" load balancer still serves 18% of requests.
-- Infrastructure teammate sets status: "Destroying old stack."
-- Scout interrupts them. Customers stay online. Pager stays quiet.
+- Security scout spots a private SSH key not covered by `.gitignore`.
+- At the same time, Release teammate sets status: "Ran `git add .`, preparing commit and push."
+- Scout immediately interrupts them. Key never leaves the machine. Developer keeps their job.
 
 ### Complete observability by design.
 
