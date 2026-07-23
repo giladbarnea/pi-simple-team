@@ -36,12 +36,12 @@ Ask your main agent for a team.
 **Throw a team at something important.**
 
 **You:** "Create an implementer–reviewer team to complete `PLAN.md`."  
-**Main:** "Created the pair. They'll work through it together; They'll let me know when they're done."
+**Main:** "Created the pair. They'll work through it together; they'll let me know when they're done."
 
-**Map the unknown together.**
-<!-- The particular business is too specific (custom insoles...). Let's make it more typical developer day-to-day pain. -->
-**You:** "Find how to double retention among custom-insole customers who started physical therapy. The database is unmapped."  
-**Main:** "Created a discovery team. They'll trade clues and redirect each other as the map emerges."
+**Chase a bug across boundaries.**
+
+**You:** "Find why checkout sometimes charges a customer twice. Trace it end to end."  
+**Main:** "Created a debugging team. They'll trade findings and redirect each other until one explanation fits every layer."
 
 <br>
 
@@ -58,7 +58,7 @@ Ask your main agent for a team.
 
 _{screenshot of Codex filling up the entire visible chat with countless `Waiting agents to finish...`}_
 
-### Messages land like the ones you send your own agent:   <!--sentence too long, twisty structure-->
+### Messages arrive without breaking stride.
 
 - ⚡ Sub-second, when the recipient is idle.
 - 🏎️ The moment the current bout of work ends, when busy.
@@ -73,12 +73,11 @@ Your main agent calls `teamstatus` and understands exactly what's going on witho
 
 ### Interrupts, when the situation calls for it.
 
-<!-- I want to replace the subject of this section to something that isn't an implementer-reviewer, which has been used a few times already. But i need it to preserve the punchiness, high stakes, "phew, just in time" factor, and tone. -->
-_Team has finished implementing and have started to wrap up._
+_Team is retiring an old production stack._
 
-- Live reviewer spots a private SSH key not covered by .gitignore.
-- Implementer's sets status: "Preparing commit message".
-- Reviewer immediately interrupts Implementer. Key never left the machine. Developer keeps their job.
+- Traffic scout discovers the "legacy" load balancer still serves 18% of requests.
+- Infrastructure teammate sets status: "Destroying old stack."
+- Scout interrupts them. Customers stay online. Pager stays quiet.
 
 ### Complete observability by design.
 
