@@ -1,21 +1,21 @@
-
+<div align="center">
 
 # pi-simple-team
 
 > **The team extension with no features.**
 
-[pi extension](https://github.com/earendil-works/pi)
-[npm version](https://www.npmjs.com/package/@giladbarnea/pi-simple-team)
-[tests](https://github.com/giladbarnea/pi-simple-team/actions/workflows/test.yml)
-[license](LICENSE)
-[TypeScript](https://www.typescriptlang.org/)
-[tested with Bun](https://bun.sh/)
+[![pi extension](https://img.shields.io/badge/pi-extension-blueviolet)](https://github.com/earendil-works/pi)
+[![npm version](https://img.shields.io/npm/v/%40giladbarnea%2Fpi-simple-team?logo=npm)](https://www.npmjs.com/package/@giladbarnea/pi-simple-team)
+[![tests](https://img.shields.io/github/actions/workflow/status/giladbarnea/pi-simple-team/test.yml?branch=main&label=tests&logo=github)](https://github.com/giladbarnea/pi-simple-team/actions/workflows/test.yml)
+[![license](https://img.shields.io/github/license/giladbarnea/pi-simple-team)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![tested with Bun](https://img.shields.io/badge/tested_with-Bun-14151A?logo=bun&logoColor=white)](https://bun.sh/)
 
 **No roles. No org chart. No mailboxes. No routing rules.**
 
 `pi-simple-team` spawns a flat team of Pi agents that can all talk to each other, like the responsible adults they are, **and then stays out of the way.**
 
-
+</div>
 
 ---
 
@@ -43,14 +43,13 @@ Ask your main agent for a team.
 **Follow the breach wherever it leads.**
 
 **You:** "Find how the model got into our systems and trace everything it touched."  
-**Main:** "Created an eight-agent incident team. They're tracing the intrusion from different angles, sharing each new lead as it surfaces. The net will tighten around the model and take the shape of the blast radius."
+**Main:** "Created an eight-agent incident team. They're tracing the intrusion from different angles, sharing new leads as they surface. The net will tighten around the model and take the shape of the blast radius."
 
-  
+<br>
 
+![Spawning a designer–adversary team, checking its status, and sending both teammates a shared instruction](screenshots/1.png)
 
-Spawning a designer–adversary team, checking its status, and sending both teammates a shared instruction
-
-`pi-simple-team` *in the TUI.*
+<div align="center"><em><code>pi-simple-team</code> in the TUI.</em></div>
 
 ## The mechanics
 
@@ -97,10 +96,10 @@ Main can filter and page that shared timeline on demand.
 
 Useful for tracing a failure *across* teammates—without asking anyone to reconstruct it from memory.
 
-  
+<br>
 
-
-A live team status map above its timestamped event log
+![A live team status map above its timestamped event log](screenshots/2.png)
+<div align="center"><em>Visual representation of the team log.</em></div>
 
 ## Install
 
@@ -111,7 +110,6 @@ pi install npm:@giladbarnea/pi-simple-team
 
 
 ## Tools
-
 
 
 Kept minimal:
