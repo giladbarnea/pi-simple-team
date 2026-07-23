@@ -108,6 +108,7 @@ export const GLYPHS = {
 		prompt: "π",
 		ellipsis: "…",
 		arrow: "→",
+		chevron: "❯",
 		codeBar: "▌",
 	},
 	ascii: {
@@ -124,6 +125,7 @@ export const GLYPHS = {
 		prompt: "pi",
 		ellipsis: "...",
 		arrow: "->",
+		chevron: ">",
 		codeBar: "|",
 	},
 } as const;

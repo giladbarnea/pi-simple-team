@@ -4,9 +4,9 @@ import { stripAnsi } from "../render-support/ansi.ts";
 import { glyphs } from "../render-support/glyphs.ts";
 import {
 	TeamLines,
+	actorHueToken,
 	allTeamsStatusLines,
 	formatCharCount,
-	kindMark,
 	renderTeamMessage,
 	renderTeamToolResult,
 	statusWordToken,
@@ -166,75 +166,192 @@ describe("teamShutdownLines", () => {
 	});
 });
 
-describe("kindMark", () => {
-	test("maps event kinds to glyph and token", () => {
-		expect(kindMark(logEntry({ kind: "spawn" }))).toEqual({ glyph: g.diamond, token: "accent" });
-		expect(kindMark(logEntry({ kind: "error" }))).toEqual({ glyph: g.fail, token: "error" });
-		expect(kindMark(logEntry({ kind: "tool_end" }))).toEqual({ glyph: g.ok, token: "muted" });
+describe("actorHueToken", () => {
+	test("main is accent; teammates cycle hue tokens by roster order", () => {
+		expect(actorHueToken("main", ["a", "b"])).toBe("accent");
+		expect(actorHueToken("a", ["a", "b", "c", "d"])).toBe("mdCode");
+		expect(actorHueToken("b", ["a", "b", "c", "d"])).toBe("customMessageLabel");
+		expect(actorHueToken("c", ["a", "b", "c", "d"])).toBe("mdHeading");
+		expect(actorHueToken("d", ["a", "b", "c", "d"])).toBe("mdCode");
 	});
 
-	test("marks a failed tool_end as an error", () => {
-		expect(kindMark(logEntry({ kind: "tool_end", details: { isError: true } }))).toEqual({ glyph: g.fail, token: "error" });
+	test("actors outside the roster fall back to plain text", () => {
+		expect(actorHueToken("ghost", ["a"])).toBe("text");
 	});
 });
 
 describe("teamLogLines", () => {
-	test("renders header counts, filter stats, rows, and a cursor footer", () => {
-		const entries = [
-			logEntry({ sequence: 180, kind: "tool_start", summary: "reviewer started teamstatus: {...}", details: { toolName: "teamstatus", args: { word: "working" } } }),
-			logEntry({ sequence: 181, kind: "status", summary: "working Writing findings" }),
-		];
-		const lines = teamLogLines(identityTheme, {
+	const T = 1_784_000_000_000;
+
+	function logView(entries: TeamLogEntry[], overrides: Record<string, unknown> = {}) {
+		return {
 			team: "demo-team",
+			roster: ["implementer", "reviewer"],
 			entries,
-			totalMatched: 7,
-			returned: 2,
-			nextCursor: "before:180",
-			filters: { kind: "tool_start" },
-		});
+			totalMatched: entries.length,
+			returned: entries.length,
+			...overrides,
+		};
+	}
+
+	function toolPair(isError: boolean, resultText: string): TeamLogEntry[] {
+		return [
+			logEntry({ sequence: 10, kind: "tool_start", teammate: "implementer", epochMilliseconds: T, details: { toolCallId: "c1", toolName: "bash", args: { command: "ls -la" } } }),
+			logEntry({
+				sequence: 11,
+				kind: "tool_end",
+				teammate: "implementer",
+				epochMilliseconds: T + 1000,
+				details: { toolCallId: "c1", toolName: "bash", isError, result: { content: [{ type: "text", text: resultText }] } },
+			}),
+		];
+	}
+
+	test("folds a tool pair into one action row with duration and salient arg", () => {
+		const lines = teamLogLines(identityTheme, logView(toolPair(false, "total 0")));
+		expect(lines).toHaveLength(2);
+		expect(lines[0]).toContain("1 action");
+		expect(lines[0]).toContain("2 events");
+		expect(lines[1]).toContain("#10");
+		expect(lines[1]).toContain("bash");
+		expect(lines[1]).toContain("1s");
+		expect(lines[1]).toContain("ls -la");
+		expect(lines[1]).not.toContain("total 0");
+	});
+
+	test("a successful tool colors the chevron with the success token", () => {
+		const lines = teamLogLines(taggingTheme, logView(toolPair(false, "total 0")));
+		expect(lines[1]).toContain(`«success:${g.chevron}`);
+	});
+
+	test("a failed tool colors the chevron red and leads details with the exit code", () => {
+		const lines = teamLogLines(taggingTheme, logView(toolPair(true, "boom\nExit code: 1")));
+		expect(lines[1]).toContain(`«error:${g.chevron}`);
+		expect(lines[1]).toContain("«error:1»");
+		expect(lines[1]).toContain("1s");
+		expect(lines[1]).toContain("ls -la");
+	});
+
+	test("a failure without an exit code falls back to the first result line", () => {
+		const lines = teamLogLines(taggingTheme, logView(toolPair(true, "command not found\nmore context")));
+		expect(lines[1]).toContain("«error:command not found»");
+	});
+
+	test("an unfinished tool stays neutral with an ellipsis in the duration slot", () => {
+		const entries = [logEntry({ sequence: 10, kind: "tool_start", teammate: "implementer", epochMilliseconds: T, details: { toolCallId: "c1", toolName: "bash", args: { command: "sleep 60" } } })];
+		const lines = teamLogLines(taggingTheme, logView(entries));
+		expect(lines[1]).toContain(`«borderMuted:${g.chevron}`);
+		expect(lines[1]).toContain(g.ellipsis);
+	});
+
+	test("groups consecutive send frames by sender and message into one message row", () => {
+		const entries = [
+			logEntry({ sequence: 20, kind: "send", teammate: "implementer", summary: "please review", details: { from: "main", to: "implementer" } }),
+			logEntry({ sequence: 21, kind: "send", teammate: "reviewer", summary: "please review", details: { from: "main", to: "reviewer" } }),
+		];
+		const lines = teamLogLines(identityTheme, logView(entries));
+		expect(lines).toHaveLength(2);
+		expect(lines[0]).toContain("1 action");
+		expect(lines[0]).toContain("2 events");
+		expect(lines[1]).toContain("main");
+		expect(lines[1]).toContain("message");
+		expect(lines[1]).toContain("implementer, reviewer");
+		expect(lines[1]).toContain("please review");
+	});
+
+	test("recipients keep their owner's hue inside details", () => {
+		const entries = [
+			logEntry({ sequence: 20, kind: "send", teammate: "implementer", summary: "please review", details: { from: "main", to: "implementer" } }),
+			logEntry({ sequence: 21, kind: "send", teammate: "reviewer", summary: "please review", details: { from: "main", to: "reviewer" } }),
+		];
+		const lines = teamLogLines(taggingTheme, logView(entries));
+		expect(lines[1]).toContain("«accent:main");
+		expect(lines[1]).toContain("«mdCode:implementer»");
+		expect(lines[1]).toContain("«customMessageLabel:reviewer»");
+	});
+
+	test("deliver and ack frames never render in the collapsed view", () => {
+		const entries = [
+			logEntry({ sequence: 20, kind: "send", teammate: "reviewer", summary: "go", details: { from: "main", to: "reviewer" } }),
+			logEntry({ sequence: 21, kind: "deliver", teammate: "reviewer", summary: "go", details: { from: "main", to: "reviewer" } }),
+			logEntry({ sequence: 22, kind: "ack", teammate: "reviewer", summary: "prompt accepted" }),
+		];
+		const lines = teamLogLines(identityTheme, logView(entries));
+		expect(lines).toHaveLength(2);
+		expect(lines[0]).toContain("1 action");
+		expect(lines[0]).toContain("3 events");
+		expect(lines[1]).not.toContain("deliver");
+		expect(lines[1]).not.toContain("prompt accepted");
+	});
+
+	test("interrupt sends carry a warning chip", () => {
+		const entries = [logEntry({ sequence: 20, kind: "send", teammate: "reviewer", summary: "stop", details: { from: "main", to: "reviewer", interrupt: true } })];
+		const lines = teamLogLines(taggingTheme, logView(entries));
+		expect(lines[1]).toContain("«warning:interrupt»");
+	});
+
+	test("a teammain report renders as a message to main", () => {
+		const entries = [logEntry({ sequence: 30, kind: "main_message", teammate: "implementer", summary: "all gates green" })];
+		const lines = teamLogLines(taggingTheme, logView(entries));
+		expect(lines[1]).toContain("message");
+		expect(lines[1]).toContain("«accent:main»");
+		expect(lines[1]).toContain("all gates green");
+	});
+
+	test("status rows quote word and phrase from details", () => {
+		const entries = [logEntry({ sequence: 40, kind: "status", teammate: "reviewer", details: { word: "reporting", phrase: "Writing findings" } })];
+		const lines = teamLogLines(identityTheme, logView(entries));
+		expect(lines[1]).toContain("status");
+		expect(lines[1]).toContain("reporting");
+		expect(lines[1]).toContain("Writing findings");
+	});
+
+	test("a turn opens with an ellipsis and closes in place with duration and message count", () => {
+		const openOnly = teamLogLines(identityTheme, logView([logEntry({ sequence: 50, kind: "agent_start", teammate: "reviewer", epochMilliseconds: T })]));
+		expect(openOnly[1]).toContain("turn");
+		expect(openOnly[1]).toContain(g.ellipsis);
+
+		const closed = teamLogLines(
+			identityTheme,
+			logView([
+				logEntry({ sequence: 50, kind: "agent_start", teammate: "reviewer", epochMilliseconds: T }),
+				logEntry({ sequence: 58, kind: "agent_end", teammate: "reviewer", epochMilliseconds: T + 41_000, details: { messageCount: 14 } }),
+			]),
+		);
+		expect(closed).toHaveLength(2);
+		expect(closed[1]).toContain("41s");
+		expect(closed[1]).toContain("14 messages");
+		expect(closed[1]).not.toContain(g.ellipsis);
+	});
+
+	test("spawn rows carry model and thinking from details", () => {
+		const entries = [logEntry({ sequence: 1, kind: "spawn", teammate: "reviewer", details: { model: "claude-bridge/claude-fable-5", thinking: "xhigh" } })];
+		const lines = teamLogLines(identityTheme, logView(entries));
+		expect(lines[1]).toContain("spawn");
+		expect(lines[1]).toContain("claude-bridge/claude-fable-5");
+		expect(lines[1]).toContain("xhigh");
+	});
+
+	test("a repeated actor dims", () => {
+		const entries = [
+			logEntry({ sequence: 60, kind: "status", teammate: "reviewer", details: { word: "working", phrase: "a" } }),
+			logEntry({ sequence: 61, kind: "status", teammate: "reviewer", details: { word: "working", phrase: "b" } }),
+		];
+		const lines = teamLogLines(identityTheme, logView(entries));
+		expect(lines[1]).not.toContain("\x1b[2m");
+		expect(lines[2]).toContain("\x1b[2m");
+	});
+
+	test("header shows action and event counts, humanizes since, and keeps the cursor footer", () => {
+		const since = new Date(T).toISOString();
+		const entries = [logEntry({ sequence: 70, kind: "status", teammate: "reviewer", details: { word: "working", phrase: "" } })];
+		const lines = teamLogLines(identityTheme, logView(entries, { totalMatched: 7, nextCursor: "before:70", filters: { kind: "status", since } }));
 		expect(lines[0]).toContain("Team Log demo-team");
-		expect(lines[0]).toContain("2 of 7 events");
-		expect(lines[0]).toContain("kind=tool_start");
-		expect(lines[1]).toContain("#180");
-		expect(lines[1]).toContain(timeOfDay(entries[0]!.epochMilliseconds));
-		expect(lines[3]).toContain('cursor "before:180"');
-	});
-
-	test("tool rows show the tool name and payload instead of the spoken summary", () => {
-		const lines = teamLogLines(identityTheme, {
-			team: "demo-team",
-			entries: [logEntry({ kind: "tool_start", summary: "reviewer started teamstatus: {...}", details: { toolName: "teamstatus", args: { word: "working" } } })],
-			totalMatched: 1,
-			returned: 1,
-		});
-		expect(lines[1]).toContain('teamstatus {"word":"working"}');
-		expect(lines[1]).not.toContain("started");
-	});
-
-	test("tool_end rows preview the result content text", () => {
-		const lines = teamLogLines(identityTheme, {
-			team: "demo-team",
-			entries: [
-				logEntry({
-					kind: "tool_end",
-					summary: "reviewer finished teamsend: {...}",
-					details: { toolName: "teamsend", result: { content: [{ type: "text", text: '{\n  "accepted": true\n}' }] } },
-				}),
-			],
-			totalMatched: 1,
-			returned: 1,
-		});
-		expect(lines[1]).toContain('teamsend { "accepted": true }');
-	});
-
-	test("send rows name the sender before the message preview", () => {
-		const lines = teamLogLines(identityTheme, {
-			team: "demo-team",
-			entries: [logEntry({ kind: "send", teammate: "implementer", summary: "please review", details: { from: "main", to: "implementer" } })],
-			totalMatched: 1,
-			returned: 1,
-		});
-		expect(lines[1]).toContain(`main ${g.arrow} please review`);
+		expect(lines[0]).toContain("1 action");
+		expect(lines[0]).toContain("1 of 7 events");
+		expect(lines[0]).toContain("kind=status");
+		expect(lines[0]).toContain(`since ${timeOfDay(T)}`);
+		expect(lines.at(-1)).toContain('cursor "before:70"');
 	});
 
 	test("renders an empty state row when nothing matched", () => {

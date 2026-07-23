@@ -191,6 +191,9 @@ export function renderTeamLogPage(view: TeamLogPageView): string {
 	return [header, columnHeader, ...rows, footer].join("\n");
 }
 
+/** Child team tools always emit a semantic entry (send/main_message/status), so their tool frames would be pure triplication. */
+const TEAM_CHILD_TOOLS = new Set(["teamsend", "teammain", "teamstatus"]);
+
 export function normalizeChildEvent(team: string, teammate: string, event: Record<string, unknown>): TeamLogEntryInput | undefined {
 	const type = event.type;
 
@@ -202,11 +205,12 @@ export function normalizeChildEvent(team: string, teammate: string, event: Recor
 		const messages = event.messages;
 		const messageCount = Array.isArray(messages) ? messages.length : undefined;
 		const summary = messageCount === undefined ? `${teammate} finished` : `${teammate} finished (${messageCount} message${messageCount === 1 ? "" : "s"})`;
-		return { team, teammate, direction: "runtime", kind: "agent_end", summary };
+		return { team, teammate, direction: "runtime", kind: "agent_end", summary, details: messageCount === undefined ? undefined : { messageCount } };
 	}
 
 	if (type === "tool_execution_start") {
 		const toolName = String(event.toolName ?? "tool");
+		if (TEAM_CHILD_TOOLS.has(toolName)) return undefined;
 		return {
 			team,
 			teammate,
@@ -219,6 +223,7 @@ export function normalizeChildEvent(team: string, teammate: string, event: Recor
 
 	if (type === "tool_execution_end") {
 		const toolName = String(event.toolName ?? "tool");
+		if (TEAM_CHILD_TOOLS.has(toolName)) return undefined;
 		const isError = Boolean(event.isError);
 		return {
 			team,

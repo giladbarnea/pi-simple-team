@@ -2,9 +2,9 @@ import { Markdown, type MarkdownTheme, truncateToWidth, wrapTextWithAnsi } from 
 
 import { padVisible, stableRenderWidth, visibleLength } from "./render-support/ansi.ts";
 import { glyphs } from "./render-support/glyphs.ts";
-import { stackPrefix, toolLabel, treeConnector, treeStem } from "./render-support/theme.ts";
-import { plural, renderPendingCall, textContent } from "./render-support/text.ts";
-import { timeOfDay, type TeamLogEntry, type TeamLogKind } from "./teamlog.ts";
+import { stackPrefix, toolLabel, treeConnector, treeGlyph, treeStem } from "./render-support/theme.ts";
+import { commandExit, plural, renderPendingCall, textContent } from "./render-support/text.ts";
+import { timeOfDay, type TeamLogEntry } from "./teamlog.ts";
 
 export interface ThemeLike {
 	bold(text: string): string;
@@ -38,6 +38,7 @@ export interface TeamMessageDetails {
 
 interface TeamLogRenderView {
 	team: string;
+	roster?: string[];
 	entries: TeamLogEntry[];
 	totalMatched: number;
 	returned: number;
@@ -227,38 +228,39 @@ export function teamShutdownLines(theme: ThemeLike, team: string, teammates: str
 	return [header, `${treeConnector(theme, "└")}${theme.fg("muted", teammates.join(glyphs().dot))}`];
 }
 
-type KindMarkName = "arrow" | "bullet" | "diamond" | "emptyBullet" | "fail" | "ok" | "warn";
+const TEAMMATE_HUE_TOKENS = ["mdCode", "customMessageLabel", "mdHeading"] as const;
 
-const KIND_MARK_SPECS: Record<TeamLogKind, { mark: KindMarkName; token: string }> = {
-	spawn: { mark: "diamond", token: "accent" },
-	send: { mark: "arrow", token: "accent" },
-	deliver: { mark: "arrow", token: "muted" },
-	ack: { mark: "ok", token: "dim" },
-	status: { mark: "emptyBullet", token: "muted" },
-	agent_start: { mark: "bullet", token: "success" },
-	agent_end: { mark: "emptyBullet", token: "muted" },
-	tool_start: { mark: "emptyBullet", token: "dim" },
-	tool_end: { mark: "ok", token: "muted" },
-	main_message: { mark: "arrow", token: "success" },
-	stderr: { mark: "warn", token: "warning" },
-	exit: { mark: "warn", token: "warning" },
-	error: { mark: "fail", token: "error" },
-};
+/**
+ * actorHueToken("main", ["scout"]) === "accent"; actorHueToken("scout", ["scout"]) === "mdCode"
+ */
+export function actorHueToken(name: string, roster: string[]): string {
+	if (name === "main") return "accent";
+	const index = roster.indexOf(name);
+	return index === -1 ? "text" : TEAMMATE_HUE_TOKENS[index % TEAMMATE_HUE_TOKENS.length]!;
+}
 
-export function kindMark(entry: Pick<TeamLogEntry, "kind" | "details">): { glyph: string; token: string } {
-	const failedToolEnd = entry.kind === "tool_end" && Boolean(entry.details?.isError);
-	const spec = failedToolEnd ? { mark: "fail" as const, token: "error" } : KIND_MARK_SPECS[entry.kind];
-	const g = glyphs();
-	const marks: Record<KindMarkName, string> = {
-		arrow: g.arrow,
-		bullet: g.bullet.trim(),
-		diamond: g.diamond,
-		emptyBullet: g.emptyBullet.trim(),
-		fail: g.fail,
-		ok: g.ok,
-		warn: g.warn,
-	};
-	return { glyph: marks[spec.mark], token: spec.token };
+const DIM_SGR_OPEN = "\x1b[2m";
+const DIM_SGR_CLOSE = "\x1b[22m";
+
+type LogIcon = "chevron" | "arrow" | "bullet" | "diamond" | "warn" | "fail";
+
+type LogDetail =
+	| { style: "text"; text: string }
+	| { style: "actors"; names: string[] }
+	| { style: "loud"; token: string; text: string };
+
+interface LogAction {
+	sequence: number;
+	epochMilliseconds: number;
+	who: string;
+	icon: LogIcon;
+	iconToken: string;
+	action: string;
+	details: LogDetail[];
+	startEpoch?: number;
+	salient?: string;
+	recipients?: string[];
+	messageText?: string;
 }
 
 function inlineText(value: unknown): string {
@@ -266,55 +268,237 @@ function inlineText(value: unknown): string {
 	return text.replace(/\s+/g, " ").trim();
 }
 
-function toolResultText(result: unknown): string {
+function rawResultText(result: unknown): string {
 	const content = (result as { content?: Array<{ type?: string; text?: string }> } | undefined)?.content;
 	const textPart = content?.find((part) => part?.type === "text" && typeof part.text === "string");
-	return inlineText(textPart?.text ?? result);
+	if (typeof textPart?.text === "string") return textPart.text;
+	return typeof result === "string" ? result : (JSON.stringify(result) ?? String(result));
 }
 
-function entrySummary(theme: ThemeLike, entry: TeamLogEntry): string {
-	const details = entry.details ?? {};
-	if (entry.kind === "tool_start") return `${String(details.toolName ?? "tool")} ${theme.fg("dim", inlineText(details.args))}`;
-	if (entry.kind === "tool_end") {
-		const token = details.isError ? "error" : "dim";
-		return `${String(details.toolName ?? "tool")} ${theme.fg(token, toolResultText(details.result))}`;
+function salientArg(args: unknown): string {
+	if (args && typeof args === "object" && !Array.isArray(args)) {
+		for (const value of Object.values(args)) {
+			if (typeof value === "string" && value.trim()) return inlineText(value);
+		}
 	}
-	if ((entry.kind === "send" || entry.kind === "deliver") && typeof details.from === "string") {
-		return `${theme.fg("dim", `${details.from} ${glyphs().arrow} `)}${entry.summary}`;
+	return inlineText(args);
+}
+
+function failureReason(result: unknown): string {
+	const raw = rawResultText(result);
+	const exitCode = commandExit(raw);
+	if (exitCode !== null) return String(exitCode);
+	const firstLine = raw.split(/\r?\n/).find((line) => line.trim());
+	return firstLine?.trim() || "failed";
+}
+
+function textDetail(text: string): LogDetail {
+	return { style: "text", text };
+}
+
+function messageDetails(recipients: string[], text: string, interrupt: boolean): LogDetail[] {
+	const details: LogDetail[] = [{ style: "actors", names: recipients }];
+	if (interrupt) details.push({ style: "loud", token: "warning", text: "interrupt" });
+	details.push(textDetail(text));
+	return details;
+}
+
+function durationText(startEpoch: number | undefined, endEpoch: number): string {
+	if (startEpoch === undefined) return "";
+	return `${Math.max(0, Math.round((endEpoch - startEpoch) / 1000))}s`;
+}
+
+/** Folds wire entries into one row per action: tool pairs close in place, sends group by sender+message, deliver/ack are absorbed. */
+export function foldLogEntries(entries: TeamLogEntry[]): LogAction[] {
+	const ellipsis = glyphs().ellipsis;
+	const actions: LogAction[] = [];
+	const openTools = new Map<unknown, LogAction>();
+	const openTurns = new Map<string, LogAction>();
+
+	for (const entry of entries) {
+		const details = entry.details ?? {};
+		const who = entry.teammate ?? "main";
+		const base = { sequence: entry.sequence, epochMilliseconds: entry.epochMilliseconds, who };
+
+		if (entry.kind === "tool_start") {
+			const salient = salientArg(details.args);
+			const action: LogAction = {
+				...base,
+				icon: "chevron",
+				iconToken: "borderMuted",
+				action: String(details.toolName ?? "tool"),
+				details: [textDetail(ellipsis), textDetail(salient)],
+				startEpoch: entry.epochMilliseconds,
+				salient,
+			};
+			actions.push(action);
+			if (details.toolCallId !== undefined) openTools.set(details.toolCallId, action);
+			continue;
+		}
+		if (entry.kind === "tool_end") {
+			const isError = Boolean(details.isError);
+			const open = details.toolCallId === undefined ? undefined : openTools.get(details.toolCallId);
+			if (open) {
+				openTools.delete(details.toolCallId);
+				open.iconToken = isError ? "error" : "success";
+				const closing = [textDetail(durationText(open.startEpoch, entry.epochMilliseconds)), textDetail(open.salient ?? "")];
+				open.details = isError ? [{ style: "loud", token: "error", text: failureReason(details.result) }, ...closing] : closing;
+				continue;
+			}
+			actions.push({
+				...base,
+				icon: "chevron",
+				iconToken: isError ? "error" : "success",
+				action: String(details.toolName ?? "tool"),
+				details: isError ? [{ style: "loud", token: "error", text: failureReason(details.result) }] : [textDetail(inlineText(rawResultText(details.result)))],
+			});
+			continue;
+		}
+		if (entry.kind === "send") {
+			const from = typeof details.from === "string" ? details.from : who;
+			const to = String(details.to ?? "");
+			const interrupt = Boolean(details.interrupt);
+			const last = actions.at(-1);
+			if (last?.action === "message" && last.who === from && last.messageText === entry.summary && last.recipients && !last.recipients.includes(to)) {
+				last.recipients.push(to);
+				last.details = messageDetails(last.recipients, entry.summary, interrupt);
+				continue;
+			}
+			actions.push({
+				...base,
+				who: from,
+				icon: "arrow",
+				iconToken: "borderMuted",
+				action: "message",
+				recipients: [to],
+				messageText: entry.summary,
+				details: messageDetails([to], entry.summary, interrupt),
+			});
+			continue;
+		}
+		if (entry.kind === "deliver" || entry.kind === "ack") continue;
+		if (entry.kind === "main_message") {
+			actions.push({ ...base, icon: "arrow", iconToken: "borderMuted", action: "message", details: messageDetails(["main"], entry.summary, false) });
+			continue;
+		}
+		if (entry.kind === "status") {
+			const word = typeof details.word === "string" ? details.word : "";
+			const phrase = typeof details.phrase === "string" ? details.phrase : "";
+			actions.push({ ...base, icon: "bullet", iconToken: "borderMuted", action: "status", details: [textDetail(word), textDetail(phrase)] });
+			continue;
+		}
+		if (entry.kind === "agent_start") {
+			const action: LogAction = { ...base, icon: "diamond", iconToken: "borderMuted", action: "turn", details: [textDetail(ellipsis)], startEpoch: entry.epochMilliseconds };
+			actions.push(action);
+			openTurns.set(who, action);
+			continue;
+		}
+		if (entry.kind === "agent_end") {
+			const messageCount = typeof details.messageCount === "number" ? details.messageCount : undefined;
+			const countDetails = messageCount === undefined ? [] : [textDetail(plural(messageCount, "message"))];
+			const open = openTurns.get(who);
+			if (open) {
+				openTurns.delete(who);
+				open.details = [textDetail(durationText(open.startEpoch, entry.epochMilliseconds)), ...countDetails];
+				continue;
+			}
+			actions.push({ ...base, icon: "diamond", iconToken: "borderMuted", action: "turn", details: countDetails });
+			continue;
+		}
+		if (entry.kind === "spawn") {
+			actions.push({
+				...base,
+				icon: "diamond",
+				iconToken: "borderMuted",
+				action: "spawn",
+				details: [textDetail(typeof details.model === "string" ? details.model : ""), textDetail(typeof details.thinking === "string" ? details.thinking : "")],
+			});
+			continue;
+		}
+		if (entry.kind === "stderr" || entry.kind === "exit") {
+			actions.push({ ...base, icon: "warn", iconToken: "warning", action: entry.kind, details: [textDetail(entry.summary)] });
+			continue;
+		}
+		actions.push({ ...base, icon: "fail", iconToken: "error", action: "error", details: [{ style: "loud", token: "error", text: entry.summary }] });
 	}
-	if (entry.kind === "error") return theme.fg("error", entry.summary);
-	if (entry.kind === "stderr") return theme.fg("warning", entry.summary);
-	return entry.summary;
+	return actions;
+}
+
+function logIconGlyph(icon: LogIcon): string {
+	const g = glyphs();
+	const map: Record<LogIcon, string> = {
+		chevron: g.chevron,
+		arrow: g.arrow,
+		bullet: g.bullet.trim(),
+		diamond: g.diamond,
+		warn: g.warn,
+		fail: g.fail,
+	};
+	return map[icon];
+}
+
+function renderLogDetail(theme: ThemeLike, detail: LogDetail, roster: string[]): string {
+	if (detail.style === "text") return theme.fg("muted", detail.text);
+	if (detail.style === "actors") return detail.names.map((name) => theme.fg(actorHueToken(name, roster), name)).join(theme.fg("muted", ", "));
+	return theme.fg(detail.token, detail.text);
+}
+
+function logChrome(theme: ThemeLike, branch: "├" | "└", sequence: number, seqWidth: number, epochMilliseconds: number): string {
+	return theme.fg("borderMuted", `${treeGlyph(branch)}${padVisible(`#${sequence}`, seqWidth)} ${timeOfDay(epochMilliseconds)}`);
+}
+
+function actionRows(theme: ThemeLike, actions: LogAction[], roster: string[], hasFooter: boolean): string[] {
+	const g = glyphs();
+	const seqWidth = Math.max(...actions.map((action) => `#${action.sequence}`.length));
+	const whoWidth = Math.max(...actions.map((action) => action.who.length));
+	const actionWidth = Math.max(...actions.map((action) => action.action.length));
+	const iconWidth = Math.max(...actions.map((action) => visibleLength(logIconGlyph(action.icon))));
+	let previousWho: string | undefined;
+	return actions.map((action, index) => {
+		const branch = index === actions.length - 1 && !hasFooter ? "└" : "├";
+		let whoStyled = theme.fg(actorHueToken(action.who, roster), padVisible(action.who, whoWidth));
+		if (action.who === previousWho) whoStyled = `${DIM_SGR_OPEN}${whoStyled}${DIM_SGR_CLOSE}`;
+		previousWho = action.who;
+		const icon = theme.fg(action.iconToken, padVisible(logIconGlyph(action.icon), iconWidth));
+		const actionName = theme.fg("text", padVisible(action.action, actionWidth));
+		const dot = theme.fg("muted", g.dot);
+		const detailText = action.details
+			.filter((detail) => detail.style !== "text" || detail.text.length > 0)
+			.map((detail) => renderLogDetail(theme, detail, roster))
+			.join(dot);
+		return `${logChrome(theme, branch, action.sequence, seqWidth, action.epochMilliseconds)} ${whoStyled}  ${icon} ${actionName}${detailText ? `${dot}${detailText}` : ""}`;
+	});
+}
+
+function filterStats(theme: ThemeLike, filters: Record<string, unknown>): string[] {
+	const stats: string[] = [];
+	for (const [key, value] of Object.entries(filters)) {
+		if (typeof value !== "string" || !value) continue;
+		if (key === "since") {
+			const parsed = Date.parse(value);
+			stats.push(theme.fg("borderMuted", `since ${Number.isFinite(parsed) ? timeOfDay(parsed) : value}`));
+			continue;
+		}
+		stats.push(theme.fg("borderMuted", `${key}=${value}`));
+	}
+	return stats;
 }
 
 export function teamLogLines(theme: ThemeLike, view: TeamLogRenderView): string[] {
 	const g = glyphs();
-	const stats = [theme.fg("muted", `${view.returned} of ${view.totalMatched} events`)];
-	for (const [key, value] of Object.entries(view.filters ?? {})) {
-		if (typeof value === "string" && value) stats.push(theme.fg("dim", `${key}=${value}`));
-	}
+	const actions = foldLogEntries(view.entries);
+	const stats = [
+		theme.fg("muted", plural(actions.length, "action")),
+		theme.fg("muted", view.returned === view.totalMatched ? plural(view.returned, "event") : `${view.returned} of ${view.totalMatched} events`),
+		...filterStats(theme, view.filters ?? {}),
+	];
 	const header = headerLine(theme, "Team Log", theme.fg("accent", view.team), stats);
 	if (view.entries.length === 0) return [header, `${treeConnector(theme, "└")}${theme.fg("muted", "no matching events")}`];
 
-	const seqWidth = Math.max(...view.entries.map((entry) => String(entry.sequence).length)) + 1;
-	const nameWidth = Math.max(...view.entries.map((entry) => (entry.teammate ?? "main").length));
-	const kindWidth = Math.max(...view.entries.map((entry) => entry.kind.length));
 	const footer = view.nextCursor
 		? `${treeConnector(theme, "└")}${theme.fg("muted", `${g.ellipsis} older events${g.dot}cursor "${view.nextCursor}"`)}`
 		: undefined;
-	const rows = view.entries.map((entry, index) => {
-		const branch = index === view.entries.length - 1 && !footer ? "└" : "├";
-		const mark = kindMark(entry);
-		return [
-			treeConnector(theme, branch),
-			theme.fg("dim", padVisible(`#${entry.sequence}`, seqWidth)),
-			` ${theme.fg("dim", timeOfDay(entry.epochMilliseconds))}`,
-			` ${theme.fg("accent", padVisible(entry.teammate ?? "main", nameWidth))}`,
-			`  ${theme.fg(mark.token, padVisible(mark.glyph, 2))}`,
-			theme.fg("muted", padVisible(entry.kind, kindWidth)),
-			`  ${entrySummary(theme, entry)}`,
-		].join("");
-	});
+	const rows = actionRows(theme, actions, view.roster ?? [], Boolean(footer));
 	return [header, ...rows, ...(footer ? [footer] : [])];
 }
 
@@ -446,6 +630,7 @@ function resultLinesFor(tool: TeamToolName, theme: ThemeLike, args: Record<strin
 		const filters = (details.filters ?? {}) as Record<string, unknown>;
 		return teamLogLines(theme, {
 			team: String(details.team),
+			roster: (details.roster ?? []) as string[],
 			entries: (details.entries ?? []) as TeamLogEntry[],
 			totalMatched: Number(details.totalMatched ?? 0),
 			returned: Number(details.returned ?? 0),

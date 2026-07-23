@@ -344,6 +344,19 @@ function updateStatus(team: TeamState, participant: string, word?: string, phras
 	team.statuses.set(participant, status(word ?? previous.word, phrase ?? previous.phrase));
 }
 
+/** Pure status reads are meta-actions and stay out of the log, like teamlog reads. */
+function logStatusDeclaration(team: TeamState, participant: string, word?: string, phrase?: string): void {
+	if (word === undefined && phrase === undefined) return;
+	appendTeamLog(team, {
+		team: team.name,
+		teammate: participant,
+		direction: "runtime",
+		kind: "status",
+		summary: preview(`${word ?? ""} ${phrase ?? ""}`.trim()),
+		details: { word: word ?? "", phrase: phrase ?? "" },
+	});
+}
+
 function startTeammate(team: TeamState, teammateSpec: TeammateSpec, participants: string[]): TeammateState {
 	const teammateName = compactName(teammateSpec.name);
 	const thinking = teammateSpec.thinking ?? defaultThinkingLevel;
@@ -425,6 +438,7 @@ function startTeammate(team: TeamState, teammateSpec: TeammateSpec, participants
 		direction: "runtime",
 		kind: "spawn",
 		summary: `spawned ${teammate.name} (model=${teammate.model}, thinking=${teammate.thinking})`,
+		details: { model: teammate.model, thinking: teammate.thinking },
 	});
 
 	return teammate;
@@ -515,14 +529,10 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 		}
 
 		if (tool === "teamstatus") {
-			updateStatus(team, from, args.word as string | undefined, args.phrase as string | undefined);
-			appendTeamLog(team, {
-				team: team.name,
-				teammate: from,
-				direction: "runtime",
-				kind: "status",
-				summary: preview(`${String(args.word ?? "")} ${String(args.phrase ?? "")}`.trim()),
-			});
+			const word = args.word as string | undefined;
+			const phrase = args.phrase as string | undefined;
+			updateStatus(team, from, word, phrase);
+			logStatusDeclaration(team, from, word, phrase);
 			writeJson(response, 200, { team: team.name, status: formatStatus(team) });
 			return;
 		}
@@ -664,13 +674,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				const team = resolveTeam(owner, params.team);
 				updateStatus(team, "main", params.word, params.phrase);
-				appendTeamLog(team, {
-					team: team.name,
-					teammate: "main",
-					direction: "runtime",
-					kind: "status",
-					summary: preview(`${params.word ?? ""} ${params.phrase ?? ""}`.trim()),
-				});
+				logStatusDeclaration(team, "main", params.word, params.phrase);
 				return toolResult({ team: team.name, status: formatStatus(team) });
 			},
 		}),
@@ -709,6 +713,7 @@ export default function (pi: ExtensionAPI) {
 					content: [{ type: "text" as const, text }],
 					details: {
 						team: team.name,
+						roster: [...team.members.keys()],
 						entries: page.entries,
 						totalMatched: page.totalMatched,
 						returned: page.returned,

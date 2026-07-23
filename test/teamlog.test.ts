@@ -295,6 +295,7 @@ describe("normalizeChildEvent (child agent/tool lifecycle normalization)", () =>
 		const entry = normalizeChildEvent("demo-team", "Implementer", { type: "agent_end", messages: [{}, {}, {}] });
 		expect(entry?.kind).toBe("agent_end");
 		expect(entry?.summary).toContain("3");
+		expect(entry?.details).toEqual({ messageCount: 3 });
 	});
 
 	test("maps agent_end without a messages array", () => {
@@ -340,6 +341,13 @@ describe("normalizeChildEvent (child agent/tool lifecycle normalization)", () =>
 		expect(entry?.kind).toBe("tool_end");
 		expect(entry?.summary).toContain("failed");
 		expect((entry?.details as Record<string, unknown> | undefined)?.isError).toBe(true);
+	});
+
+	test("skips tool frames for the team child tools, whose semantic entries carry the story", () => {
+		for (const toolName of ["teamsend", "teammain", "teamstatus"]) {
+			expect(normalizeChildEvent("demo-team", "Implementer", { type: "tool_execution_start", toolCallId: "c1", toolName, args: {} })).toBeUndefined();
+			expect(normalizeChildEvent("demo-team", "Implementer", { type: "tool_execution_end", toolCallId: "c1", toolName, result: {}, isError: false })).toBeUndefined();
+		}
 	});
 
 	test("maps extension_error to an error entry", () => {
