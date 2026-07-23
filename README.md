@@ -110,7 +110,7 @@ Kept minimal:
 |                | On team        | `teamstatus`, `teamlog`       |
 | **Teammates**  | With teammates | `teamsend`                    |
 |                | With main      | `teammain`                    |
-|                | With everyone  | `teamstatus`                  |
+|                | For everyone  | `teamstatus`                  |
 
 ---
 
@@ -118,7 +118,7 @@ Kept minimal:
 
 ### User involvement track
 
-Slash commands:
+Slash commands for:
 - [ ] 💠 Live control panel.
 - [ ] 👋 Joining and steering teams.
 - [ ] 🪄 Spawning teams directly.
