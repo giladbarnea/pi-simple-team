@@ -23,6 +23,8 @@
   "files": [
     "*.ts",
     "render-support",
+    "screenshots/1.png",
+    "screenshots/2.png",
     "README.md",
     "LICENSE"
   ],
