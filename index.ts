@@ -357,6 +357,7 @@ function logStatusDeclaration(team: TeamState, participant: string, word?: strin
 	});
 }
 
+// TODO: participants is unused. Smell.
 function startTeammate(team: TeamState, teammateSpec: TeammateSpec, participants: string[]): TeammateState {
 	const teammateName = compactName(teammateSpec.name);
 	const thinking = teammateSpec.thinking ?? defaultThinkingLevel;
@@ -529,10 +530,10 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 		}
 
 		if (tool === "teamstatus") {
-			const word = args.word as string | undefined;
+			const gerund = args.gerund as string | undefined;
 			const phrase = args.phrase as string | undefined;
-			updateStatus(team, from, word, phrase);
-			logStatusDeclaration(team, from, word, phrase);
+			updateStatus(team, from, gerund, phrase);
+			logStatusDeclaration(team, from, gerund, phrase);
 			writeJson(response, 200, { team: team.name, status: formatStatus(team) });
 			return;
 		}
@@ -567,12 +568,13 @@ export default function (pi: ExtensionAPI) {
 		closeCallbackServerIfUnused();
 	});
 
+	// TODO: Should also "start" the entire team automatically, making `teammate_start` redundant. Solves the respective smell.
 	pi.registerTool(
 		defineTool({
 			name: "team_spawn",
 			label: "Team Spawn",
-			description: "Spawn a persistent team of RPC Pi teammates with fresh context windows. The main agent is included automatically; do not specify it as a teammate.",
-			promptSnippet: "Spawn persistent RPC Pi teammate processes",
+			description: "Spawn a persistent team of RPC Pi teammates with fresh context windows. The main agent (you) is included automatically; do not specify it as a teammate.",
+			promptSnippet: "Spawn persistent RPC Pi teammate processes. Currently, manually ‘starting’ the teammates is required after spawn. Unless required, don’t fill up your time by repeatedly busy-polling team information. Don’t bash sleep to wait for progress; instead, set your status to advertise that you are counting on teammates to send you a message updating important milestones or request for help, and that otherwise you are staying idle; Send this actively to the team; Then end your turn by sending a simple message to the user, and finally stay put.",
 			renderShell: "self",
 			renderCall: (args, theme, context) => renderTeamToolCall("team_spawn", args, theme, context),
 			renderResult: (result, options, theme, context) => renderTeamToolResult("team_spawn", result, options, theme, context),
@@ -633,7 +635,7 @@ export default function (pi: ExtensionAPI) {
 		defineTool({
 			name: "teamsend",
 			label: "Team Send",
-			description: "Send a message from main to teammate(s). Fire-and-forget; does not wait for replies.",
+			description: "Send a message from main to teammate(s). Fire-and-forget; does not wait for replies. Teammates will send you messages as they deem appropriate by way of push.",
 			promptSnippet: "Send a message from main to teammate(s)",
 			renderShell: "self",
 			renderCall: (args, theme, context) => renderTeamToolCall("teamsend", args, theme, context),
@@ -665,21 +667,23 @@ export default function (pi: ExtensionAPI) {
 			renderResult: (result, options, theme, context) => renderTeamToolResult("teamstatus", result, options, theme, context),
 			parameters: Type.Object({
 				team: Type.Optional(Type.String({ description: "Team name; optional for listing all statuses or when exactly one team exists" })),
-				word: Type.Optional(Type.String({ description: "One-word main status" })),
-				phrase: Type.Optional(Type.String({ description: "Short main status phrase" })),
+				// TODO: make gerund and phrase optionality a XOR.
+				gerund: Type.Optional(Type.String({ description: "Set one-word gerund main status" })),
+				phrase: Type.Optional(Type.String({ description: "Short main status verb-oriented phrase." })),
 			}),
 			async execute(_toolCallId, params) {
-				if (!params.team && params.word === undefined && params.phrase === undefined) {
+				if (!params.team && params.gerund === undefined && params.phrase === undefined) {
 					return toolResult({ teams: allStatuses(owner) });
 				}
 				const team = resolveTeam(owner, params.team);
-				updateStatus(team, "main", params.word, params.phrase);
-				logStatusDeclaration(team, "main", params.word, params.phrase);
+				updateStatus(team, "main", params.gerund, params.phrase);
+				logStatusDeclaration(team, "main", params.gerund, params.phrase);
 				return toolResult({ team: team.name, status: formatStatus(team) });
 			},
 		}),
 	);
 
+	// TODO: main could use more automatic meta/discoverability information in the return payload. To help orient around what has been read already, what hasn't been read, inside and outside the filtered space, how long is the log, etc.
 	pi.registerTool(
 		defineTool({
 			name: "teamlog",

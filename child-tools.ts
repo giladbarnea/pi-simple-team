@@ -63,15 +63,15 @@ export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig)
 		defineTool({
 			name: "teamsend",
 			label: "Team Send",
-			description: "Send a message to teammates. To message the main agent, use teammain. Returns once the runtime accepts the send request, not after recipients reply.",
+			description: "Send a message to teammate(s) (not main). To message the main agent, use teammain. Returns once the runtime accepts the send request, not after recipients reply.",
 			promptSnippet: "Send a message to teammate(s)",
 			promptGuidelines: [
-				"Use teamsend to talk to teammates. It is fire-and-forget: do not wait for a reply unless a teammate later sends one.",
+				"Use teamsend to talk to teammates. From your POV (sender), it is fire-and-forget. From the recipient’s POV, it’s pushed to context as soon as possible.",
 			],
 			parameters: Type.Object({
 				to: Type.Array(Type.String(), { description: "Recipient teammate names" }),
 				message: Type.String({ description: "Message to send" }),
-				interrupt: Type.Optional(Type.Boolean({ description: "Abort busy recipients before delivering this message" })),
+				interrupt: Type.Optional(Type.Boolean({ description: "Abort busy recipients before delivering this message." })),
 			}),
 			async execute(_toolCallId, params, signal) {
 				return toolResult(await callParent(config, "teamsend", params, signal));
@@ -79,13 +79,14 @@ export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig)
 		}),
 	);
 
+	// TODO: should be renamed `sendmain` across the project.
 	pi.registerTool(
 		defineTool({
 			name: "teammain",
 			label: "Team Main",
-			description: "Send a message to the main agent/team lead. The main agent is never interrupted.",
-			promptSnippet: "Send a message to the main agent/team lead",
-			promptGuidelines: ["Use teammain to update or ask the main agent. The main agent may receive it later if busy."],
+			description: "Send a message to the main agent.",
+			promptSnippet: "Send a message to the main agent.",
+			promptGuidelines: ["Use teammain to update or ask the main agent. Main agent sees the big picture and has been aware of the team’s actions and status updates since the team was created."],
 			parameters: Type.Object({
 				message: Type.String({ description: "Message to send to the main agent" }),
 			}),
@@ -101,9 +102,10 @@ export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig)
 			label: "Team Status",
 			description: "Set your public status and read everyone's public status.",
 			promptSnippet: "Set/read the public team status map",
+		// TODO: If this typing system supports it, I want gerund and phrase optionality to be a XOR
 			parameters: Type.Object({
-				word: Type.Optional(Type.String({ description: "One-word status" })),
-				phrase: Type.Optional(Type.String({ description: "Short status phrase" })),
+				gerund: Type.Optional(Type.String({ description: "One-word gerund status." })),
+				phrase: Type.Optional(Type.String({ description: "Short status phrase. Verb-oriented." })),
 			}),
 			async execute(_toolCallId, params, signal) {
 				return toolResult(await callParent(config, "teamstatus", params, signal));
