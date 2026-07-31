@@ -64,6 +64,10 @@ function wrapTeamLine(line: TeamLine, width: number): string[] {
 	return parts.map((part) => `${line.prefix}${part}`.trimEnd());
 }
 
+function clipToWidth(line: string, width: number): string {
+	return truncateToWidth(line, Math.max(1, width), glyphs().ellipsis);
+}
+
 /** Clips each logical line to the render width (collapsed) or wraps it (expanded). */
 export class TeamLines {
 	private cachedWidth?: number;
@@ -84,7 +88,7 @@ export class TeamLines {
 		const targetWidth = Math.max(1, stableRenderWidth(width));
 		this.cachedLines =
 			this.mode === "clip"
-				? this.lines.map((line) => truncateToWidth(teamLineText(line), targetWidth, glyphs().ellipsis))
+				? this.lines.map((line) => clipToWidth(teamLineText(line), targetWidth))
 				: this.lines.flatMap((line) => wrapTeamLine(line, targetWidth));
 		this.cachedWidth = width;
 		return this.cachedLines;
@@ -545,17 +549,18 @@ class TeamSendView {
 	}
 
 	render(width: number): string[] {
+		const header = clipToWidth(this.headerStr, width);
 		const bodyWidth = Math.max(10, width - this.barWidth);
 		const bodyLines = this.md.render(bodyWidth);
 		const barred = bodyLines.map((line) => `${this.barStr}${line}`);
-		if (this.expanded) return [this.headerStr, ...barred];
+		if (this.expanded) return [header, ...barred];
 		const shown = barred.slice(0, SEND_PREVIEW_LINES);
 		const hidden = barred.length - SEND_PREVIEW_LINES;
 		if (hidden > 0) {
 			const g = glyphs();
 			shown.push(`${this.barStr}${this.theme.fg("dim", `${g.ellipsis} ${hidden} more line${hidden === 1 ? "" : "s"}${g.dot}ctrl+o to expand`)}`);
 		}
-		return [this.headerStr, ...shown];
+		return [header, ...shown];
 	}
 }
 
@@ -579,7 +584,7 @@ class TeamMessageView {
 	render(width: number): string[] {
 		const bodyWidth = Math.max(10, width - this.barWidth);
 		const bodyLines = this.md.render(bodyWidth);
-		return [this.headerLine, ...bodyLines.map((line) => `${this.barStr}${line}`)];
+		return [clipToWidth(this.headerLine, width), ...bodyLines.map((line) => `${this.barStr}${line}`)];
 	}
 }
 

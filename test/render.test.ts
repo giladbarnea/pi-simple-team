@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import type { MarkdownTheme } from "@earendil-works/pi-tui";
 
-import { stripAnsi } from "../render-support/ansi.ts";
+import { stripAnsi, visibleLength } from "../render-support/ansi.ts";
 import { glyphs } from "../render-support/glyphs.ts";
 import {
 	TeamLines,
@@ -32,6 +33,9 @@ const taggingTheme: ThemeLike = {
 };
 
 const g = glyphs();
+
+const markdownThemeKeys = ["heading", "link", "linkUrl", "code", "codeBlock", "codeBlockBorder", "quote", "quoteBorder", "hr", "listBullet", "bold", "italic", "strikethrough", "underline"] as const;
+const identityMarkdownTheme = Object.fromEntries(markdownThemeKeys.map((key) => [key, (text: string) => text])) as MarkdownTheme;
 
 function logEntry(overrides: Partial<TeamLogEntry>): TeamLogEntry {
 	return {
@@ -428,5 +432,32 @@ describe("TeamLines", () => {
 		const rendered = component.render(40);
 		expect(rendered.length).toBeGreaterThan(1);
 		for (const line of rendered) expect(line).toStartWith(`  ${g.codeBar} `);
+	});
+});
+
+describe("markdown views in a narrow terminal", () => {
+	const NARROW = 54;
+
+	test("a teammate message header is clipped instead of overflowing", () => {
+		const component = renderTeamMessage(
+			{ details: { team: "narrow-terminal-repro", from: "navigator", sentAt: "July 31, 01:39:01", message: "Working directory report." } },
+			identityTheme,
+			identityMarkdownTheme,
+		)!;
+		const rendered = component.render(NARROW);
+		expect(visibleLength(rendered[0]!)).toBeGreaterThan(NARROW - 5);
+		for (const line of rendered) expect(visibleLength(line)).toBeLessThanOrEqual(NARROW);
+	});
+
+	test("a team send header is clipped instead of overflowing", () => {
+		const component = renderTeamToolResult(
+			"teamsend",
+			{ details: { to: ["surveyor", "navigator", "quartermaster"] } },
+			{ expanded: false },
+			identityTheme,
+			{ args: { message: "x".repeat(1200) } },
+			identityMarkdownTheme,
+		);
+		for (const line of component.render(NARROW)) expect(visibleLength(line)).toBeLessThanOrEqual(NARROW);
 	});
 });
