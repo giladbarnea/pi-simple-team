@@ -9,6 +9,7 @@ import {
 	allTeamsStatusLines,
 	formatCharCount,
 	renderTeamMessage,
+	renderTeamToolCall,
 	renderTeamToolResult,
 	statusWordToken,
 	teamLogLines,
@@ -99,6 +100,13 @@ describe("teamStatusLines", () => {
 		expect(lines[1]).toContain("«success:working");
 		expect(lines[2]).toContain("«warning:waiting");
 	});
+
+	test("uses the Team Log actor colors for member names", () => {
+		const lines = teamStatusLines(taggingTheme, "demo-team", statuses, ["implementer", "reviewer"]);
+		expect(lines[1]).toContain("«mdCode:implementer");
+		expect(lines[2]).toContain("«accent:main");
+		expect(lines[3]).toContain("«customMessageLabel:reviewer");
+	});
 });
 
 describe("allTeamsStatusLines", () => {
@@ -113,6 +121,19 @@ describe("allTeamsStatusLines", () => {
 		expect(lines[3]).toContain("beta");
 		expect(lines[4]).toContain("working");
 	});
+
+	test("keeps member colors across teams", () => {
+		const lines = allTeamsStatusLines(
+			taggingTheme,
+			{
+				alpha: { scout: { word: "working", phrase: "", updated: "July 16, 22:00:00" } },
+				beta: { reviewer: { word: "waiting", phrase: "", updated: "July 16, 22:00:01" } },
+			},
+			["scout", "reviewer"],
+		);
+		expect(lines.join("\n")).toContain("«mdCode:scout");
+		expect(lines.join("\n")).toContain("«customMessageLabel:reviewer");
+	});
 });
 
 describe("teamSpawnLines", () => {
@@ -126,6 +147,16 @@ describe("teamSpawnLines", () => {
 		expect(lines[1]).toContain("claude-bridge/claude-opus-4-6");
 		expect(lines[1]).toContain("xhigh");
 		expect(lines[2]).toContain(g.tree.last.trim());
+	});
+
+	test("colors teammate names from the session roster", () => {
+		const teammates = [
+			{ name: "implementer", model: "model-a" },
+			{ name: "reviewer", model: "model-b" },
+		];
+		const lines = teamSpawnLines(taggingTheme, "demo-team", teammates, ["implementer", "reviewer"]);
+		expect(lines[1]).toContain("«mdCode:implementer");
+		expect(lines[2]).toContain("«customMessageLabel:reviewer");
 	});
 });
 
@@ -142,6 +173,16 @@ describe("teamSendLines", () => {
 	test("shows the interrupt stat only when set", () => {
 		const lines = teamSendLines(identityTheme, { to: ["reviewer"], message, interrupt: true, expanded: false }).map(teamLineText);
 		expect(lines[0]).toContain("interrupt");
+	});
+
+	test("colors each recipient from the session roster", () => {
+		const lines = teamSendLines(
+			taggingTheme,
+			{ to: ["implementer", "reviewer"], message, interrupt: false, expanded: false },
+			["implementer", "reviewer"],
+		).map(teamLineText);
+		expect(lines[0]).toContain("«mdCode:implementer»");
+		expect(lines[0]).toContain("«customMessageLabel:reviewer»");
 	});
 
 	test("collapsed body shows a quote-barred preview with an expand hint", () => {
@@ -167,6 +208,12 @@ describe("teamShutdownLines", () => {
 		expect(lines[0]).toContain("2 teammates stopped");
 		expect(lines[1]).toContain("implementer");
 		expect(lines[1]).toContain("reviewer");
+	});
+
+	test("colors stopped teammate names from the session roster", () => {
+		const lines = teamShutdownLines(taggingTheme, "demo-team", ["implementer", "reviewer"], ["implementer", "reviewer"]);
+		expect(lines[1]).toContain("«mdCode:implementer»");
+		expect(lines[1]).toContain("«customMessageLabel:reviewer»");
 	});
 });
 
@@ -358,6 +405,12 @@ describe("teamLogLines", () => {
 		expect(lines.at(-1)).toContain('cursor "before:70"');
 	});
 
+	test("colors a teammate filter from the session roster", () => {
+		const entries = [logEntry({ teammate: "reviewer" })];
+		const lines = teamLogLines(taggingTheme, logView(entries, { filters: { teammate: "reviewer" } }));
+		expect(lines[0]).toContain("«borderMuted:teammate=»«customMessageLabel:reviewer»");
+	});
+
 	test("renders an empty state row when nothing matched", () => {
 		const lines = teamLogLines(identityTheme, { team: "demo-team", entries: [], totalMatched: 0, returned: 0 });
 		expect(lines).toHaveLength(2);
@@ -396,6 +449,16 @@ describe("renderTeamMessage", () => {
 		const component = renderTeamMessage({ details: { team: "demo", from: "reviewer", sentAt: "July 16, 22:49:46", message: "hi" } }, identityTheme);
 		expect(component?.render(80)[0]).toContain("reviewer");
 	});
+
+	test("colors the sender from the session roster", () => {
+		const component = renderTeamMessage(
+			{ details: { team: "demo", from: "reviewer", sentAt: "July 16, 22:49:46", message: "hi" } },
+			taggingTheme,
+			identityMarkdownTheme,
+			["implementer", "reviewer"],
+		);
+		expect(component?.render(80)[0]).toContain("«customMessageLabel:reviewer»");
+	});
 });
 
 describe("renderTeamToolResult", () => {
@@ -410,6 +473,66 @@ describe("renderTeamToolResult", () => {
 		const line = component.render(400)[0]!;
 		expect(line).toContain("Team Send");
 		expect(line).toContain("«error:Unknown teammate(s) in demo-team: main»");
+	});
+
+	test("colors Team Send recipients when rendering a Markdown body", () => {
+		const component = renderTeamToolResult(
+			"teamsend",
+			{ details: { to: ["implementer", "reviewer"], interrupt: false } },
+			{ expanded: false },
+			taggingTheme,
+			{ args: { message: "Please review." } },
+			identityMarkdownTheme,
+			["implementer", "reviewer"],
+		);
+		const header = component.render(200)[0];
+		expect(header).toContain("«mdCode:implementer»");
+		expect(header).toContain("«customMessageLabel:reviewer»");
+	});
+
+	test("keeps a teammate color consistent across Team Status and Team Log", () => {
+		const roster = ["implementer", "reviewer"];
+		const status = renderTeamToolResult(
+			"teamstatus",
+			{ details: { team: "demo-team", status: { reviewer: { word: "working", phrase: "Reviewing", updated: "July 16, 23:01:10" } } } },
+			{ expanded: false },
+			taggingTheme,
+			{},
+			undefined,
+			roster,
+		);
+		const log = renderTeamToolResult(
+			"teamlog",
+			{
+				details: {
+					team: "demo-team",
+					roster: ["reviewer", "implementer"],
+					entries: [logEntry({ teammate: "reviewer" })],
+					totalMatched: 1,
+					returned: 1,
+				},
+			},
+			{ expanded: false },
+			taggingTheme,
+			{},
+			undefined,
+			roster,
+		);
+		expect(status.render(200).join("\n")).toContain("«customMessageLabel:reviewer»");
+		expect(log.render(200).join("\n")).toContain("«customMessageLabel:reviewer»");
+	});
+});
+
+describe("renderTeamToolCall", () => {
+	test("colors a Team Log teammate filter from the session roster", () => {
+		const component = renderTeamToolCall(
+			"teamlog",
+			{ team: "demo-team", teammate: "reviewer" },
+			taggingTheme,
+			{ executionStarted: true, isPartial: true },
+			["implementer", "reviewer"],
+		);
+		expect(component.render(200)[0]).toContain("«dim:teammate=»«customMessageLabel:reviewer»");
 	});
 });
 

@@ -15,8 +15,18 @@ type ToolResult = {
 	details?: JsonRecord;
 };
 
+type RenderedToolResult = {
+	render: (width: number) => string[];
+};
+
 type RegisteredTool = {
 	name: string;
+	renderResult?: (
+		result: ToolResult,
+		options: { expanded: boolean },
+		theme: { bold: (text: string) => string; fg: (token: string, text: string) => string },
+		context: { args: JsonRecord },
+	) => RenderedToolResult;
 	execute: (
 		toolCallId: string,
 		params: JsonRecord,
@@ -60,11 +70,25 @@ class ExtensionHost {
 	}
 
 	async execute<T extends JsonRecord>(toolName: string, params: JsonRecord): Promise<T> {
-		const tool = this.tools.get(toolName);
-		assert.ok(tool, `Expected extension host to register tool ${JSON.stringify(toolName)}.`);
-		const result = await tool.execute("test-call", params, new AbortController().signal, undefined, {});
+		const result = await this.executeResult(toolName, params);
 		assert.ok(result.details, `Expected ${toolName} to return structured result details.`);
 		return result.details as T;
+	}
+
+	async executeResult(toolName: string, params: JsonRecord): Promise<ToolResult> {
+		const tool = this.tools.get(toolName);
+		assert.ok(tool, `Expected extension host to register tool ${JSON.stringify(toolName)}.`);
+		return tool.execute("test-call", params, new AbortController().signal, undefined, {});
+	}
+
+	renderResult(toolName: string, result: ToolResult, args: JsonRecord): string[] {
+		const tool = this.tools.get(toolName);
+		assert.ok(tool?.renderResult, `Expected ${toolName} to register a result renderer.`);
+		const theme = {
+			bold: (text: string) => text,
+			fg: (token: string, text: string) => `«${token}:${text}»`,
+		};
+		return tool.renderResult(result, { expanded: false }, theme, { args }).render(300);
 	}
 
 	async shutdown(): Promise<void> {
@@ -172,6 +196,39 @@ function installFakePi(): { restore: () => void } {
 }
 
 describe("team ownership across in-process AgentSessions", () => {
+	test("the session roster keeps teammate colors consistent across tool renderers", async () => {
+		const fakePi = installFakePi();
+		const host = new ExtensionHost();
+		const team = "color-roster-team";
+
+		try {
+			await host.execute("team_spawn", {
+				team,
+				teamPrompt: "Color roster test.",
+				teammates: [
+					{ name: "implementer", prompt: "Wait.", model: "fake-model", thinking: "low" },
+					{ name: "reviewer", prompt: "Wait.", model: "fake-model", thinking: "low" },
+				],
+			});
+			const statusResult = await host.executeResult("teamstatus", { team });
+			const logResult = await host.executeResult("teamlog", { team });
+
+			assert.match(
+				host.renderResult("teamstatus", statusResult, { team }).join("\n"),
+				/«customMessageLabel:reviewer/,
+				"Expected Team Status to use the reviewer color from the session roster.",
+			);
+			assert.match(
+				host.renderResult("teamlog", logResult, { team }).join("\n"),
+				/«customMessageLabel:reviewer/,
+				"Expected Team Log to use the same reviewer color from the session roster.",
+			);
+		} finally {
+			await host.shutdown();
+			fakePi.restore();
+		}
+	});
+
 	test("shutting down another session leaves the owner's team available", async () => {
 		const owner = new ExtensionHost();
 		const foreignSession = new ExtensionHost();

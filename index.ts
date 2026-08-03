@@ -559,7 +559,8 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	const owner = Symbol("pi-simple-team-owner");
-	pi.registerMessageRenderer(teamMessageType, (message, _options, theme) => renderTeamMessage(message, theme, getMarkdownTheme()));
+	const sessionTeammateRoster: string[] = [];
+	pi.registerMessageRenderer(teamMessageType, (message, _options, theme) => renderTeamMessage(message, theme, getMarkdownTheme(), sessionTeammateRoster));
 
 	pi.on("session_shutdown", async () => {
 		for (const team of [...teams.values()]) {
@@ -576,8 +577,8 @@ export default function (pi: ExtensionAPI) {
 			description: "Spawn a persistent team of RPC Pi teammates with fresh context windows. The main agent (you) is included automatically; do not specify it as a teammate.",
 			promptSnippet: "Spawn persistent RPC Pi teammate processes. Currently, manually ‘starting’ the teammates is required after spawn. Unless required, don’t fill up your time by repeatedly busy-polling team information. Don’t bash sleep to wait for progress; instead, set your status to advertise that you are counting on teammates to send you a message updating important milestones or request for help, and that otherwise you are staying idle; Send this actively to the team; Then end your turn by sending a simple message to the user, and finally stay put.",
 			renderShell: "self",
-			renderCall: (args, theme, context) => renderTeamToolCall("team_spawn", args, theme, context),
-			renderResult: (result, options, theme, context) => renderTeamToolResult("team_spawn", result, options, theme, context),
+			renderCall: (args, theme, context) => renderTeamToolCall("team_spawn", args, theme, context, sessionTeammateRoster),
+			renderResult: (result, options, theme, context) => renderTeamToolResult("team_spawn", result, options, theme, context, undefined, sessionTeammateRoster),
 			parameters: Type.Object({
 				team: Type.String({ description: "Team name" }),
 				teamPrompt: Type.String({ description: "Common team system prompt" }),
@@ -594,6 +595,7 @@ export default function (pi: ExtensionAPI) {
 				if (teammateNames.includes("main")) throw new Error('"main" is reserved');
 
 				await validateTeammateModels(teammateSpecs);
+				sessionTeammateRoster.push(...teammateNames.filter((teammateName) => !sessionTeammateRoster.includes(teammateName)));
 				await ensureCallbackServer();
 
 				const team: TeamState = {
@@ -620,7 +622,6 @@ export default function (pi: ExtensionAPI) {
 					closeCallbackServerIfUnused();
 					throw error;
 				}
-
 				return toolResult({
 					accepted: true,
 					team: team.name,
@@ -638,8 +639,8 @@ export default function (pi: ExtensionAPI) {
 			description: "Send a message from main to teammate(s). Fire-and-forget; does not wait for replies. Teammates will send you messages as they deem appropriate by way of push.",
 			promptSnippet: "Send a message from main to teammate(s)",
 			renderShell: "self",
-			renderCall: (args, theme, context) => renderTeamToolCall("teamsend", args, theme, context),
-			renderResult: (result, options, theme, context) => renderTeamToolResult("teamsend", result, options, theme, context, getMarkdownTheme()),
+			renderCall: (args, theme, context) => renderTeamToolCall("teamsend", args, theme, context, sessionTeammateRoster),
+			renderResult: (result, options, theme, context) => renderTeamToolResult("teamsend", result, options, theme, context, getMarkdownTheme(), sessionTeammateRoster),
 			parameters: Type.Object({
 				team: Type.Optional(Type.String({ description: "Team name; optional only when exactly one team exists" })),
 				to: Type.Array(Type.String(), { description: "Recipient teammate names" }),
@@ -663,8 +664,8 @@ export default function (pi: ExtensionAPI) {
 			description: "Set main's status for a team and/or read team statuses.",
 			promptSnippet: "Set/read team status maps",
 			renderShell: "self",
-			renderCall: (args, theme, context) => renderTeamToolCall("teamstatus", args, theme, context),
-			renderResult: (result, options, theme, context) => renderTeamToolResult("teamstatus", result, options, theme, context),
+			renderCall: (args, theme, context) => renderTeamToolCall("teamstatus", args, theme, context, sessionTeammateRoster),
+			renderResult: (result, options, theme, context) => renderTeamToolResult("teamstatus", result, options, theme, context, undefined, sessionTeammateRoster),
 			parameters: Type.Object({
 				team: Type.Optional(Type.String({ description: "Team name; optional for listing all statuses or when exactly one team exists" })),
 				// TODO: make gerund and phrase optionality a XOR.
@@ -691,8 +692,8 @@ export default function (pi: ExtensionAPI) {
 			description: "Inspect a compact, paged, filterable event log for a pi-simple-team team.",
 			promptSnippet: "Inspect team event log",
 			renderShell: "self",
-			renderCall: (args, theme, context) => renderTeamToolCall("teamlog", args, theme, context),
-			renderResult: (result, options, theme, context) => renderTeamToolResult("teamlog", result, options, theme, context),
+			renderCall: (args, theme, context) => renderTeamToolCall("teamlog", args, theme, context, sessionTeammateRoster),
+			renderResult: (result, options, theme, context) => renderTeamToolResult("teamlog", result, options, theme, context, undefined, sessionTeammateRoster),
 			parameters: Type.Object({
 				team: Type.Optional(Type.String({ description: "Team name; optional only when exactly one team exists" })),
 				teammate: Type.Optional(Type.String({ description: "Filter to one teammate name" })),
@@ -743,8 +744,8 @@ export default function (pi: ExtensionAPI) {
 			description: "Stop a team and kill its teammate processes.",
 			promptSnippet: "Stop a team and kill its teammate processes",
 			renderShell: "self",
-			renderCall: (args, theme, context) => renderTeamToolCall("team_shutdown", args, theme, context),
-			renderResult: (result, options, theme, context) => renderTeamToolResult("team_shutdown", result, options, theme, context),
+			renderCall: (args, theme, context) => renderTeamToolCall("team_shutdown", args, theme, context, sessionTeammateRoster),
+			renderResult: (result, options, theme, context) => renderTeamToolResult("team_shutdown", result, options, theme, context, undefined, sessionTeammateRoster),
 			parameters: Type.Object({
 				team: Type.Optional(Type.String({ description: "Team name; optional only when exactly one team exists" })),
 			}),
