@@ -1,3 +1,5 @@
+<img src="screenshots/pi-simple-team-banner.png" alt="A dark wireframe room in a starry void" width="100%">
+
 <div align="center">
 
 # pi-simple-team
