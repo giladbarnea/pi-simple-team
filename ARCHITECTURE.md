@@ -1,116 +1,40 @@
 ---
-updated: 2026-07-22
+updated: 2026-08-04
 status: partial
 audience: AI agents and maintainers
 ---
 
 # Architecture
 
-This document follows one narrow path through `pi-simple-team`: from the main agent deciding to create a team until that agent can decide to send the first `teamsend`.
+`pi-simple-team` runs one parent extension runtime and one persistent `pi --mode rpc` child process per teammate. `team_spawn` configures idle child sessions. A teammate model runs only after the parent delivers its first message.
 
-The most important distinction is that **spawning a teammate creates an idle Pi RPC process; it does not prompt the teammate model.** The common and individual teammate prompts are installed as the child session's system prompt, but no child-provider request occurs during `team_spawn`.
+## Runtime actors and ownership
 
-## `team_spawn` creates idle sessions before any teammate inference
+The **main agent** is the LLM in the parent Pi session. It chooses when to create a team and use its tools.
 
-There are three different actors in this flow:
+The **parent extension runtime** owns every team created by its Pi session. Its `TeamState` contains members, statuses, the event log, and the session owner symbol.
 
-1. The **main agent** is the LLM participating in the parent Pi session.
-2. The **parent extension runtime** is `pi-simple-team` executing inside that parent Pi process.
-3. Each **teammate runtime** is a separate persistent `pi --mode rpc` child process. That process eventually calls its configured model provider, but only after it receives an RPC `prompt` command.
+Each **teammate runtime** is a separate Pi RPC process with its own context. Child tools reach parent-owned state through an authenticated localhost callback server.
 
-A configured system prompt is therefore not the same thing as a submitted prompt. It shapes a future inference; it does not initiate one.
+## The spawn path has six phases
 
-## The spawn path, step by step
+### 1. Validate the request
 
-### Step 0: the main agent chooses a team configuration in its model response
+Pi first validates the `team_spawn` call against its TypeBox schema. The extension then rejects an existing team name, duplicate teammate names, and the reserved name `main`.
 
-The main agent decides, in its head, to spawn a team. It chooses the parameter values required by the `team_spawn` tool input schema:
+`validateTeammateModels()` checks all model patterns concurrently through `pi --list-models`. These checks confirm that each pattern resolves, but do not inspect model-specific thinking levels.
 
-- a team name;
-- a shared team prompt;
-- teammate names;
-- an individual prompt for each teammate;
-- a model string for each teammate; and
-- optionally, a requested thinking level for each teammate.
+If validation fails, the extension creates no team state or child process.
 
-2026-07-22, pre Pi [0.81.1 update](https://github.com/earendil-works/pi/releases/tag/v0.81.0)::Its knowledge of model-specific thinking level support is not provided by `pi-simple-team` first class. It is whatever was already available in its context or weights (e.g., has a miss rate). The aforementioned update introduces first class function(s) to get the available thinking levels, and is probably our best option.
-### Step 1: the main agent emits a `team_spawn` tool call
+### 2. Create parent-owned state
 
-The main model's makes a `team_spawn` tool request in that shape:
+The extension starts or reuses a callback server on `127.0.0.1` with an ephemeral port and random process-local token.
 
-```json
-{
-  "team": "implementation",
-  "teamPrompt": "Work together on the requested change.",
-  "teammates": [
-    {
-      "name": "implementer",
-      "prompt": "Implement the change.",
-      "model": "openai/gpt-5.6-sol",
-      "thinking": "max"
-    }
-  ]
-}
-```
+It then creates `TeamState` and stores it in the module-level team map. Only `main` has a status at this point: `available / Main agent`.
 
-Pi validates the call against the registered TypeBox schema and invokes the `team_spawn` implementation.
+### 3. Start each child process
 
-At this point:
-
-- the main agent is waiting for its tool result;
-- the parent extension is executing ordinary TypeScript; and
-- no teammate process exists yet.
-
-### Step 2: the extension validates team and teammate names
-
-Inside `team_spawn.execute()`, the extension normalizes the team name and teammate names, then rejects:
-
-- an already-existing team name;
-- duplicate teammate names; and
-- the reserved teammate name `main`.
-
-A rejection here throws a tool error. No callback server or teammate process has been created.
-
-### Step 3: the extension validates model resolution, not thinking support
-
-Note::this step is relatively smelly. It works, but making bash commands and parsing their outputs rather than using Pi sdk first class equivalent means, plus not covering supported thinking levels in the first place, is error-prone. 
-
-`validateTeammateModels()` in `model-preflight.ts` runs one child command per teammate:
-
-```sh
-pi --list-models <model-pattern>
-```
-
-These checks run concurrently. They answer whether each model pattern matches at least one model available under the user's current Pi configuration and authentication. The match may be fuzzy and may return multiple models; it is not necessarily an exact model-ID match. Note::this should be fixed to strict exact match in a future iteration. No guesswork.
-
-These checks do **not** determine which thinking levels the resolved model supports. `--list-models` exposes only whether the model supports thinking at all.
-
-If preflight fails, no teammate process is spawned.
-
-### Step 4: the extension ensures that its callback server exists
-
-The parent extension starts, or reuses, a localhost HTTP server bound to `127.0.0.1` on an ephemeral port. Child-only tools use this server to reach parent-owned team state.
-
-The callback channel is protected by a random process-local token. Its URL and token will be passed to every teammate through environment variables.
-
-No model provider is involved.
-
-### Step 5: the extension creates parent-owned team state
-
-The extension creates a `TeamState` and places it in the module-level `teams` map before spawning children. This state owns:
-
-- the team name and shared prompt;
-- the parent `ExtensionAPI` instance;
-- the teammate process map;
-- public statuses;
-- the event log; and
-- the symbol identifying the parent session that owns the team.
-
-Only `main` has a status at this instant: `available / Main agent`.
-
-### Step 6: the extension starts each teammate as a separate Pi RPC process
-
-For each teammate, `startTeammate()` selects the requested thinking level or the extension's current default, `xhigh`, and spawns approximately:
+`startTeammate()` uses the requested thinking level or the default `xhigh`. It spawns approximately:
 
 ```sh
 pi \
@@ -123,88 +47,39 @@ pi \
   --system-prompt <composed-system-prompt>
 ```
 
-`composeSystemPrompt()` combines:
+The system prompt combines the team prompt, teammate prompt, identity, participant list, and coordination instructions.
 
-1. the shared team prompt;
-2. the individual teammate prompt;
-3. the teammate's identity and participant list; and
-4. the coordination instructions for `teamsend`, `teammain`, and `teamstatus`.
+Environment variables carry the team identity, callback URL, and callback token. `PI_SIMPLE_TEAM_CHILD=1` makes the extension register only child-facing tools in that process.
 
-The child receives environment variables identifying its team and teammate, along with the parent callback URL and token. `PI_SIMPLE_TEAM_CHILD=1` causes the same extension entrypoint to register only child-facing callback tools instead of recursively registering another parent team runtime.
+Normal extension discovery remains enabled. The explicit `-e` flag makes sure `pi-simple-team` also loads in the child.
 
-Normal extension discovery remains enabled in the child. The explicit `-e` ensures that `pi-simple-team` itself is loaded.
+### 4. Attach process plumbing
 
-### Step 7: each child initializes a session, but receives no RPC prompt
+After `child_process.spawn()` returns, the parent attaches the JSONL reader, stderr collection, RPC response correlation, exit handling, and serialized delivery queue.
 
-The operating-system child process now exists and Pi begins initializing RPC mode. Pi resolves the selected model, constructs the session, installs the composed system prompt, loads extensions, and applies the requested thinking level. This child-side initialization proceeds concurrently with the parent-side bookkeeping in Step 8; the parent does not wait for it to finish.
+The parent records a `spawn` log entry and an `idle / Spawned` status. It does not wait for a child readiness signal.
 
-Model-specific thinking support is enforced inside child Pi. If the requested level is unavailable, Pi silently clamps it to a supported level. For example, a request for `max` can become `high`, while a request for `xhigh` can become `max` when the model exposes `max` but has an `xhigh` hole.
+### 5. Return acceptance
 
-This clamping happens during child initialization. It does **not** affect a model request because no RPC `prompt` command has been sent. Consequently:
+`team_spawn` returns `accepted: true`, the team name, teammate names, and the current status map.
 
-- no child `agent_start` event has occurred;
-- no child model-provider request is in flight; and
-- no child response can already be streaming or completed.
+Acceptance means that preflight passed and child processes were started. It does not confirm child initialization or the actual thinking level selected by Pi.
 
-The words supplied through `teamPrompt` and `teammate.prompt` are present only inside the configured system prompt. Instructions such as “as soon as you wake up, call `teamstatus`” cannot execute until the teammate receives its first actual message and the model is invoked.
+### 6. Deliver the first message
 
-### Step 8: the parent registers process plumbing without waiting for readiness
+A later `teamsend` enters the recipient's delivery queue. The parent sends an RPC `prompt`, `steer`, or abort-then-prompt sequence based on the recipient state.
 
-Immediately after `child_process.spawn()` returns, the extension creates a `TeammateState`, attaches:
+## Current limitations
 
-- the JSONL stdout reader;
-- stderr collection;
-- RPC response correlation;
-- process-exit handling; and
-- the serialized delivery queue.
+- Model preflight accepts any `pi --list-models` match. A fuzzy pattern can resolve to more than one model.
+- `team_spawn` has no readiness handshake. A child can still be initializing when the tool returns.
+- The parent stores the requested thinking level. Child Pi can clamp it to a supported level without reporting that change to the parent.
 
-It records the teammate's `spawn` log entry and parent-owned `idle / Spawned` status.
+The extension's `get_state` polling reads `isStreaming` and ignores the returned `thinkingLevel`. Its practical policy is to request a level, accept Pi's choice, and expose only the request.
 
-The current implementation stores and logs the **requested** thinking level. It does not ask the child which level Pi actually selected after clamping.
+## An RPC query could make spawn authoritative without racing inference
 
-`startTeammate()` then returns the `TeammateState` synchronously. There is no startup-ready RPC handshake, so the parent can finish `team_spawn` while a child is still completing Pi initialization. This is a limitation: `accepted` confirms process creation, not successful child initialization. The process exists and its stdin can buffer subsequent RPC commands, so normal delivery can still work, but buffering does not make the spawn result authoritative.
-
-### Step 9: `team_spawn` returns acceptance to the main agent
-
-After initiating every child process, the extension returns a tool result containing:
-
-- `accepted: true`;
-- the team name;
-- the teammate names; and
-- the parent-owned public status map.
-
-Here, “accepted” means that model preflight passed and the child processes were spawned. In the current implementation, it does not mean that each child completed a readiness handshake or that its requested thinking level was preserved.
-
-Pi adds this tool result to the parent conversation and starts the main agent's next inference. The main LLM can now inspect the accepted team and decide whether to call `teamsend`.
-
-That is the first point at which the main agent can make an informed post-spawn decision based on the tool result. The teammate sessions exist, but they remain idle until a message is delivered.
-
-## Provider traffic at the `team_spawn` boundary
-
-| Provider interaction | State when `team_spawn` returns |
-|---|---|
-| Main provider request that chose `team_spawn` | Finished before tool execution began |
-| Main provider request that sees the `team_spawn` result | Begins after tool execution returns |
-| Any teammate provider request | Not started |
-| Any teammate streamed response | Impossible yet |
-
-The first teammate provider request occurs only after the parent runtime sends that child an RPC `prompt` command. A later `teamsend` initiates that delivery path; `team_spawn` itself never does.
-
-## Thinking state is currently requested state, not authoritative state
-
-The current extension has three different notions that should not be conflated:
-
-1. **Requested level:** the value chosen by the main agent, or the extension default `xhigh`.
-2. **Supported levels:** the model-specific set known by child Pi.
-3. **Actual level:** the supported level child Pi selected after applying or clamping the request.
-
-`pi-simple-team` currently retains only the requested value in `TeammateState.thinking`. Child Pi owns the actual value. Although later `get_state` calls return the actual `thinkingLevel`, the extension's busy-state polling reads only `isStreaming` and discards that field.
-
-The practical current policy is therefore: ask Pi for a level, accept whatever Pi selects, and neither verify nor expose whether it changed the request.
-
-## The new RPC query can make spawn authoritative without racing inference
-
-Pi 0.81.1 added this child RPC command:
+Pi exposes this child RPC command:
 
 ```json
 {"type":"get_available_thinking_levels"}

@@ -1,5 +1,5 @@
 ---
-updated: 2026-07-17
+updated: 2026-08-04
 status: working
 ---
 
@@ -7,7 +7,7 @@ status: working
 
 `pi-simple-team` was built as the smallest viable team runtime: the main Pi session owns a parent orchestrator, and each teammate is a persistent child `pi --mode rpc` process with its own fresh context window.
 
-The key design choice was to keep the social model flat. Teammates get only `teamsend`, `teammain`, and `teamstatus`; the main session gets `team_spawn`, `teamsend`, `teamstatus`, and `team_shutdown`. There is no inbox, no polling loop, no explicit done primitive, and no message broker.
+The key design choice was to keep the social model flat. Teammates get only `teamsend`, `teammain`, and `teamstatus`; the main session gets `team_spawn`, `teamsend`, `teamstatus`, `teamlog`, and `team_shutdown`. There is no inbox, no polling loop, no explicit done primitive, and no message broker.
 
 The only extra IPC is a localhost HTTP callback server with a random token. Child tools call it so `teamstatus` can synchronously return the parent-owned status map, while `teamsend` and `teammain` remain fire-and-forget.
 
@@ -21,7 +21,7 @@ Child processes now load normal extension discovery. `pi-simple-team` marks them
 
 ## Rendering
 
-All TUI display logic lives in `render.ts`; `index.ts` only wires `renderShell: "self"` + `renderCall`/`renderResult` per tool and one `registerMessageRenderer`. The visual grammar is deliberately borrowed from `../rich-tool-diff` (its `theme.ts`/`glyphs.ts`/`ansi.ts`/`text.ts` primitives are imported directly) so both extensions read as one hand:
+Tool-specific TUI logic lives in `render.ts`; reusable display primitives live in `render-support/`. `index.ts` only wires `renderShell: "self"` + `renderCall`/`renderResult` per tool and one `registerMessageRenderer`. The team tools share one visual grammar:
 
 - **Header stat-line**: `● <Label> <target> · stat · stat` — bullet, bold label, accent target, dim-dot-separated semantically colored stats. Errors render as `● <call> · <error>` with the error in red.
 - **Tree body**: `├─`/`└─` rows with padded columns — teammate names accent, status words colored via `statusWordToken` (working→success, waiting→warning, free-form activity words→accent), timestamps dim. `teamlog` rows add a per-kind glyph (`✓`/`✗`/`→`/`◆`/`▲`/`○`) and rebuild tool_start/tool_end summaries from entry details instead of the LLM-facing prose.
@@ -30,7 +30,7 @@ All TUI display logic lives in `render.ts`; `index.ts` only wires `renderShell: 
 
 Teammate→main messages no longer go through `pi.sendUserMessage` (which disguised them as user-typed messages). They are `pi.sendMessage` custom messages (`customType: "pi-simple-team"`, `deliverAs: "steer"` + `triggerTurn: true` preserves the old busy/idle delivery semantics) rendered as a `◆ from → main · team · time` header over the quoted body. The LLM-facing content string is unchanged.
 
-Renderers only shape the TUI; every tool still returns the same JSON text to the LLM. `test/render.test.ts` covers the builders; bun resolves the `@earendil-works/*` imports via `~/.pi/agent/node_modules`.
+Renderers only shape the TUI. Most tools return JSON text to the LLM; `teamlog` returns a formatted text page with structured details. `test/render.test.ts` covers the builders.
 
 Useful Pi docs consulted:
 
