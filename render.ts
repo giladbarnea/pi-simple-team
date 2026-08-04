@@ -482,17 +482,18 @@ function actionRows(theme: ThemeLike, actions: LogAction[], roster: string[], ha
 function filterStats(theme: ThemeLike, filters: Record<string, unknown>, roster: string[]): string[] {
 	const stats: string[] = [];
 	for (const [key, value] of Object.entries(filters)) {
-		if (typeof value !== "string" || !value) continue;
+		const displayValue = Array.isArray(value) ? value.join(",") : value;
+		if (typeof displayValue !== "string" || !displayValue) continue;
 		if (key === "since") {
-			const parsed = Date.parse(value);
-			stats.push(theme.fg("borderMuted", `since ${Number.isFinite(parsed) ? timeOfDay(parsed) : value}`));
+			const parsed = Date.parse(displayValue);
+			stats.push(theme.fg("borderMuted", `since ${Number.isFinite(parsed) ? timeOfDay(parsed) : displayValue}`));
 			continue;
 		}
 		if (key === "teammate") {
-			stats.push(`${theme.fg("borderMuted", "teammate=")}${theme.fg(actorHueToken(value, roster), value)}`);
+			stats.push(`${theme.fg("borderMuted", "teammate=")}${theme.fg(actorHueToken(displayValue, roster), displayValue)}`);
 			continue;
 		}
-		stats.push(theme.fg("borderMuted", `${key}=${value}`));
+		stats.push(theme.fg("borderMuted", `${key}=${displayValue}`));
 	}
 	return stats;
 }
@@ -617,7 +618,7 @@ function callBodyFor(tool: TeamToolName, theme: ThemeLike, args: Record<string, 
 	}
 	if (tool === "teamlog") {
 		const filterStats = ["teammate", "kind", "search", "since", "cursor"]
-			.filter((key) => typeof args[key] === "string" && args[key])
+			.filter((key) => (typeof args[key] === "string" && args[key]) || (Array.isArray(args[key]) && args[key].length > 0))
 			.map((key) => {
 				const value = String(args[key]);
 				if (key === "teammate") return `${theme.fg("dim", "teammate=")}${theme.fg(actorHueToken(value, roster), value)}`;

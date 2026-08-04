@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import assert from "node:assert/strict";
 import {
 	appendTeamLog,
 	filterTeamLog,
@@ -126,11 +127,16 @@ describe("filterTeamLog", () => {
 	});
 
 	test("filters by kind", () => {
-		expect(filterTeamLog(entries, { kind: "status" }).map((entry) => entry.sequence)).toEqual([2]);
+		expect(filterTeamLog(entries, { kind: ["status"] }).map((entry) => entry.sequence)).toEqual([2]);
+	});
+
+	test("filters by any requested kind", () => {
+		const sequences = filterTeamLog(entries, { kind: ["send", "error"] }).map((entry) => entry.sequence);
+		assert.deepEqual(sequences, [1, 3], "Expected the kind filter to match any requested kind.");
 	});
 
 	test("returns zero rows for an unknown kind rather than throwing", () => {
-		expect(filterTeamLog(entries, { kind: "nonexistent" })).toEqual([]);
+		expect(filterTeamLog(entries, { kind: ["nonexistent"] })).toEqual([]);
 	});
 
 	test("search matches summary, teammate, kind, and stringified details case-insensitively", () => {
@@ -148,7 +154,7 @@ describe("filterTeamLog", () => {
 	});
 
 	test("combines filters with AND semantics", () => {
-		expect(filterTeamLog(entries, { teammate: "Implementer", kind: "error" }).map((entry) => entry.sequence)).toEqual([3]);
+		expect(filterTeamLog(entries, { teammate: "Implementer", kind: ["status", "error"] }).map((entry) => entry.sequence)).toEqual([3]);
 	});
 });
 

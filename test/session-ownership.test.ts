@@ -5,6 +5,8 @@ import * as path from "node:path";
 
 import { describe, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { TSchema } from "typebox";
+import { Value } from "typebox/value";
 
 import teamExtension from "../index.ts";
 
@@ -21,6 +23,7 @@ type RenderedToolResult = {
 
 type RegisteredTool = {
 	name: string;
+	parameters: TSchema;
 	renderResult?: (
 		result: ToolResult,
 		options: { expanded: boolean },
@@ -35,6 +38,21 @@ type RegisteredTool = {
 		context: unknown,
 	) => Promise<ToolResult>;
 };
+
+describe("teamlog input schema", () => {
+	test("accepts only a non-empty kind list containing non-empty strings", async () => {
+		const host = new ExtensionHost();
+		const schema = host.tools.get("teamlog")?.parameters;
+		assert.ok(schema, "Expected the extension to register the teamlog input schema.");
+
+		assert.equal(Value.Check(schema, { kind: ["send", "error"] }), true, "Expected teamlog to accept multiple kinds.");
+		assert.equal(Value.Check(schema, { kind: [] }), false, "Expected teamlog to reject an empty kind list.");
+		assert.equal(Value.Check(schema, { kind: [""] }), false, "Expected teamlog to reject an empty kind value.");
+		assert.equal(Value.Check(schema, { kind: "send" }), false, "Expected teamlog to reject the old string kind value.");
+
+		await host.shutdown();
+	});
+});
 
 type SessionShutdownHandler = (
 	event: { type: "session_shutdown"; reason: "quit" },

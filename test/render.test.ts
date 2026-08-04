@@ -396,11 +396,11 @@ describe("teamLogLines", () => {
 	test("header shows action and event counts, humanizes since, and keeps the cursor footer", () => {
 		const since = new Date(T).toISOString();
 		const entries = [logEntry({ sequence: 70, kind: "status", teammate: "reviewer", details: { word: "working", phrase: "" } })];
-		const lines = teamLogLines(identityTheme, logView(entries, { totalMatched: 7, nextCursor: "before:70", filters: { kind: "status", since } }));
+		const lines = teamLogLines(identityTheme, logView(entries, { totalMatched: 7, nextCursor: "before:70", filters: { kind: ["status", "error"], since } }));
 		expect(lines[0]).toContain("Team Log demo-team");
 		expect(lines[0]).toContain("1 action");
 		expect(lines[0]).toContain("1 of 7 events");
-		expect(lines[0]).toContain("kind=status");
+		expect(lines[0]).toContain("kind=status,error");
 		expect(lines[0]).toContain(`since ${timeOfDay(T)}`);
 		expect(lines.at(-1)).toContain('cursor "before:70"');
 	});
@@ -524,6 +524,16 @@ describe("renderTeamToolResult", () => {
 });
 
 describe("renderTeamToolCall", () => {
+	test("renders multiple Team Log kinds as one OR filter", () => {
+		const component = renderTeamToolCall(
+			"teamlog",
+			{ team: "demo-team", kind: ["status", "error"] },
+			taggingTheme,
+			{ executionStarted: true, isPartial: true },
+		);
+		expect(component.render(200)[0]).toContain("«dim:kind=status,error»");
+	});
+
 	test("colors a Team Log teammate filter from the session roster", () => {
 		const component = renderTeamToolCall(
 			"teamlog",

@@ -59,7 +59,7 @@ Suggested parameters:
 {
   team?: string;
   teammate?: string;
-  kind?: string;
+  kind?: string[];
   search?: string;
   since?: string;
   limit?: number;
@@ -200,7 +200,7 @@ Structured details:
   nextCursor?: string;
   filters: {
     teammate?: string;
-    kind?: string;
+    kind?: string[];
     search?: string;
     since?: string;
     limit: number;

@@ -36,7 +36,7 @@ export type TeamLogEntryInput = Omit<TeamLogEntry, "sequence" | "timestamp" | "e
 
 export interface TeamLogFilterParams {
 	teammate?: string;
-	kind?: string;
+	kind?: string[];
 	search?: string;
 	since?: string;
 }
@@ -118,7 +118,7 @@ export function filterTeamLog(entries: TeamLogEntry[], params: TeamLogFilterPara
 	const sinceThreshold = parseSince(params.since);
 	return entries.filter((entry) => {
 		if (params.teammate !== undefined && entry.teammate !== params.teammate) return false;
-		if (params.kind !== undefined && entry.kind !== params.kind) return false;
+		if (params.kind !== undefined && !params.kind.includes(entry.kind)) return false;
 		if (sinceThreshold !== undefined && entry.epochMilliseconds < sinceThreshold) return false;
 		if (params.search !== undefined && !matchesSearch(entry, params.search)) return false;
 		return true;

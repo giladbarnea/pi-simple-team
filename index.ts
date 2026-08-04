@@ -697,7 +697,12 @@ export default function (pi: ExtensionAPI) {
 			parameters: Type.Object({
 				team: Type.Optional(Type.String({ description: "Team name; optional only when exactly one team exists" })),
 				teammate: Type.Optional(Type.String({ description: "Filter to one teammate name" })),
-				kind: Type.Optional(Type.String({ description: "Filter to one normalized event kind" })),
+				kind: Type.Optional(
+					Type.Array(Type.String({ minLength: 1 }), {
+						minItems: 1,
+						description: "Filter to any of these normalized event kinds",
+					}),
+				),
 				search: Type.Optional(Type.String({ description: "Case-insensitive substring search over summary, teammate, direction, kind, and details" })),
 				since: Type.Optional(Type.String({ description: "ISO timestamp filter; only entries at or after this time" })),
 				limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, description: "Max rows to return, default 20, maximum 100" })),
