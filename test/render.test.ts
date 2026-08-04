@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { MarkdownTheme } from "@earendil-works/pi-tui";
 
-import { stripAnsi, visibleLength } from "../render-support/ansi.ts";
+import { stableRenderWidth, stripAnsi, visibleLength } from "../render-support/ansi.ts";
 import { glyphs } from "../render-support/glyphs.ts";
 import {
 	TeamLines,
@@ -80,7 +80,7 @@ describe("teamStatusLines", () => {
 	};
 
 	test("renders a stat-line header and one tree row per member", () => {
-		const lines = teamStatusLines(identityTheme, "demo-team", statuses);
+		const lines = teamStatusLines(identityTheme, "demo-team", statuses).map(teamLineText);
 		expect(lines).toHaveLength(4);
 		expect(lines[0]).toContain("Team Status demo-team");
 		expect(lines[0]).toContain("3 members");
@@ -90,19 +90,19 @@ describe("teamStatusLines", () => {
 	});
 
 	test("aligns the status word column across rows", () => {
-		const lines = teamStatusLines(identityTheme, "demo-team", statuses);
+		const lines = teamStatusLines(identityTheme, "demo-team", statuses).map(teamLineText);
 		const wordColumns = [lines[1]!.indexOf("working"), lines[2]!.indexOf("waiting"), lines[3]!.indexOf("waiting")];
 		expect(new Set(wordColumns).size).toBe(1);
 	});
 
 	test("colors each status word by its semantic token", () => {
-		const lines = teamStatusLines(taggingTheme, "demo-team", statuses);
+		const lines = teamStatusLines(taggingTheme, "demo-team", statuses).map(teamLineText);
 		expect(lines[1]).toContain("«success:working");
 		expect(lines[2]).toContain("«warning:waiting");
 	});
 
 	test("uses the Team Log actor colors for member names", () => {
-		const lines = teamStatusLines(taggingTheme, "demo-team", statuses, ["implementer", "reviewer"]);
+		const lines = teamStatusLines(taggingTheme, "demo-team", statuses, ["implementer", "reviewer"]).map(teamLineText);
 		expect(lines[1]).toContain("«mdCode:implementer");
 		expect(lines[2]).toContain("«accent:main");
 		expect(lines[3]).toContain("«customMessageLabel:reviewer");
@@ -114,7 +114,7 @@ describe("allTeamsStatusLines", () => {
 		const lines = allTeamsStatusLines(identityTheme, {
 			alpha: { main: { word: "waiting", phrase: "", updated: "July 16, 22:00:00" } },
 			beta: { main: { word: "working", phrase: "on it", updated: "July 16, 22:00:01" } },
-		});
+		}).map(teamLineText);
 		expect(lines[0]).toContain("2 teams");
 		expect(lines[1]).toContain("alpha");
 		expect(lines[2]).toContain("waiting");
@@ -130,7 +130,7 @@ describe("allTeamsStatusLines", () => {
 				beta: { reviewer: { word: "waiting", phrase: "", updated: "July 16, 22:00:01" } },
 			},
 			["scout", "reviewer"],
-		);
+		).map(teamLineText);
 		expect(lines.join("\n")).toContain("«mdCode:scout");
 		expect(lines.join("\n")).toContain("«customMessageLabel:reviewer");
 	});
@@ -488,6 +488,40 @@ describe("renderTeamToolResult", () => {
 		const header = component.render(200)[0];
 		expect(header).toContain("«mdCode:implementer»");
 		expect(header).toContain("«customMessageLabel:reviewer»");
+	});
+
+	test("right-aligns Team Status timestamps and truncates phrases to the remaining width", () => {
+		const width = 80;
+		const component = renderTeamToolResult(
+			"teamstatus",
+			{
+				details: {
+					team: "demo-team",
+					status: {
+						afterword: {
+							word: "completed",
+							phrase: "Translated and verified the afterword; no non-English prose remains",
+							updated: "August 04, 21:31:00",
+						},
+						readme: { word: "completed", phrase: "Verified README", updated: "August 04, 21:31:33" },
+					},
+				},
+			},
+			{ expanded: false },
+			identityTheme,
+			{},
+		);
+		const rows = component.render(width).slice(1);
+		const plainRows = rows.map(stripAnsi);
+
+		expect(rows).toHaveLength(2);
+		for (const row of rows) expect(visibleLength(row)).toBe(stableRenderWidth(width));
+		expect(plainRows[0]).toEndWith("August 04, 21:31:00");
+		expect(plainRows[1]).toEndWith("August 04, 21:31:33");
+		for (const row of plainRows) expect(row).not.toContain(" · August");
+		expect(plainRows[0]!.indexOf("August")).toBe(plainRows[1]!.indexOf("August"));
+		expect(plainRows[0]).toContain(g.ellipsis);
+		expect(plainRows[0]).not.toContain("no non-English prose remains");
 	});
 
 	test("keeps a teammate color consistent across Team Status and Team Log", () => {

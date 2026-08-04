@@ -46,14 +46,28 @@ interface TeamLogRenderView {
 	filters?: Record<string, unknown>;
 }
 
-/** A rendered line; the prefixed form re-applies its prefix (e.g. a quote bar) to wrapped continuations. */
-export type TeamLine = string | { prefix: string; text: string };
+/** A rendered line with optional wrapping or right-aligned layout metadata. */
+export type TeamLine = string | { prefix: string; text: string } | { left: string; right: string };
+
+function isRightAlignedTeamLine(line: TeamLine): line is { left: string; right: string } {
+	return typeof line !== "string" && "right" in line;
+}
 
 export function teamLineText(line: TeamLine): string {
-	return typeof line === "string" ? line : `${line.prefix}${line.text}`.trimEnd();
+	if (typeof line === "string") return line;
+	if (isRightAlignedTeamLine(line)) return `${line.left}${line.right}`.trimEnd();
+	return `${line.prefix}${line.text}`.trimEnd();
+}
+
+/** rightAlignedLine("left", "right", 12) === "left   right" */
+function rightAlignedLine(left: string, right: string, width: number): string {
+	const rightText = truncateToWidth(right, width, glyphs().ellipsis);
+	const leftWidth = Math.max(0, width - visibleLength(rightText));
+	return `${truncateToWidth(left, leftWidth, glyphs().ellipsis, true)}${rightText}`;
 }
 
 function wrapTeamLine(line: TeamLine, width: number): string[] {
+	if (isRightAlignedTeamLine(line)) return [rightAlignedLine(line.left, line.right, width)];
 	if (typeof line === "string") {
 		const wrapped = wrapTextWithAnsi(line, width);
 		return wrapped.length > 0 ? wrapped : [""];
@@ -66,6 +80,10 @@ function wrapTeamLine(line: TeamLine, width: number): string[] {
 
 function clipToWidth(line: string, width: number): string {
 	return truncateToWidth(line, Math.max(1, width), glyphs().ellipsis);
+}
+
+function clipTeamLine(line: TeamLine, width: number): string {
+	return isRightAlignedTeamLine(line) ? rightAlignedLine(line.left, line.right, width) : clipToWidth(teamLineText(line), width);
 }
 
 /** Clips each logical line to the render width (collapsed) or wraps it (expanded). */
@@ -88,7 +106,7 @@ export class TeamLines {
 		const targetWidth = Math.max(1, stableRenderWidth(width));
 		this.cachedLines =
 			this.mode === "clip"
-				? this.lines.map((line) => clipToWidth(teamLineText(line), targetWidth))
+				? this.lines.map((line) => clipTeamLine(line, targetWidth))
 				: this.lines.flatMap((line) => wrapTeamLine(line, targetWidth));
 		this.cachedWidth = width;
 		return this.cachedLines;
@@ -151,19 +169,20 @@ export function statusWordToken(word: string): string {
 	return STATUS_WORD_TOKENS[word.trim().toLowerCase()] ?? "accent";
 }
 
-function memberRows(theme: ThemeLike, statuses: Record<string, TeamStatusView>, roster: string[], indent = ""): string[] {
+function memberRows(theme: ThemeLike, statuses: Record<string, TeamStatusView>, roster: string[], indent = ""): TeamLine[] {
 	const names = Object.keys(statuses);
 	const nameWidth = Math.max(...names.map((name) => name.length));
 	const wordWidth = Math.max(...names.map((name) => statuses[name]!.word.length));
 	return names.map((name, index) => {
 		const entry = statuses[name]!;
 		const branch = index === names.length - 1 ? "└" : "├";
-		const tail = statLine(theme, [entry.phrase, theme.fg("dim", entry.updated)]);
-		return `${indent}${treeConnector(theme, branch)}${theme.fg(actorHueToken(name, roster), padVisible(name, nameWidth))}  ${theme.fg(statusWordToken(entry.word), padVisible(entry.word, wordWidth))}  ${tail}`;
+		const left = `${indent}${treeConnector(theme, branch)}${theme.fg(actorHueToken(name, roster), padVisible(name, nameWidth))}  ${theme.fg(statusWordToken(entry.word), padVisible(entry.word, wordWidth))}  ${entry.phrase}`;
+		const right = theme.fg("dim", entry.updated);
+		return { left, right };
 	});
 }
 
-export function teamStatusLines(theme: ThemeLike, team: string, statuses: Record<string, TeamStatusView>, roster: string[] = []): string[] {
+export function teamStatusLines(theme: ThemeLike, team: string, statuses: Record<string, TeamStatusView>, roster: string[] = []): TeamLine[] {
 	const members = Object.values(statuses);
 	const workingCount = members.filter((member) => statusWordToken(member.word) === "success").length;
 	const stats = [theme.fg("muted", plural(members.length, "member"))];
@@ -171,9 +190,9 @@ export function teamStatusLines(theme: ThemeLike, team: string, statuses: Record
 	return [headerLine(theme, "Team Status", theme.fg("accent", team), stats), ...memberRows(theme, statuses, roster)];
 }
 
-export function allTeamsStatusLines(theme: ThemeLike, teams: Record<string, Record<string, TeamStatusView>>, roster: string[] = []): string[] {
+export function allTeamsStatusLines(theme: ThemeLike, teams: Record<string, Record<string, TeamStatusView>>, roster: string[] = []): TeamLine[] {
 	const teamNames = Object.keys(teams);
-	const lines = [headerLine(theme, "Team Status", theme.fg("muted", plural(teamNames.length, "team")))];
+	const lines: TeamLine[] = [headerLine(theme, "Team Status", theme.fg("muted", plural(teamNames.length, "team")))];
 	teamNames.forEach((teamName, index) => {
 		const branch = index === teamNames.length - 1 ? "└" : "├";
 		lines.push(`${treeConnector(theme, branch)}${theme.fg("accent", teamName)}`);
