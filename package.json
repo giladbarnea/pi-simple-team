@@ -41,6 +41,7 @@
   "pi": {
     "extensions": [
       "./index.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/giladbarnea/pi-simple-team/main/screenshots/pi-simple-team-banner.png"
   }
 }
