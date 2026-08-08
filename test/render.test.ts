@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { Container, type TUI } from "@earendil-works/pi-tui";
+import { initTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import type { MarkdownTheme } from "@earendil-works/pi-tui";
 
 import { stableRenderWidth, stripAnsi, visibleLength } from "../render-support/ansi.ts";
@@ -22,6 +24,8 @@ import {
 	type ThemeLike,
 } from "../render.ts";
 import { timeOfDay, type TeamLogEntry } from "../teamlog.ts";
+
+initTheme("dark");
 
 const identityTheme: ThemeLike = {
 	bold: (text: string) => text,
@@ -604,6 +608,11 @@ describe("TeamLines", () => {
 
 describe("markdown views in a narrow terminal", () => {
 	const NARROW = 54;
+	const VERY_NARROW = 9;
+
+	function assertLinesFit(lines: string[], width: number): void {
+		for (const line of lines) expect(visibleLength(line)).toBeLessThanOrEqual(width);
+	}
 
 	test("a teammate message header is clipped instead of overflowing", () => {
 		const component = renderTeamMessage(
@@ -626,5 +635,62 @@ describe("markdown views in a narrow terminal", () => {
 			identityMarkdownTheme,
 		);
 		for (const line of component.render(NARROW)) expect(visibleLength(line)).toBeLessThanOrEqual(NARROW);
+	});
+
+	test("team spawn call and result fit a nine-column render width", () => {
+		const args = { team: "visible-team", teammates: [{ name: "reviewer", model: "fake-model", thinking: "low" }] };
+		const call = renderTeamToolCall("team_spawn", args, identityTheme, { executionStarted: true, isPartial: true });
+		const result = renderTeamToolResult("team_spawn", { details: { team: "visible-team" } }, { expanded: false }, identityTheme, { args });
+		assertLinesFit(call.render(VERY_NARROW), VERY_NARROW);
+		assertLinesFit(result.render(VERY_NARROW), VERY_NARROW);
+	});
+
+	test("shared prefixed rows and message bodies fit a nine-column render width", () => {
+		assertLinesFit(new TeamLines([{ prefix: `  ${g.codeBar} `, text: "hello" }], "wrap").render(VERY_NARROW), VERY_NARROW);
+		const send = renderTeamToolResult("teamsend", { details: { to: ["reviewer"] } }, { expanded: false }, identityTheme, { args: { message: "hello" } }, identityMarkdownTheme);
+		const message = renderTeamMessage({ details: { team: "team", from: "reviewer", sentAt: "12:00:00", message: "hello" } }, identityTheme, identityMarkdownTheme);
+		assertLinesFit(send.render(VERY_NARROW), VERY_NARROW);
+		assertLinesFit(message!.render(VERY_NARROW), VERY_NARROW);
+	});
+
+	test("keeps the composed in-progress Team Spawn row within a nine-column render width", () => {
+		const toolDefinition = (name: "teamsend" | "team_spawn") => ({
+			name,
+			label: name,
+			description: name,
+			parameters: {},
+			renderShell: "self" as const,
+			renderCall: (args: Record<string, unknown>, theme: ThemeLike, context: { executionStarted?: boolean; isPartial?: boolean; cwd?: string }) => renderTeamToolCall(name, args, theme, context),
+			renderResult: (result: { isError?: boolean; details?: unknown }, options: { expanded: boolean }, theme: ThemeLike, context: { args?: Record<string, unknown>; isError?: boolean; cwd?: string }) =>
+				renderTeamToolResult(name, result, options, theme, context, name === "teamsend" ? identityMarkdownTheme : undefined),
+		});
+		const ui = { requestRender() {} } as unknown as TUI;
+		const send = new ToolExecutionComponent(
+			"teamsend",
+			"send-call",
+			{ message: "START_POC_20260808" },
+			undefined,
+			toolDefinition("teamsend") as never,
+			ui,
+			process.cwd(),
+		);
+		send.markExecutionStarted();
+		send.updateResult({ content: [{ type: "text", text: "accepted" }], details: { to: ["alpha"] }, isError: false });
+
+		const spawn = new ToolExecutionComponent(
+			"team_spawn",
+			"spawn-call",
+			{ team: "visible-team", teammates: [{ name: "alpha", model: "fake-model", thinking: "low" }] },
+			undefined,
+			toolDefinition("team_spawn") as never,
+			ui,
+			process.cwd(),
+		);
+		spawn.markExecutionStarted();
+
+		const composed = new Container();
+		composed.addChild(send);
+		composed.addChild(spawn);
+		assertLinesFit(composed.render(VERY_NARROW), VERY_NARROW);
 	});
 });

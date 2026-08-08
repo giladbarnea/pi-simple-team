@@ -1,13 +1,22 @@
-import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import * as http from "node:http";
+import { defineTool, getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { renderTeamMessage } from "./render.ts";
 
 type JsonRecord = Record<string, unknown>;
+
+const teamMessageType = "pi-simple-team";
+const defaultVisibleInterruptWaitTimeoutMilliseconds = 25_000;
+const visibleLifecycleRetryAttempts = 3;
 
 export interface ChildRuntimeConfig {
 	callbackUrl: string;
 	callbackToken: string;
 	teamName: string;
 	teammateName: string;
+	visible: boolean;
+	participants: string[];
+	interruptWaitTimeoutMilliseconds?: number;
 }
 
 function requiredEnvironmentVariable(name: string): string {
@@ -16,12 +25,23 @@ function requiredEnvironmentVariable(name: string): string {
 	return value;
 }
 
+function readParticipants(): string[] {
+	const value = requiredEnvironmentVariable("PI_SIMPLE_TEAM_PARTICIPANTS");
+	const participants = JSON.parse(value) as unknown;
+	if (!Array.isArray(participants) || participants.some((participant) => typeof participant !== "string")) {
+		throw new Error("PI_SIMPLE_TEAM_PARTICIPANTS must be a JSON string array");
+	}
+	return participants;
+}
+
 function readRequiredChildRuntimeConfig(): ChildRuntimeConfig {
 	return {
 		callbackUrl: requiredEnvironmentVariable("PI_SIMPLE_TEAM_CALLBACK_URL"),
 		callbackToken: requiredEnvironmentVariable("PI_SIMPLE_TEAM_CALLBACK_TOKEN"),
 		teamName: requiredEnvironmentVariable("PI_SIMPLE_TEAM_TEAM"),
 		teammateName: requiredEnvironmentVariable("PI_SIMPLE_TEAM_MEMBER"),
+		visible: process.env.PI_SIMPLE_TEAM_VISIBLE_CHILD === "1",
+		participants: readParticipants(),
 	};
 }
 
@@ -58,7 +78,172 @@ function toolResult(payload: JsonRecord): { content: [{ type: "text"; text: stri
 	};
 }
 
+function writeJson(response: http.ServerResponse, statusCode: number, payload: JsonRecord): void {
+	const body = JSON.stringify(payload);
+	response.writeHead(statusCode, {
+		"content-type": "application/json",
+		"content-length": Buffer.byteLength(body),
+	});
+	response.end(body);
+}
+
+async function readJsonBody(request: http.IncomingMessage): Promise<JsonRecord> {
+	const chunks: Buffer[] = [];
+	for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+	return JSON.parse(Buffer.concat(chunks).toString("utf8")) as JsonRecord;
+}
+
+interface VisibleDelivery {
+	team: string;
+	from: string;
+	to: string;
+	sentAt: string;
+	message: string;
+	formattedMessage: string;
+	interrupt: boolean;
+}
+
+function startVisibleChild(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
+	let server: http.Server | undefined;
+	let activeContext: ExtensionContext | undefined;
+	let idle = true;
+	let idleWaiters: Array<() => void> = [];
+	let lifecycleQueue: Promise<void> = Promise.resolve();
+	let lifecycleError: Error | undefined;
+
+	const notifyParent = (event: JsonRecord): Promise<void> => {
+		lifecycleQueue = lifecycleQueue.then(async () => {
+			if (lifecycleError) return;
+			for (let attempt = 1; attempt <= visibleLifecycleRetryAttempts; attempt += 1) {
+				try {
+					await callParent(config, "visible_event", { event });
+					return;
+				} catch (error) {
+					if (attempt === visibleLifecycleRetryAttempts) lifecycleError = error instanceof Error ? error : new Error(String(error));
+				}
+			}
+		});
+		return lifecycleQueue;
+	};
+
+	const waitForIdle = async (): Promise<void> => {
+		if (idle) return;
+		await new Promise<void>((resolve, reject) => {
+			let resolveIdle: () => void;
+			const timeout = setTimeout(() => {
+				idleWaiters = idleWaiters.filter((waiter) => waiter !== resolveIdle);
+				reject(new Error("Timed out waiting for visible child to settle after interrupt"));
+			}, config.interruptWaitTimeoutMilliseconds ?? defaultVisibleInterruptWaitTimeoutMilliseconds);
+			resolveIdle = (): void => {
+				clearTimeout(timeout);
+				resolve();
+			};
+			idleWaiters.push(resolveIdle);
+		});
+	};
+
+	const markIdle = (): void => {
+		idle = true;
+		activeContext = undefined;
+		const waiters = idleWaiters;
+		idleWaiters = [];
+		for (const resolve of waiters) resolve();
+	};
+
+	pi.on("agent_start", (event, context) => {
+		idle = false;
+		activeContext = context;
+		notifyParent({ type: "agent_start" });
+	});
+	pi.on("agent_end", (event) => {
+		notifyParent({ type: "agent_end", messages: event.messages });
+	});
+	pi.on("agent_settled", () => {
+		notifyParent({ type: "agent_settled" });
+		markIdle();
+	});
+	pi.on("tool_execution_start", (event) => {
+		notifyParent({ type: "tool_execution_start", toolCallId: event.toolCallId, toolName: event.toolName, args: event.args });
+	});
+	pi.on("tool_execution_end", (event) => {
+		notifyParent({ type: "tool_execution_end", toolCallId: event.toolCallId, toolName: event.toolName, isError: event.isError, result: event.result });
+	});
+	pi.on("session_start", async (_event, context) => {
+		server = http.createServer((request, response) => {
+			void (async () => {
+				try {
+					const body = await readJsonBody(request);
+					if (body.token !== config.callbackToken) {
+						writeJson(response, 403, { error: "invalid token" });
+						return;
+					}
+
+					if (body.tool !== "deliver") {
+						writeJson(response, 400, { error: `unknown tool: ${String(body.tool)}` });
+						return;
+					}
+
+					const delivery = body.args as unknown as VisibleDelivery;
+					if (lifecycleError) throw new Error(`Visible lifecycle callback failed: ${lifecycleError.message}`);
+					if (delivery.interrupt && activeContext) {
+						activeContext.abort();
+						await waitForIdle();
+					}
+
+					pi.sendMessage(
+						{
+							customType: teamMessageType,
+							content: delivery.formattedMessage,
+							display: true,
+							details: {
+								team: delivery.team,
+								from: delivery.from,
+								to: delivery.to,
+								sentAt: delivery.sentAt,
+								message: delivery.message,
+							},
+						},
+						{ deliverAs: "steer", triggerTurn: true },
+					);
+					writeJson(response, 200, { accepted: true, team: config.teamName, from: delivery.from, to: delivery.to, interrupt: delivery.interrupt });
+				} catch (error) {
+					writeJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
+				}
+			})();
+		});
+
+		await new Promise<void>((resolve, reject) => {
+			server!.once("error", reject);
+			server!.listen(0, "127.0.0.1", () => resolve());
+		});
+		const address = server.address();
+		if (!address || typeof address === "string") throw new Error("Visible teammate server did not get a port");
+
+		try {
+			await callParent(config, "visible_register", { url: `http://127.0.0.1:${address.port}/deliver` });
+		} catch (error) {
+			context.shutdown();
+			throw error;
+		}
+	});
+
+	pi.on("session_shutdown", async (event) => {
+		markIdle();
+		await notifyParent({ type: "session_shutdown", reason: event.reason });
+		await new Promise<void>((resolve, reject) => {
+			if (!server) {
+				resolve();
+				return;
+			}
+			server.close((error) => (error ? reject(error) : resolve()));
+		});
+	});
+}
+
 export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
+	pi.registerMessageRenderer(teamMessageType, (message, _options, theme) => renderTeamMessage(message, theme, getMarkdownTheme(), config.participants));
+	if (config.visible) startVisibleChild(pi, config);
+
 	pi.registerTool(
 		defineTool({
 			name: "teamsend",

@@ -32,6 +32,7 @@ export interface TeamStatusView {
 export interface TeamMessageDetails {
 	team: string;
 	from: string;
+	to?: string;
 	sentAt: string;
 	message: string;
 }
@@ -72,10 +73,10 @@ function wrapTeamLine(line: TeamLine, width: number): string[] {
 		const wrapped = wrapTextWithAnsi(line, width);
 		return wrapped.length > 0 ? wrapped : [""];
 	}
-	const contentWidth = Math.max(10, width - visibleLength(line.prefix));
+	const contentWidth = Math.max(1, width - visibleLength(line.prefix));
 	const wrapped = wrapTextWithAnsi(line.text, contentWidth);
 	const parts = wrapped.length > 0 ? wrapped : [""];
-	return parts.map((part) => `${line.prefix}${part}`.trimEnd());
+	return parts.map((part) => clipToWidth(`${line.prefix}${part}`.trimEnd(), width));
 }
 
 function clipToWidth(line: string, width: number): string {
@@ -104,10 +105,11 @@ export class TeamLines {
 	render(width: number): string[] {
 		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
 		const targetWidth = Math.max(1, stableRenderWidth(width));
-		this.cachedLines =
+		const renderedLines =
 			this.mode === "clip"
 				? this.lines.map((line) => clipTeamLine(line, targetWidth))
 				: this.lines.flatMap((line) => wrapTeamLine(line, targetWidth));
+		this.cachedLines = renderedLines.map((line) => clipToWidth(line, targetWidth));
 		this.cachedWidth = width;
 		return this.cachedLines;
 	}
@@ -540,7 +542,7 @@ export function teamMessageLines(theme: ThemeLike, details: TeamMessageDetails, 
 	const header = [
 		theme.fg("accent", `${g.diamond} `),
 		theme.fg(actorHueToken(details.from, roster), theme.bold(details.from)),
-		theme.fg("muted", ` ${g.arrow} main`),
+		theme.fg("muted", ` ${g.arrow} ${details.to ?? "main"}`),
 		theme.fg("dim", `${g.dot}${details.team}${g.dot}${details.sentAt}`),
 	].join("");
 	return [header, ...quotedBody(theme, details.message, { lineLimit: Number.POSITIVE_INFINITY, barToken: "accent" })];
@@ -551,7 +553,7 @@ function teamMessageHeader(theme: ThemeLike, details: TeamMessageDetails, roster
 	return [
 		theme.fg("accent", `${g.diamond} `),
 		theme.fg(actorHueToken(details.from, roster), theme.bold(details.from)),
-		theme.fg("muted", ` ${g.arrow} main`),
+		theme.fg("muted", ` ${g.arrow} ${details.to ?? "main"}`),
 		theme.fg("dim", `${g.dot}${details.team}${g.dot}${details.sentAt}`),
 	].join("");
 }
@@ -579,15 +581,15 @@ class TeamSendView {
 
 	render(width: number): string[] {
 		const header = clipToWidth(this.headerStr, width);
-		const bodyWidth = Math.max(10, width - this.barWidth);
+		const bodyWidth = Math.max(1, width - this.barWidth);
 		const bodyLines = this.md.render(bodyWidth);
-		const barred = bodyLines.map((line) => `${this.barStr}${line}`);
+		const barred = bodyLines.map((line) => clipToWidth(`${this.barStr}${line}`, width));
 		if (this.expanded) return [header, ...barred];
 		const shown = barred.slice(0, SEND_PREVIEW_LINES);
 		const hidden = barred.length - SEND_PREVIEW_LINES;
 		if (hidden > 0) {
 			const g = glyphs();
-			shown.push(`${this.barStr}${this.theme.fg("dim", `${g.ellipsis} ${hidden} more line${hidden === 1 ? "" : "s"}${g.dot}ctrl+o to expand`)}`);
+			shown.push(clipToWidth(`${this.barStr}${this.theme.fg("dim", `${g.ellipsis} ${hidden} more line${hidden === 1 ? "" : "s"}${g.dot}ctrl+o to expand`)}`, width));
 		}
 		return [header, ...shown];
 	}
@@ -611,9 +613,9 @@ class TeamMessageView {
 	}
 
 	render(width: number): string[] {
-		const bodyWidth = Math.max(10, width - this.barWidth);
+		const bodyWidth = Math.max(1, width - this.barWidth);
 		const bodyLines = this.md.render(bodyWidth);
-		return [clipToWidth(this.headerLine, width), ...bodyLines.map((line) => `${this.barStr}${line}`)];
+		return [clipToWidth(this.headerLine, width), ...bodyLines.map((line) => clipToWidth(`${this.barStr}${line}`, width))];
 	}
 }
 

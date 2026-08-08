@@ -45,12 +45,20 @@ interface TeammateSpec {
 	thinking?: ThinkingLevel;
 }
 
+type TeammateTransport = "rpc" | "herdr";
+
 interface TeammateState {
 	name: string;
 	prompt: string;
 	model: string;
 	thinking: ThinkingLevel;
-	process: ChildProcess;
+	transport: TeammateTransport;
+	process?: ChildProcess;
+	paneId?: string;
+	visibleUrl?: string;
+	visibleReady?: Promise<void>;
+	resolveVisibleReady?: () => void;
+	rejectVisibleReady?: (error: Error) => void;
 	busy: boolean;
 	alive: boolean;
 	pendingRequests: Map<string, PendingRequest>;
@@ -63,6 +71,7 @@ interface TeamState {
 	owner: symbol;
 	ownerPi: ExtensionAPI;
 	name: string;
+	showOnHerdrPanes: boolean;
 	teamPrompt: string;
 	members: Map<string, TeammateState>;
 	statuses: Map<string, TeamStatus>;
@@ -74,6 +83,7 @@ interface TeamState {
 const teamLiteExtensionPath = fileURLToPath(import.meta.url);
 const thinkingLevels = ["low", "medium", "high", "xhigh", "max"] as const;
 const defaultThinkingLevel: ThinkingLevel = "xhigh";
+const visibleDeliveryTimeoutMilliseconds = 30_000;
 const teamMessageType = "pi-simple-team";
 const teams = new Map<string, TeamState>();
 const callbackToken = crypto.randomBytes(24).toString("hex");
@@ -100,6 +110,41 @@ function toolResult(payload: JsonRecord) {
 
 function sleep(milliseconds: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+interface CommandResult {
+	stdout: string;
+	stderr: string;
+}
+
+function runCommand(command: string, args: string[], timeoutMilliseconds = 30_000): Promise<CommandResult> {
+	return new Promise((resolve, reject) => {
+		childProcess.execFile(command, args, { timeout: timeoutMilliseconds, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+			if (error) {
+				reject(new Error(`${command} ${args.join(" ")} failed: ${error.message}${stderr.trim() ? `\n${stderr.trim()}` : ""}`));
+				return;
+			}
+			resolve({ stdout, stderr });
+		});
+	});
+}
+
+async function validateHerdrAvailability(): Promise<string> {
+	const tabId = process.env.HERDR_TAB_ID?.trim();
+	if (!tabId) throw new Error("showOnHerdrPanes requires HERDR_TAB_ID in the main Pi process");
+
+	let result: CommandResult;
+	try {
+		result = await runCommand("herdr", ["status", "--json"], 10_000);
+	} catch (error) {
+		throw new Error(`showOnHerdrPanes requires an available Herdr server: ${error instanceof Error ? error.message : String(error)}`);
+	}
+
+	const status = JSON.parse(result.stdout) as { server?: { running?: boolean; compatible?: boolean } };
+	if (!status.server?.running || status.server.compatible === false) {
+		throw new Error("showOnHerdrPanes requires a running compatible Herdr server");
+	}
+	return tabId;
 }
 
 function serializeJsonLine(value: unknown): string {
@@ -166,8 +211,8 @@ function handleTeammateEvent(team: TeamState, teammate: TeammateState, event: Js
 }
 
 function sendRpc(teammate: TeammateState, command: JsonRecord, timeoutMilliseconds = 30_000): Promise<RpcResponse> {
-	if (!teammate.alive || teammate.process.exitCode !== null) {
-		throw new Error(`Teammate ${teammate.name} is not alive`);
+	if (teammate.transport !== "rpc" || !teammate.process || !teammate.alive || teammate.process.exitCode !== null) {
+		throw new Error(`Teammate ${teammate.name} is not alive through RPC`);
 	}
 
 	const id = `team-${++requestCounter}`;
@@ -180,7 +225,7 @@ function sendRpc(teammate: TeammateState, command: JsonRecord, timeoutMillisecon
 		}, timeoutMilliseconds);
 
 		teammate.pendingRequests.set(id, { resolve, reject, timeout });
-		teammate.process.stdin?.write(serializeJsonLine(payload));
+		teammate.process!.stdin?.write(serializeJsonLine(payload));
 	});
 }
 
@@ -190,6 +235,8 @@ async function requireSuccessfulResponse(response: RpcResponse, action: string):
 }
 
 async function getTeammateBusy(teammate: TeammateState): Promise<boolean> {
+	if (teammate.transport === "herdr") return teammate.busy;
+
 	const response = await sendRpc(teammate, { type: "get_state" }, 10_000);
 	if (!response.success) return teammate.busy;
 	const data = response.data as { isStreaming?: boolean } | undefined;
@@ -250,6 +297,33 @@ function formatTeammateMessage(team: TeamState, from: string, message: string): 
 	return [`[from ${from} on team ${team.name}]`, message, "", "Current team status:", JSON.stringify(formatStatus(team), null, 2)].join("\n");
 }
 
+async function deliverVisibleMessage(team: TeamState, from: string, recipient: TeammateState, message: string, formattedMessage: string, interrupt: boolean): Promise<void> {
+	if (!recipient.alive || !recipient.visibleUrl) throw new Error(`Visible teammate ${recipient.name} is not ready`);
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), visibleDeliveryTimeoutMilliseconds);
+	try {
+		const response = await fetch(recipient.visibleUrl, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				token: callbackToken,
+				tool: "deliver",
+				args: { team: team.name, from, to: recipient.name, sentAt: nowText(), message, formattedMessage, interrupt },
+			}),
+			signal: controller.signal,
+		});
+		if (!response.ok) throw new Error(`Visible teammate ${recipient.name} rejected delivery: ${response.status} ${await response.text()}`);
+		const result = (await response.json()) as { accepted?: boolean };
+		if (!result.accepted) throw new Error(`Visible teammate ${recipient.name} did not accept delivery`);
+		appendTeamLog(team, { team: team.name, teammate: recipient.name, direction: "runtime", kind: "ack", summary: "visible message accepted" });
+	} catch (error) {
+		if (controller.signal.aborted) throw new Error(`Timed out waiting for visible teammate ${recipient.name} delivery`);
+		throw error;
+	} finally {
+		clearTimeout(timeout);
+	}
+}
+
 async function deliverToTeammate(team: TeamState, from: string, recipient: TeammateState, message: string, interrupt: boolean): Promise<void> {
 	const formattedMessage = formatTeammateMessage(team, from, message);
 	appendTeamLog(team, {
@@ -260,6 +334,10 @@ async function deliverToTeammate(team: TeamState, from: string, recipient: Teamm
 		summary: preview(message),
 		details: { from, to: recipient.name, interrupt },
 	});
+	if (recipient.transport === "herdr") {
+		await deliverVisibleMessage(team, from, recipient, message, formattedMessage, interrupt);
+		return;
+	}
 
 	if (interrupt && (recipient.busy || (await getTeammateBusy(recipient)))) {
 		await requireSuccessfulResponse(await sendRpc(recipient, { type: "abort" }, 60_000), `abort ${recipient.name}`);
@@ -357,10 +435,60 @@ function logStatusDeclaration(team: TeamState, participant: string, word?: strin
 	});
 }
 
-// TODO: participants is unused. Smell.
-function startTeammate(team: TeamState, teammateSpec: TeammateSpec, participants: string[]): TeammateState {
+function createTeammateState(team: TeamState, teammateSpec: TeammateSpec): TeammateState {
 	const teammateName = compactName(teammateSpec.name);
 	const thinking = teammateSpec.thinking ?? defaultThinkingLevel;
+	let resolveVisibleReady: (() => void) | undefined;
+	let rejectVisibleReady: ((error: Error) => void) | undefined;
+	const visibleReady = team.showOnHerdrPanes
+		? new Promise<void>((resolve, reject) => {
+			resolveVisibleReady = resolve;
+			rejectVisibleReady = reject;
+		})
+		: undefined;
+
+	return {
+		name: teammateName,
+		prompt: teammateSpec.prompt,
+		model: teammateSpec.model,
+		thinking,
+		transport: team.showOnHerdrPanes ? "herdr" : "rpc",
+		visibleReady,
+		resolveVisibleReady,
+		rejectVisibleReady,
+		busy: false,
+		alive: true,
+		pendingRequests: new Map(),
+		deliveryQueue: Promise.resolve(),
+		recentEvents: [],
+		stderr: "",
+	};
+}
+
+function childEnvironmentOverrides(team: TeamState, teammate: TeammateState, participants: string[], visible: boolean): Record<string, string> {
+	return {
+		PI_SIMPLE_TEAM_CHILD: "1",
+		PI_SIMPLE_TEAM_VISIBLE_CHILD: visible ? "1" : "0",
+		PI_SIMPLE_TEAM_CALLBACK_URL: callbackUrl,
+		PI_SIMPLE_TEAM_CALLBACK_TOKEN: callbackToken,
+		PI_SIMPLE_TEAM_TEAM: team.name,
+		PI_SIMPLE_TEAM_MEMBER: teammate.name,
+		PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(participants),
+	};
+}
+
+function appendSpawnLog(team: TeamState, teammate: TeammateState): void {
+	appendTeamLog(team, {
+		team: team.name,
+		teammate: teammate.name,
+		direction: "runtime",
+		kind: "spawn",
+		summary: `spawned ${teammate.name} (model=${teammate.model}, thinking=${teammate.thinking})`,
+		details: { model: teammate.model, thinking: teammate.thinking, transport: teammate.transport, paneId: teammate.paneId },
+	});
+}
+
+function attachRpcTeammate(team: TeamState, teammate: TeammateState, participants: string[]): void {
 	const args = [
 		"--mode",
 		"rpc",
@@ -369,39 +497,18 @@ function startTeammate(team: TeamState, teammateSpec: TeammateSpec, participants
 		"--no-prompt-templates",
 		"--no-themes",
 		"--model",
-		teammateSpec.model,
+		teammate.model,
 		"--thinking",
-		thinking,
+		teammate.thinking,
 		"--system-prompt",
-		composeSystemPrompt(team.name, team.teamPrompt, teammateName, teammateSpec.prompt, participants),
+		composeSystemPrompt(team.name, team.teamPrompt, teammate.name, teammate.prompt, participants),
 	];
-
 	const proc = childProcess.spawn("pi", args, {
 		cwd: process.cwd(),
 		stdio: ["pipe", "pipe", "pipe"],
-		env: {
-			...process.env,
-			PI_SIMPLE_TEAM_CHILD: "1",
-			PI_SIMPLE_TEAM_CALLBACK_URL: callbackUrl,
-			PI_SIMPLE_TEAM_CALLBACK_TOKEN: callbackToken,
-			PI_SIMPLE_TEAM_TEAM: team.name,
-			PI_SIMPLE_TEAM_MEMBER: teammateName,
-		},
+		env: { ...process.env, ...childEnvironmentOverrides(team, teammate, participants, false) },
 	});
-
-	const teammate: TeammateState = {
-		name: teammateName,
-		prompt: teammateSpec.prompt,
-		model: teammateSpec.model,
-		thinking,
-		process: proc,
-		busy: false,
-		alive: true,
-		pendingRequests: new Map(),
-		deliveryQueue: Promise.resolve(),
-		recentEvents: [],
-		stderr: "",
-	};
+	teammate.process = proc;
 
 	attachJsonlReader(proc.stdout!, (line) => {
 		if (!line.trim()) return;
@@ -411,49 +518,98 @@ function startTeammate(team: TeamState, teammateSpec: TeammateSpec, participants
 			teammate.stderr += `\n[unparsed stdout] ${line}`;
 		}
 	});
-
 	proc.stderr?.on("data", (chunk: Buffer | string) => {
 		const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
 		teammate.stderr += text;
 		appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "stderr", summary: preview(text) });
 	});
-
 	proc.on("exit", (code, signal) => {
 		teammate.alive = false;
 		teammate.busy = false;
 		rejectPendingRequests(teammate, new Error(`${teammate.name} exited (code=${code}, signal=${signal})`));
 		team.statuses.set(teammate.name, status("stopped", `Exited code=${code} signal=${signal}`));
-		appendTeamLog(team, {
-			team: team.name,
-			teammate: teammate.name,
-			direction: "runtime",
-			kind: "exit",
-			summary: `exited (code=${code}, signal=${signal})`,
-			details: { code, signal },
-		});
+		appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "exit", summary: `exited (code=${code}, signal=${signal})`, details: { code, signal } });
 	});
-
-	appendTeamLog(team, {
-		team: team.name,
-		teammate: teammate.name,
-		direction: "runtime",
-		kind: "spawn",
-		summary: `spawned ${teammate.name} (model=${teammate.model}, thinking=${teammate.thinking})`,
-		details: { model: teammate.model, thinking: teammate.thinking },
-	});
-
-	return teammate;
+	appendSpawnLog(team, teammate);
 }
 
-function shutdownTeam(team: TeamState): void {
+function parseHerdrPaneId(stdout: string, teammateName: string): string {
+	const response = JSON.parse(stdout) as { result?: { agent?: { pane_id?: string } } };
+	const paneId = response.result?.agent?.pane_id;
+	if (!paneId) throw new Error(`herdr agent start did not return a pane for ${teammateName}`);
+	return paneId;
+}
+
+async function attachVisibleTeammate(team: TeamState, teammate: TeammateState, participants: string[], herdrTabId: string): Promise<void> {
+	const systemPrompt = composeSystemPrompt(team.name, team.teamPrompt, teammate.name, teammate.prompt, participants);
+	const environment = childEnvironmentOverrides(team, teammate, participants, true);
+	const args = ["agent", "start", teammate.name, "--tab", herdrTabId, "--split", "right", "--no-focus", "--cwd", process.cwd()];
+	for (const [name, value] of Object.entries(environment)) {
+		if (value !== undefined) args.push("--env", `${name}=${value}`);
+	}
+	args.push("--", "pi", "-e", teamLiteExtensionPath, "--model", teammate.model, "--thinking", teammate.thinking, "--system-prompt", systemPrompt);
+	const result = await runCommand("herdr", args);
+	teammate.paneId = parseHerdrPaneId(result.stdout, teammate.name);
+	appendSpawnLog(team, teammate);
+
+	let readinessTimeout: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await Promise.race([
+			teammate.visibleReady!,
+			new Promise<never>((_, reject) => {
+				readinessTimeout = setTimeout(() => reject(new Error(`Timed out waiting for visible teammate ${teammate.name} readiness`)), 30_000);
+			}),
+		]);
+	} catch (error) {
+		teammate.rejectVisibleReady?.(error instanceof Error ? error : new Error(String(error)));
+		throw error;
+	} finally {
+		if (readinessTimeout) clearTimeout(readinessTimeout);
+	}
+}
+
+async function startTeammate(team: TeamState, teammate: TeammateState, participants: string[], herdrTabId?: string): Promise<void> {
+	if (teammate.transport === "herdr") {
+		await attachVisibleTeammate(team, teammate, participants, herdrTabId!);
+		return;
+	}
+	attachRpcTeammate(team, teammate, participants);
+}
+
+function isHerdrPaneNotFound(error: unknown): boolean {
+	return error instanceof Error && error.message.includes('"code":"pane_not_found"');
+}
+
+async function closeVisiblePane(teammate: TeammateState): Promise<void> {
+	if (!teammate.paneId) return;
+	try {
+		await runCommand("herdr", ["pane", "close", teammate.paneId], 10_000);
+	} catch (error) {
+		if (!isHerdrPaneNotFound(error)) throw error;
+	}
+	teammate.paneId = undefined;
+}
+
+async function shutdownTeam(team: TeamState): Promise<string[]> {
+	const errors: string[] = [];
 	for (const teammate of team.members.values()) {
 		teammate.alive = false;
+		if (teammate.transport === "herdr") {
+			try {
+				await closeVisiblePane(teammate);
+			} catch (error) {
+				errors.push(error instanceof Error ? error.message : String(error));
+			}
+			continue;
+		}
+		if (!teammate.process) continue;
 		teammate.process.kill("SIGTERM");
 		setTimeout(() => {
-			if (teammate.process.exitCode === null) teammate.process.kill("SIGKILL");
+			if (teammate.process?.exitCode === null) teammate.process.kill("SIGKILL");
 		}, 1_000).unref();
 	}
 	teams.delete(team.name);
+	return errors;
 }
 
 function closeCallbackServerIfUnused(): void {
@@ -495,6 +651,42 @@ function writeJson(response: http.ServerResponse, statusCode: number, payload: J
 	response.end(body);
 }
 
+function validateVisibleChildUrl(rawUrl: string, teammateName: string): string {
+	let url: URL;
+	try {
+		url = new URL(rawUrl);
+	} catch {
+		throw new Error(`Invalid visible teammate URL for ${teammateName}`);
+	}
+	const port = Number(url.port);
+	if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port || !Number.isInteger(port) || port < 1 || port > 65_535 || url.pathname !== "/deliver") {
+		throw new Error(`Invalid visible teammate URL for ${teammateName}`);
+	}
+	return url.toString();
+}
+
+function handleVisibleEvent(team: TeamState, teammate: TeammateState, event: JsonRecord): void {
+	if (event.type === "visible_startup_error") {
+		const error = new Error(String(event.error ?? "Visible teammate startup failed"));
+		teammate.rejectVisibleReady?.(error);
+		throw error;
+	}
+	if (event.type === "agent_start") teammate.busy = true;
+	if (event.type === "agent_end") teammate.busy = false;
+	if (event.type === "session_shutdown") {
+		teammate.alive = false;
+		teammate.busy = false;
+		teammate.visibleUrl = undefined;
+		if (event.reason === "quit") {
+			team.statuses.set(teammate.name, status("stopped", "Session shut down"));
+			appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "exit", summary: "visible session shut down", details: { reason: event.reason } });
+		}
+	}
+	pushRecentEvent(teammate, event);
+	const logInput = normalizeChildEvent(team.name, teammate.name, event);
+	if (logInput) appendTeamLog(team, logInput);
+}
+
 async function handleCallbackRequest(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
 	try {
 		const body = await readJsonBody(request);
@@ -507,6 +699,32 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 		const from = compactName(String(body.from));
 		const tool = String(body.tool);
 		const args = (body.args ?? {}) as JsonRecord;
+		const teammate = team.members.get(from);
+
+		if (tool === "visible_register") {
+			if (!teammate || teammate.transport !== "herdr") throw new Error(`Unknown visible teammate: ${from}`);
+			const url = String(args.url ?? "");
+			try {
+				teammate.visibleUrl = validateVisibleChildUrl(url, from);
+			} catch (error) {
+				const failure = error instanceof Error ? error : new Error(String(error));
+				teammate.rejectVisibleReady?.(failure);
+				throw failure;
+			}
+			teammate.alive = true;
+			teammate.busy = false;
+			team.statuses.set(teammate.name, status("idle", "Spawned"));
+			teammate.resolveVisibleReady?.();
+			writeJson(response, 200, { accepted: true, team: team.name, from });
+			return;
+		}
+
+		if (tool === "visible_event") {
+			if (!teammate || teammate.transport !== "herdr") throw new Error(`Unknown visible teammate: ${from}`);
+			handleVisibleEvent(team, teammate, (args.event ?? {}) as JsonRecord);
+			writeJson(response, 200, { accepted: true, team: team.name, from });
+			return;
+		}
 
 		if (tool === "teamsend") {
 			const recipients = resolveRecipients(team, (args.to ?? []) as string[]);
@@ -564,7 +782,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", async () => {
 		for (const team of [...teams.values()]) {
-			if (team.owner === owner) shutdownTeam(team);
+			if (team.owner === owner) await shutdownTeam(team);
 		}
 		closeCallbackServerIfUnused();
 	});
@@ -574,8 +792,8 @@ export default function (pi: ExtensionAPI) {
 		defineTool({
 			name: "team_spawn",
 			label: "Team Spawn",
-			description: "Spawn a persistent team of RPC Pi teammates with fresh context windows. The main agent (you) is included automatically; do not specify it as a teammate.",
-			promptSnippet: "Spawn persistent RPC Pi teammate processes. Currently, manually ‘starting’ the teammates is required after spawn. Unless required, don’t fill up your time by repeatedly busy-polling team information. Don’t bash sleep to wait for progress; instead, set your status to advertise that you are counting on teammates to send you a message updating important milestones or request for help, and that otherwise you are staying idle; Send this actively to the team; Then end your turn by sending a simple message to the user, and finally stay put.",
+			description: "Spawn a persistent team of Pi teammates with fresh context windows. Set showOnHerdrPanes to run each teammate in a visible Herdr pane. The main agent (you) is included automatically; do not specify it as a teammate.",
+			promptSnippet: "Spawn persistent Pi teammates. Set showOnHerdrPanes to true when user-visible teammate sessions add value. Currently, manually ‘starting’ the teammates is required after spawn. Unless required, don’t fill up your time by repeatedly busy-polling team information. Don’t bash sleep to wait for progress; instead, set your status to advertise that you are counting on teammates to send you important milestones or requests for help, and that otherwise you are staying idle. Send this actively to the team. Then end your turn by sending a simple message to the user, and finally stay put.",
 			renderShell: "self",
 			renderCall: (args, theme, context) => renderTeamToolCall("team_spawn", args, theme, context, sessionTeammateRoster),
 			renderResult: (result, options, theme, context) => renderTeamToolResult("team_spawn", result, options, theme, context, undefined, sessionTeammateRoster),
@@ -583,10 +801,13 @@ export default function (pi: ExtensionAPI) {
 				team: Type.String({ description: "Team name" }),
 				teamPrompt: Type.String({ description: "Common team system prompt" }),
 				teammates: Type.Array(teammateSchema, { description: "Teammates to spawn" }),
+				showOnHerdrPanes: Type.Optional(Type.Boolean({ description: "Run each teammate in a visible Herdr pane instead of RPC mode", default: false })),
 			}),
 			async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 				const teamName = compactName(params.team);
 				if (teams.has(teamName)) throw new Error(`Team already exists: ${teamName}`);
+				const showOnHerdrPanes = Boolean(params.showOnHerdrPanes);
+				const herdrTabId = showOnHerdrPanes ? await validateHerdrAvailability() : undefined;
 
 				const teammateSpecs = params.teammates as TeammateSpec[];
 				const teammateNames = teammateSpecs.map((teammate) => compactName(teammate.name));
@@ -602,6 +823,7 @@ export default function (pi: ExtensionAPI) {
 					owner,
 					ownerPi: pi,
 					name: teamName,
+					showOnHerdrPanes,
 					teamPrompt: params.teamPrompt,
 					members: new Map(),
 					statuses: new Map([["main", status("available", "Main agent")]]),
@@ -613,12 +835,13 @@ export default function (pi: ExtensionAPI) {
 				teams.set(teamName, team);
 				try {
 					for (const teammateSpec of teammateSpecs) {
-						const teammate = startTeammate(team, teammateSpec, teammateNames);
+						const teammate = createTeammateState(team, teammateSpec);
 						team.members.set(teammate.name, teammate);
 						team.statuses.set(teammate.name, status("idle", "Spawned"));
+						await startTeammate(team, teammate, teammateNames, herdrTabId);
 					}
 				} catch (error) {
-					shutdownTeam(team);
+					await shutdownTeam(team);
 					closeCallbackServerIfUnused();
 					throw error;
 				}
@@ -757,8 +980,9 @@ export default function (pi: ExtensionAPI) {
 			async execute(_toolCallId, params) {
 				const team = resolveTeam(owner, params.team);
 				const teammates = [...team.members.keys()];
-				shutdownTeam(team);
+				const errors = await shutdownTeam(team);
 				closeCallbackServerIfUnused();
+				if (errors.length > 0) throw new Error(`Failed to close Herdr teammate pane(s): ${errors.join("; ")}`);
 				return toolResult({ stopped: true, team: team.name, teammates });
 			},
 		}),

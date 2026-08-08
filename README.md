@@ -69,7 +69,11 @@ Ask your main agent for a team.
 - ⚡ Sub-second, when the recipient is idle.
 - 🏎️ The moment the current bout of work ends, when busy.
 
+### Herdr, first-class.
 
+`pi-simple-team` gives each teammate a Pi session in its own [Herdr](https://herdr.dev) pane. Just ask your agent to do that.
+
+You get a live view of the room. Main and teammates keep using the same tools.
 
 ### Statuses everyone can see.
 
