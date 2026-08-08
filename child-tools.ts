@@ -1,6 +1,7 @@
 import * as http from "node:http";
 import { defineTool, getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { formatContextWindowReport, requireKnownContextUsage } from "./context-window.ts";
 import { renderTeamMessage } from "./render.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -178,6 +179,11 @@ function startVisibleChild(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 						return;
 					}
 
+					if (body.tool === "report_context_window") {
+						writeJson(response, 200, { contextUsage: requireKnownContextUsage(context.getContextUsage()) });
+						return;
+					}
+
 					if (body.tool !== "deliver") {
 						writeJson(response, 400, { error: `unknown tool: ${String(body.tool)}` });
 						return;
@@ -243,6 +249,20 @@ function startVisibleChild(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 	pi.registerMessageRenderer(teamMessageType, (message, _options, theme) => renderTeamMessage(message, theme, getMarkdownTheme(), config.participants));
 	if (config.visible) startVisibleChild(pi, config);
+
+	pi.registerTool(
+		defineTool({
+			name: "report_context_window",
+			label: "Report Context Window",
+			description: "Report your current context-window use.",
+			promptSnippet: "Report your current context-window use",
+			parameters: Type.Object({}),
+			async execute(_toolCallId, _params, _signal, _onUpdate, context) {
+				const text = formatContextWindowReport("You have", requireKnownContextUsage(context.getContextUsage()));
+				return { content: [{ type: "text" as const, text }], details: {} };
+			},
+		}),
+	);
 
 	pi.registerTool(
 		defineTool({

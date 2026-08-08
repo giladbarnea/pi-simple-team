@@ -4,7 +4,8 @@ import crypto from "node:crypto";
 import http from "node:http";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
-import { defineTool, type ExtensionAPI, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { defineTool, type ContextUsage, type ExtensionAPI, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { formatContextWindowReport, requireKnownContextUsage, type KnownContextUsage } from "./context-window.ts";
 import { validateTeammateModels } from "./model-preflight.ts";
 import { composeSystemPrompt } from "./system-prompt.ts";
 import { readChildRuntimeConfig, registerChildTools } from "./child-tools.ts";
@@ -406,6 +407,40 @@ function resolveRecipients(team: TeamState, recipientNames: string[]): TeammateS
 	const missing = names.filter((name, index) => recipients[index] === undefined);
 	if (missing.length > 0) throw new Error(`Unknown teammate(s) in ${team.name}: ${missing.join(", ")}`);
 	return recipients as TeammateState[];
+}
+
+function resolveContextTargets(owner: symbol, targetNames: string[]): TeammateState[] {
+	const ownedTeams = [...teams.values()].filter((team) => team.owner === owner);
+	const names = targetNames.map(compactName).filter((name) => name !== "main");
+	return names.map((name) => {
+		const matches = ownedTeams.flatMap((team) => {
+			const teammate = team.members.get(name);
+			return teammate ? [teammate] : [];
+		});
+		if (matches.length === 0) throw new Error(`Unknown teammate: ${name}`);
+		if (matches.length > 1) throw new Error(`Ambiguous teammate across teams: ${name}`);
+		return matches[0];
+	});
+}
+
+async function getTeammateContextUsage(teammate: TeammateState, signal?: AbortSignal): Promise<KnownContextUsage> {
+	if (teammate.transport === "rpc") {
+		const response = await sendRpc(teammate, { type: "get_session_stats" });
+		await requireSuccessfulResponse(response, `read context usage from ${teammate.name}`);
+		const stats = response.data as { contextUsage?: ContextUsage };
+		return requireKnownContextUsage(stats.contextUsage);
+	}
+
+	if (!teammate.alive || !teammate.visibleUrl) throw new Error(`Visible teammate ${teammate.name} is not ready`);
+	const response = await fetch(teammate.visibleUrl, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ token: callbackToken, tool: "report_context_window", args: {} }),
+		signal,
+	});
+	if (!response.ok) throw new Error(`Visible teammate ${teammate.name} rejected context-window query: ${response.status} ${await response.text()}`);
+	const payload = (await response.json()) as { contextUsage?: ContextUsage };
+	return requireKnownContextUsage(payload.contextUsage);
 }
 
 function formatStatus(team: TeamState): Record<string, TeamStatus> {
@@ -903,6 +938,26 @@ export default function (pi: ExtensionAPI) {
 				updateStatus(team, "main", params.gerund, params.phrase);
 				logStatusDeclaration(team, "main", params.gerund, params.phrase);
 				return toolResult({ team: team.name, status: formatStatus(team) });
+			},
+		}),
+	);
+
+	pi.registerTool(
+		defineTool({
+			name: "report_context_window",
+			label: "Report Context Window",
+			description: "Report context-window use for selected teammates and main. Main's report is always last.",
+			promptSnippet: "Report context-window use for selected teammates and main",
+			parameters: Type.Object({
+				targets: Type.Array(Type.String({ minLength: 1 }), { description: "Teammate names. Use an empty list to report only main." }),
+			}),
+			async execute(_toolCallId, params, signal, _onUpdate, context) {
+				const teammates = resolveContextTargets(owner, params.targets);
+				const reports = await Promise.all(
+					teammates.map(async (teammate) => formatContextWindowReport(`Teammate ${teammate.name} has`, await getTeammateContextUsage(teammate, signal))),
+				);
+				reports.push(formatContextWindowReport("You have", requireKnownContextUsage(context.getContextUsage())));
+				return { content: [{ type: "text" as const, text: reports.join("\n") }], details: {} };
 			},
 		}),
 	);

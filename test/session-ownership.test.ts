@@ -4,10 +4,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { describe, test } from "bun:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 
+import { registerChildTools } from "../child-tools.ts";
 import teamExtension from "../index.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -93,10 +94,10 @@ class ExtensionHost {
 		return result.details as T;
 	}
 
-	async executeResult(toolName: string, params: JsonRecord): Promise<ToolResult> {
+	async executeResult(toolName: string, params: JsonRecord, context: unknown = {}): Promise<ToolResult> {
 		const tool = this.tools.get(toolName);
 		assert.ok(tool, `Expected extension host to register tool ${JSON.stringify(toolName)}.`);
-		return tool.execute("test-call", params, new AbortController().signal, undefined, {});
+		return tool.execute("test-call", params, new AbortController().signal, undefined, context);
 	}
 
 	renderResult(toolName: string, result: ToolResult, args: JsonRecord): string[] {
@@ -191,6 +192,7 @@ process.stdin.on("data", (chunk) => {
 			command: command.type,
 			success: true,
 			...(command.type === "get_state" ? { data: { isStreaming: false } } : {}),
+			...(command.type === "get_session_stats" ? { data: { contextUsage: { tokens: 87_000, contextWindow: 272_000, percent: 31.985 } } } : {}),
 		};
 		process.stdout.write(JSON.stringify(response) + "\n");
 	}
@@ -338,6 +340,67 @@ describe("team ownership across in-process AgentSessions", () => {
 			);
 		} finally {
 			await shutdownHosts(firstOwner, secondOwner);
+			fakePi.restore();
+		}
+	});
+});
+
+describe("context-window reports", () => {
+	test("a teammate reports its own context window with no arguments", async () => {
+		const tools = new Map<string, RegisteredTool>();
+		const api = {
+			registerMessageRenderer: () => undefined,
+			registerTool: (tool: RegisteredTool) => tools.set(tool.name, tool),
+		} as unknown as ExtensionAPI;
+		registerChildTools(api, {
+			callbackUrl: "http://127.0.0.1:1/callback",
+			callbackToken: "unused",
+			teamName: "context-team",
+			teammateName: "product-head",
+			visible: false,
+			participants: ["product-head"],
+		});
+		const tool = tools.get("report_context_window");
+		assert.ok(tool, "Expected teammates to register report_context_window.");
+		const context = {
+			getContextUsage: () => ({ tokens: 87_000, contextWindow: 272_000, percent: 31.985 }),
+		} as ExtensionContext;
+
+		const result = await tool.execute("test-call", {}, new AbortController().signal, undefined, context);
+
+		assert.equal(
+			result.content[0]?.text,
+			"You have used 87k tokens out of 272k available (32%).",
+			"Expected the no-argument teammate tool to identify its own report as You.",
+		);
+	});
+
+	test("main removes repeated self targets, preserves teammate order, then reports itself once", async () => {
+		const fakePi = installFakePi();
+		const host = new ExtensionHost();
+		const context = {
+			getContextUsage: () => ({ tokens: 43_210, contextWindow: 200_000, percent: 21.605 }),
+		} as ExtensionContext;
+
+		try {
+			await host.execute("team_spawn", {
+				team: "context-team",
+				teamPrompt: "Context-window report test.",
+				teammates: [
+					{ name: "product-head", prompt: "Wait.", model: "fake-model", thinking: "low" },
+					{ name: "reviewer", prompt: "Wait.", model: "fake-model", thinking: "low" },
+				],
+			});
+
+			const result = await host.executeResult("report_context_window", { targets: ["main", "reviewer", "main", "product-head"] }, context);
+
+			assert.equal(
+				result.content[0]?.text,
+				"Teammate reviewer has used 87k tokens out of 272k available (32%).\nTeammate product-head has used 87k tokens out of 272k available (32%).\nYou have used 43k tokens out of 200k available (22%).",
+				"Expected one string in target order with main's report last.",
+			);
+		} finally {
+			await host.shutdown();
 			fakePi.restore();
 		}
 	});

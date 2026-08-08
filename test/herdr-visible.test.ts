@@ -30,10 +30,10 @@ class ExtensionHost {
 		teamExtension(api);
 	}
 
-	async execute(toolName: string, params: JsonRecord): Promise<ToolResult> {
+	async execute(toolName: string, params: JsonRecord, context: unknown = {}): Promise<ToolResult> {
 		const tool = this.tools.get(toolName);
 		assert.ok(tool, `Expected ${toolName} to be registered`);
-		return tool.execute("test", params, new AbortController().signal, undefined, {});
+		return tool.execute("test", params, new AbortController().signal, undefined, context);
 	}
 
 	async shutdown(): Promise<void> {
@@ -72,6 +72,10 @@ const server = http.createServer(async (request, response) => {
   record({ type: "delivery", body });
   if (body.token !== process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN) {
     response.writeHead(403); response.end(); return;
+  }
+  if (body.tool === "report_context_window") {
+    response.end(JSON.stringify({ contextUsage: { tokens: 87_000, contextWindow: 272_000, percent: 31.985 } }));
+    return;
   }
   await parent("visible_event", { event: { type: "agent_start" } });
   await parent("visible_event", { event: { type: "tool_execution_start", toolName: "read", toolCallId: "fake-call", args: { path: "README.md" } } });
@@ -261,7 +265,10 @@ async function startVisibleChildForTest(failingVisibleEvents: number): Promise<{
 		sendMessage: (message: JsonRecord) => messages.push(message),
 	};
 	registerChildTools(api as unknown as ExtensionAPI, config);
-	await handlers.get("session_start")?.({}, { shutdown: () => undefined });
+	await handlers.get("session_start")?.({}, {
+		shutdown: () => undefined,
+		getContextUsage: () => ({ tokens: 87_000, contextWindow: 272_000, percent: 31.985 }),
+	});
 	assert.ok(receiver.requests.some((request) => request.tool === "visible_register"));
 	let closed = false;
 	return {
@@ -278,6 +285,28 @@ async function startVisibleChildForTest(failingVisibleEvents: number): Promise<{
 }
 
 describe("visible Herdr teammates", () => {
+	test("exposes its current context usage to the parent", async () => {
+		const child = await startVisibleChildForTest(0);
+		try {
+			const register = child.requests.find((request) => request.tool === "visible_register");
+			assert.ok(register, "Expected the visible teammate to register its callback URL.");
+			const response = await fetch(String(register.args.url), {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ token: "child-token", tool: "report_context_window", args: {} }),
+			});
+
+			assert.equal(response.status, 200, "Expected the visible teammate to accept a parent context-window query.");
+			assert.deepEqual(
+				await response.json(),
+				{ contextUsage: { tokens: 87_000, contextWindow: 272_000, percent: 31.985 } },
+				"Expected the visible teammate to return its current context usage.",
+			);
+		} finally {
+			await child.close();
+		}
+	});
+
 	test("bounds an interrupted delivery when agent_settled never arrives", async () => {
 		const child = await startVisibleChildForTest(0);
 		try {
@@ -377,6 +406,33 @@ describe("visible Herdr teammates", () => {
 				teammates: [],
 			}), /HERDR_TAB_ID/);
 			assert.deepEqual(lines(fake.logPath), []);
+		} finally {
+			await host.shutdown();
+			fake.restore();
+		}
+	});
+
+	test("main reports a visible teammate before itself", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		try {
+			await host.execute("team_spawn", {
+				team: "visible-context-team",
+				teamPrompt: "test",
+				showOnHerdrPanes: true,
+				teammates: [{ name: "product-head", prompt: "wait", model: "fake-model", thinking: "low" }],
+			});
+			const result = await host.execute(
+				"report_context_window",
+				{ targets: ["product-head"] },
+				{ getContextUsage: () => ({ tokens: 43_210, contextWindow: 200_000, percent: 21.605 }) },
+			);
+
+			assert.equal(
+				result.content[0]?.text,
+				"Teammate product-head has used 87k tokens out of 272k available (32%).\nYou have used 43k tokens out of 200k available (22%).",
+				"Expected the visible teammate report before main's report.",
+			);
 		} finally {
 			await host.shutdown();
 			fake.restore();
