@@ -84,6 +84,8 @@ Teammates publish a one-liner:
 
 Your main agent calls `teamstatus` and understands exactly what's going on without asking and cluttering the teammates' context.
 
+`report_context_window` reports selected teammates plus main, while each teammate can report its own context window.
+
 ### Interrupts, when the situation calls for it.
 
 *Team has finished a production hotfix and started to wrap up.*
