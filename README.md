@@ -112,36 +112,38 @@ when stuck. `"]
 
 ## The mechanics
 
-### Push, not pull.
+### 🏋️ Woken up when needed. Works freely otherwise.
+
+Tokens, intelligence and time are never wasted on busy-polling for messages.
+
+Instead, `pi-simple-team` pushes messages to the receipients.
+
+This is both efficient and effective:
 
 - ✔ No inbox to forget.
-- ✔ no polling to exhaust your context window.
+- ✔ Context window stays lean.
+- ✔ Unlocks teams doing arbitrary workflows.
 
 *{screenshot of Codex filling up the entire visible chat with countless* `Waiting agents to finish...`*}*
 
-### Messages arrive without breaking stride.
+### ⚡ Messages arrive _fast_.
 
-- ⚡ Sub-second, when the recipient is idle.
-- 🏎️ The moment the current bout of work ends, when busy.
+- Sub-second, when the recipient is idle.
+- The moment the current bout of work ends, when busy.
 
-### Herdr, first-class.
-
-`pi-simple-team` gives each teammate a Pi session in its own [Herdr](https://herdr.dev) pane. Just ask your agent to do that.
-
-You get a live view of the room. Main and teammates keep using the same tools.
-
-### Statuses everyone can see.
+### 🟢 Statuses everyone can see.
 
 Teammates publish a one-liner:
 
-- "Done, 89 tests green, awaiting review".
-- "Reading implementation, will finalize review in a few minutes"
+> <span style="color:grey">Implementer</span> Done, 89 tests green, awaiting review.
+
+> <span style="color:grey">Reviewer</span> Reading implementation, will finalize review in a few minutes"
 
 Your main agent calls `teamstatus` and understands exactly what's going on without asking and cluttering the teammates' context.
 
 `report_context_window` reports selected teammates plus main, while each teammate can report its own context window.
 
-### Interrupts, when the situation calls for it.
+### 📣 Interrupts, when the situation calls for it.
 
 *Team has finished a production hotfix and started to wrap up.*
 
@@ -149,15 +151,19 @@ Your main agent calls `teamstatus` and understands exactly what's going on witho
 - At the same time, Release teammate sets status: "Ran `git add .`, preparing commit and push."
 - Scout immediately interrupts them. Key never leaves the machine. Developer keeps their job.
 
-
-
-### Complete observability by design.
+### 📡 Complete observability by design.
 
 The main agent can access one exhaustive, **timestamped history** of tool calls, messages, and lifecycle events, **recorded by the harness itself.**
 
 Main can filter and page that shared timeline on demand.
 
 Useful for tracing a failure *across* teammates—without asking anyone to reconstruct it from memory.
+
+### 🪟 Herdr, first-class.
+
+`pi-simple-team` gives each teammate a Pi session in its own [Herdr](https://herdr.dev) pane. Just ask your agent to do that.
+
+You get a live view of the room. Main and teammates keep using the same tools.
 
 <br>
 
