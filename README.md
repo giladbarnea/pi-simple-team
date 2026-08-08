@@ -26,11 +26,11 @@
 
 I've always done my best work in a small room with a few capable people, building something together.
 
-> <span style="color:grey">_[shouting]_</span> Has anyone figured out the auth service yet?
+> <span style="color:grey">_[shouts]_</span> Has anyone figured out how to set up auth yet?
 
 Not filing a "request for assistance".
 
-> <span style="color:grey">_[taps shoulder]_</span> Dude can you grind me on this idea I have?
+> <span style="color:grey">_[taps shoulder]_</span> Dude can you grill me on this plan?
 
 Not scheduling a meeting.
 
@@ -51,9 +51,11 @@ You:
 > Create an implementer-reviewer team to complete `PLAN.md`.
 
 Main agent:
-> Pair created. They'll work through it together; they'll let me know when they're done.
+> Pair created. They'll loop through it together. They'll let me know when they're done.
 
-**Better example: outline an agentic graph**
+<br>
+
+**Better example: build an agentic graph**
 
 You:
 > **Team goal:**
@@ -68,9 +70,11 @@ You:
 
 <br>
 
-**Because** it does nothing specially, `pi-simple-team` can onstruct any topography you wish it to.
-
-The quote block above is essentially:
+<center>
+<b>Because</b> it does nothing specially, <code>pi-simple-team</code> can construct any topography you wish it to.
+</center>
+<br>
+That prompt gives you this graph:
 
 ```mermaid
 flowchart LR
@@ -78,8 +82,8 @@ flowchart LR
         scout["`**Scout**
 Runs repeatedly to clear
 out the fog of war.`"] <--> advocate["`**Devil’s advocate**
-Challenges the map until
-it holds up.`"]
+Points out what we
+still don’t know.`"]
     end
 
     harness["`**2: subagent dispatch**
@@ -96,6 +100,9 @@ when stuck. `"]
     map --> harness --> eval
 ```
 
+<br>
+
+---
 
 <br>
 
@@ -104,8 +111,6 @@ when stuck. `"]
 <div align="center"><em><code>pi-simple-team</code> in the TUI.</em></div>
 
 ## The mechanics
-
-
 
 ### Push, not pull.
 
