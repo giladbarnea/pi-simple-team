@@ -22,30 +22,58 @@
 ---
 
 
-
 ## Why
 
-The best work I've ever done happened in a small room with a few capable people, building something together.
+I've always done my best work in a small room with a few capable people, building something together.
 
-Yell out "has anyone figured out the auth service yet?" instead of filing a "request for assistance".
+> <span style="color:grey">_[shouting]_</span> Has anyone figured out the auth service yet?
 
-Tap the person next to you and ask them to grind you on your idea.
+Not filing a "request for assistance".
+
+> <span style="color:grey">_[taps shoulder]_</span> Dude can you grind me on this idea I have?
+
+Not scheduling a meeting.
 
 **That's the whole design. Not a swarm, not a company. *A room.***
 
 ## Using `pi-simple-team`
 
-Ask your main agent for a team.
+Tell your main agent:
+> Spawn a team.
 
-**Throw a team at something important.**
+### Throw a team at something hard.
 
-**You:** "Create an implementer–reviewer team to complete `PLAN.md`."  
-**Main:** "Created the pair. They'll work through it together; they'll let me know when they're done."
+The team takes the shape of the mission.
 
-**Follow the breach wherever it leads.**
+**Basic example: adversarial pair**
 
-**You:** "Find how the model got into our systems and trace everything it touched."  
-**Main:** "Created an eight-agent incident team. They're tracing the intrusion from different angles, sharing new leads as they surface. The net will tighten around the model and take the shape of the blast radius."
+You:
+> Create an implementer-reviewer team to complete `PLAN.md`.
+
+Main agent:
+> Pair created. They'll work through it together; they'll let me know when they're done.
+
+**Better example: outline an agentic graph**
+
+You:
+> **Team goal:**
+> 1. map out all customer–product money streams in the database.
+> 2. Feed this knowledge into the harness.
+> 3. Then prove the data analysis agent passes the new evals.
+> 
+> **Note:**
+> - #1 and #3 are _loops._ Call them `1-map` and `3-eval`.
+> - `1-map` and `3-eval` each gets a teamate.
+> - Each teammate spawns _its own team_ to loop on its task.
+
+<br>
+
+**Because** it does nothing specially, `pi-simple-team` can construct any topography you wish it to. The quote block above is essentially:
+
+```
+... complete here
+```
+
 
 <br>
 
