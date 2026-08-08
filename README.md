@@ -68,10 +68,32 @@ You:
 
 <br>
 
-**Because** it does nothing specially, `pi-simple-team` can construct any topography you wish it to. The quote block above is essentially:
+**Because** it does nothing specially, `pi-simple-team` can onstruct any topography you wish it to.
 
-```
-... complete here
+The quote block above is essentially:
+
+```mermaid
+flowchart LR
+    subgraph map["1-map: map the money streams"]
+        scout["`**Scout**
+Runs repeatedly to clear
+out the fog of war.`"] <--> advocate["`**Devil’s advocate**
+Challenges the map until
+it holds up.`"]
+    end
+
+    harness["`**2: subagent dispatch**
+Feeds new understanding
+into the harness.`"]
+
+    subgraph eval["3-eval: hill-climb the evals"]
+        engineer["`**Engineer**
+Improves the harness.`"] <--> watcher["`**Performance watcher**
+Suggests a fresh approach
+when stuck. `"]
+    end
+
+    map --> harness --> eval
 ```
 
 
