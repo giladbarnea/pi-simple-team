@@ -135,21 +135,25 @@ This is both efficient and effective:
 
 Teammates publish a one-liner:
 
-> <span style="color:grey">Implementer</span> Done, 89 tests green, awaiting review.
+> <span style="color:grey">implementer  </span> Done, 89 tests green, awaiting review.
 
-> <span style="color:grey">Reviewer</span> Reading implementation, will finalize review in a few minutes"
+> <span style="color:grey">reviewer      </span> Reading implementation, will finalize review in a few minutes"
 
-Your main agent calls `teamstatus` and understands exactly what's going on without asking and cluttering the teammates' context.
+Your main agent calls `teamstatus` and understands exactly what's going on. Main doesn't ask and clutter the teammates' context.
 
-`report_context_window` reports selected teammates plus main, while each teammate can report its own context window.
+### 🌡️ Context window self-awareness
 
-### 📣 Interrupts, when the situation calls for it.
+Teammates know how much free context they have left.
 
-*Team has finished a production hotfix and started to wrap up.*
+Main agent knows its own and everyone else's too.
 
-- Security scout spots a private SSH key not covered by `.gitignore`.
-- At the same time, Release teammate sets status: "Ran `git add .`, preparing commit and push."
-- Scout immediately interrupts them. Key never leaves the machine. Developer keeps their job.
+### 📣 Interrupts, when justified.
+
+> _Situation: Late afternoon. Team has finished a production hotfix and started to wrap up._
+
+- 17:32:00: Security scout spots a private SSH key not covered by `.gitignore`.
+- 17:32:01: Release teammate sets status: "Ran `git add .`, preparing commit and push."
+- 17:32:02: Scout immediately interrupts. Key never leaves the machine. Developer keeps their job.
 
 ### 📡 Complete observability by design.
 
@@ -159,16 +163,18 @@ Main can filter and page that shared timeline on demand.
 
 Useful for tracing a failure *across* teammates—without asking anyone to reconstruct it from memory.
 
-### 🪟 Herdr, first-class.
-
-`pi-simple-team` gives each teammate a Pi session in its own [Herdr](https://herdr.dev) pane. Just ask your agent to do that.
-
-You get a live view of the room. Main and teammates keep using the same tools.
-
 <br>
 
 ![A live team status map above its timestamped event log](screenshots/2.png)
 <div align="center"><em>Visual representation of the team log.</em></div>
+
+### 🪟 Herdr Mode
+
+`pi-simple-team` can give each teammate a Pi session in its own [Herdr](https://herdr.dev) pane. Just ask your main agent to do that.
+
+- Live view of the room.
+- Talk directly with teammates.
+
 
 ## Install
 
@@ -189,9 +195,11 @@ Kept minimal:
 | **Main agent** | Team lifecycle | `team_spawn`, `team_shutdown` |
 |                | With team      | `teamsend`                    |
 |                | On team        | `teamstatus`, `teamlog`       |
-| **Teammates**  | With teammates | `teamsend`                    |
+|                | On everyone    | `report_context_window`       |
+| **Teammates**  | With team      | `teamsend`                    |
 |                | With main      | `teammain`                    |
-|                | For everyone   | `teamstatus`                  |
+|                | On self        | `report_context_window`       |
+| **Everyone**   | For everyone   | `teamstatus`                  |
 
 
 ---
@@ -200,12 +208,17 @@ Kept minimal:
 
 ## Roadmap
 
+**User involvement track:**
 
-
-### User involvement track
+- [x] Herdr panes for teammates.
 
 Slash commands for:
 
-- [ ] 💠 Live control panel.
+- [ ] 💠 Live control panel. 
 - [ ] 👋 Joining and steering teams.
 - [ ] 🪄 Spawning teams directly.
+
+**Functional:**
+
+- [ ] Add new teammates after team has spawned.
+- [ ] Main forces `/compact` on select teammate.
