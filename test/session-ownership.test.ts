@@ -8,6 +8,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 
+import { bundledAiToAiSkillInstruction, bundledAiToAiSkillPath } from "../bundled-skill.ts";
 import { registerChildTools } from "../child-tools.ts";
 import teamExtension from "../index.ts";
 
@@ -262,6 +263,28 @@ function installFakePi(): { restore: () => void } {
 		},
 	};
 }
+
+describe("bundled ai-to-ai skill guidance", () => {
+	test("team_spawn returns the skill instruction to main", async () => {
+		const host = new ExtensionHost();
+
+		try {
+			const result = await host.executeResult("team_spawn", {
+				team: "skill-guidance-team",
+				teamPrompt: "Skill guidance test.",
+				teammates: [],
+			});
+			const content = JSON.parse(result.content[0]!.text) as JsonRecord;
+
+			assert.equal(result.details?.instruction, bundledAiToAiSkillInstruction);
+			assert.equal(content.instruction, bundledAiToAiSkillInstruction);
+			assert.equal(path.isAbsolute(bundledAiToAiSkillPath), true);
+			assert.equal(fs.existsSync(bundledAiToAiSkillPath), true);
+		} finally {
+			await host.shutdown();
+		}
+	});
+});
 
 describe("team ownership across in-process AgentSessions", () => {
 	test("the session roster keeps teammate colors consistent across tool renderers", async () => {

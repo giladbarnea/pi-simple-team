@@ -5,6 +5,7 @@ import http from "node:http";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { defineTool, type ContextUsage, type ExtensionAPI, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { bundledAiToAiSkillInstruction } from "./bundled-skill.ts";
 import { formatContextWindowReport, requireKnownContextUsage, type KnownContextUsage } from "./context-window.ts";
 import { formatScopedModelGuidance, validateTeammateModels, type ModelReference } from "./model-preflight.ts";
 import { composeSystemPrompt } from "./system-prompt.ts";
@@ -889,6 +890,7 @@ export default function (pi: ExtensionAPI) {
 						team: team.name,
 						teammates: [...team.members.keys()],
 						status: formatStatus(team),
+						instruction: bundledAiToAiSkillInstruction,
 					});
 				},
 			}),

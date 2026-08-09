@@ -1,5 +1,8 @@
+import { bundledAiToAiSkillInstruction } from "./bundled-skill.ts";
+
 export function composeSystemPrompt(teamName: string, teamPrompt: string, teammateName: string, teammatePrompt: string, participants: string[]): string {
 	return [
+		bundledAiToAiSkillInstruction,
 		teamPrompt.trim(),
 		teammatePrompt.trim(),
 		`You are ${teammateName}, a teammate on team ${teamName}.`,
