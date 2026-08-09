@@ -1,82 +1,41 @@
-import { describe, test, expect } from "bun:test";
-import { stripThinkingSuffix, parseListModelsOutput, validateTeammateModels, type RunListModels } from "../model-preflight.ts";
+import { describe, expect, test } from "bun:test";
+import { formatModelReference, formatScopedModelGuidance, validateTeammateModels, type ModelReference } from "../model-preflight.ts";
 
-describe("stripThinkingSuffix", () => {
-	test("strips a trailing thinking-level suffix", () => {
-		expect(stripThinkingSuffix("sonnet:high")).toBe("sonnet");
-	});
+const availableModels: ModelReference[] = [
+	{ provider: "openai-codex", id: "gpt-5.6-sol" },
+	{ provider: "anthropic", id: "claude-sonnet-4-6" },
+];
 
-	test("leaves a plain model pattern unchanged", () => {
-		expect(stripThinkingSuffix("sonnet")).toBe("sonnet");
-	});
-
-	test("leaves a provider/model id unchanged", () => {
-		expect(stripThinkingSuffix("claude-bridge/claude-sonnet-4-6")).toBe("claude-bridge/claude-sonnet-4-6");
-	});
-
-	test("does not strip a colon-suffix that is not a thinking level", () => {
-		expect(stripThinkingSuffix("openrouter/qwen/qwen3-coder:free")).toBe("openrouter/qwen/qwen3-coder:free");
+describe("formatModelReference", () => {
+	test("formats a canonical provider/model id", () => {
+		expect(formatModelReference(availableModels[0])).toBe("openai-codex/gpt-5.6-sol");
 	});
 });
 
-describe("parseListModelsOutput", () => {
-	test("returns true for real `pi --list-models` rows", () => {
-		const stdout = [
-			"provider       model                            context  max-out  thinking  images",
-			"claude-bridge  claude-sonnet-4-6                200K     64K      yes       yes   ",
-		].join("\n");
-		expect(parseListModelsOutput(stdout)).toBe(true);
+describe("formatScopedModelGuidance", () => {
+	test("explains how to choose when the session has no scoped models", () => {
+		expect(formatScopedModelGuidance([])).toBe(
+			"The user has not defined a list of preferred models explicitly. Figure out which model _you_ are by reading the value of the PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL environment variables. That should give you something to start with. Confirm with the user before picking any model id.",
+		);
 	});
 
-	test('returns false for the `No models matching "..."` message', () => {
-		expect(parseListModelsOutput('No models matching "azure"\n')).toBe(false);
-	});
-
-	test("returns false for warning-only, header-only, or header-plus-no-match output", () => {
-		expect(parseListModelsOutput("Some warning")).toBe(false);
-		expect(parseListModelsOutput("provider       model                            context  max-out  thinking  images\n")).toBe(false);
-		expect(parseListModelsOutput('provider  model\nNo models matching "azure"')).toBe(false);
+	test("lists every scoped model as optional guidance", () => {
+		expect(formatScopedModelGuidance(availableModels)).toBe(
+			"You should probably use one of these user-scoped models: openai-codex/gpt-5.6-sol, anthropic/claude-sonnet-4-6.",
+		);
 	});
 });
 
 describe("validateTeammateModels", () => {
-	function fakeRunListModels(resolvablePatterns: Set<string>): RunListModels {
-		return async (pattern) => (resolvablePatterns.has(pattern) ? "provider  model\nclaude-bridge  claude-sonnet-4-6" : `No models matching "${pattern}"`);
-	}
-
-	test("resolves without throwing when every teammate model resolves", async () => {
-		const runListModels = fakeRunListModels(new Set(["sonnet", "claude-bridge/claude-sonnet-4-6"]));
-		await expect(
-			validateTeammateModels(
-				[
-					{ name: "Scout", model: "sonnet" },
-					{ name: "Reviewer", model: "claude-bridge/claude-sonnet-4-6" },
-				],
-				runListModels,
-			),
-		).resolves.toBeUndefined();
+	test("accepts an available model that is outside the scoped guidance", () => {
+		const scopedModels = [availableModels[0]];
+		expect(formatScopedModelGuidance(scopedModels)).not.toContain("anthropic/claude-sonnet-4-6");
+		expect(() => validateTeammateModels([{ name: "Reviewer", model: "anthropic/claude-sonnet-4-6" }], availableModels)).not.toThrow();
 	});
 
-	test("throws naming the teammate and model when one does not resolve", async () => {
-		const runListModels = fakeRunListModels(new Set(["sonnet"]));
-		await expect(
-			validateTeammateModels(
-				[
-					{ name: "Scout", model: "sonnet" },
-					{ name: "Ghost", model: "gpt-5.5" },
-				],
-				runListModels,
-			),
-		).rejects.toThrow(/Ghost/);
-	});
-
-	test("strips a thinking-level suffix before checking availability", async () => {
-		const seenPatterns: string[] = [];
-		const runListModels: RunListModels = async (pattern) => {
-			seenPatterns.push(pattern);
-			return "provider  model\nclaude-bridge  claude-sonnet-4-6";
-		};
-		await validateTeammateModels([{ name: "Scout", model: "sonnet:high" }], runListModels);
-		expect(seenPatterns).toEqual(["sonnet"]);
+	test("rejects a model absent from all available models", () => {
+		expect(() => validateTeammateModels([{ name: "Ghost", model: "openai-codex/missing" }], availableModels)).toThrow(
+			'Model "openai-codex/missing" for teammate "Ghost" is not available.',
+		);
 	});
 });

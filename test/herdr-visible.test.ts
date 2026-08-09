@@ -13,16 +13,22 @@ import { registerChildTools } from "../child-tools.ts";
 type JsonRecord = Record<string, unknown>;
 type ToolResult = { content: Array<{ type: string; text: string }>; details?: JsonRecord };
 type RegisteredTool = { name: string; parameters: TSchema; execute: (id: string, params: JsonRecord, signal: AbortSignal, update: undefined, context: unknown) => Promise<ToolResult> };
-type ShutdownHandler = () => Promise<void> | void;
+type ExtensionEventHandler = (event: JsonRecord, context: unknown) => Promise<void> | void;
+
+const fakeMainContext = {
+	scopedModels: [],
+	modelRegistry: { getAvailable: () => [{ provider: "fake", id: "fake-model" }] },
+};
 
 class ExtensionHost {
 	readonly tools = new Map<string, RegisteredTool>();
-	readonly shutdownHandlers: ShutdownHandler[] = [];
+	readonly shutdownHandlers: ExtensionEventHandler[] = [];
 
 	constructor() {
 		const api = {
-			on: (event: string, handler: ShutdownHandler) => {
+			on: (event: string, handler: ExtensionEventHandler) => {
 				if (event === "session_shutdown") this.shutdownHandlers.push(handler);
+				if (event === "session_start") handler({ reason: "startup" }, fakeMainContext);
 			},
 			registerMessageRenderer: () => undefined,
 			registerTool: (tool: RegisteredTool) => this.tools.set(tool.name, tool),
@@ -30,14 +36,14 @@ class ExtensionHost {
 		teamExtension(api);
 	}
 
-	async execute(toolName: string, params: JsonRecord, context: unknown = {}): Promise<ToolResult> {
+	async execute(toolName: string, params: JsonRecord, context: unknown = fakeMainContext): Promise<ToolResult> {
 		const tool = this.tools.get(toolName);
 		assert.ok(tool, `Expected ${toolName} to be registered`);
 		return tool.execute("test", params, new AbortController().signal, undefined, context);
 	}
 
 	async shutdown(): Promise<void> {
-		for (const handler of this.shutdownHandlers) await handler();
+		for (const handler of this.shutdownHandlers) await handler({ reason: "quit" }, fakeMainContext);
 	}
 }
 
@@ -420,7 +426,7 @@ describe("visible Herdr teammates", () => {
 				team: "visible-context-team",
 				teamPrompt: "test",
 				showOnHerdrPanes: true,
-				teammates: [{ name: "product-head", prompt: "wait", model: "fake-model", thinking: "low" }],
+				teammates: [{ name: "product-head", prompt: "wait", model: "fake/fake-model", thinking: "low" }],
 			});
 			const result = await host.execute(
 				"report_context_window",
@@ -447,7 +453,7 @@ describe("visible Herdr teammates", () => {
 				team: "visible-team",
 				teamPrompt: "test",
 				showOnHerdrPanes: true,
-				teammates: [{ name: "reviewer", prompt: "wait", model: "fake-model", thinking: "low" }],
+				teammates: [{ name: "reviewer", prompt: "wait", model: "fake/fake-model", thinking: "low" }],
 			});
 			const start = lines(fake.logPath).find((entry) => entry.type === "start");
 			assert.ok(start);
@@ -491,7 +497,7 @@ describe("visible Herdr teammates", () => {
 				team: "externally-closed-team",
 				teamPrompt: "test",
 				showOnHerdrPanes: true,
-				teammates: [{ name: "reviewer", prompt: "wait", model: "fake-model", thinking: "low" }],
+				teammates: [{ name: "reviewer", prompt: "wait", model: "fake/fake-model", thinking: "low" }],
 			});
 			process.env.FAKE_HERDR_PANE_NOT_FOUND = "fake-pane-1";
 
@@ -512,7 +518,7 @@ describe("visible Herdr teammates", () => {
 				team: "startup-failure-team",
 				teamPrompt: "test",
 				showOnHerdrPanes: true,
-				teammates: [{ name: "broken", prompt: "wait", model: "fake-model", thinking: "low" }],
+				teammates: [{ name: "broken", prompt: "wait", model: "fake/fake-model", thinking: "low" }],
 			}), /Invalid visible teammate URL/);
 			assert.deepEqual(lines(fake.logPath).filter((entry) => entry.type === "close"), [{ type: "close", paneId: "fake-pane-1" }]);
 		} finally {
@@ -531,8 +537,8 @@ describe("visible Herdr teammates", () => {
 				teamPrompt: "test",
 				showOnHerdrPanes: true,
 				teammates: [
-					{ name: "first", prompt: "wait", model: "fake-model", thinking: "low" },
-					{ name: "second", prompt: "wait", model: "fake-model", thinking: "low" },
+					{ name: "first", prompt: "wait", model: "fake/fake-model", thinking: "low" },
+					{ name: "second", prompt: "wait", model: "fake/fake-model", thinking: "low" },
 				],
 			}), /planned start failure/);
 			assert.deepEqual(lines(fake.logPath).filter((entry) => entry.type === "close"), [{ type: "close", paneId: "fake-pane-1" }]);

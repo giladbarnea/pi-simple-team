@@ -24,6 +24,8 @@ type RenderedToolResult = {
 
 type RegisteredTool = {
 	name: string;
+	description: string;
+	promptSnippet?: string;
 	parameters: TSchema;
 	renderResult?: (
 		result: ToolResult,
@@ -53,12 +55,52 @@ describe("teamlog input schema", () => {
 
 		await host.shutdown();
 	});
+
+	test("adds scoped models to team_spawn guidance", async () => {
+		const host = new ExtensionHost(() => undefined, [
+			{ model: { provider: "openai-codex", id: "gpt-5.6-sol" } },
+			{ model: { provider: "anthropic", id: "claude-sonnet-4-6" } },
+		]);
+		const tool = host.tools.get("team_spawn");
+		assert.ok(tool);
+		const guidance = "You should probably use one of these user-scoped models: openai-codex/gpt-5.6-sol, anthropic/claude-sonnet-4-6.";
+		assert.match(tool.description, new RegExp(guidance.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		assert.match(tool.promptSnippet ?? "", new RegExp(guidance.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		await host.shutdown();
+	});
+
+	test("adds environment-based model guidance when the scope is empty", async () => {
+		const host = new ExtensionHost();
+		const tool = host.tools.get("team_spawn");
+		assert.ok(tool);
+		const prose = `${tool.description} ${tool.promptSnippet ?? ""}`;
+		assert.match(prose, /PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL/);
+		assert.match(prose, /Confirm with the user before picking any model id/);
+		await host.shutdown();
+	});
+
+	test("keeps showOnHerdrPanes guidance only in the team_spawn description", async () => {
+		const host = new ExtensionHost();
+		const tool = host.tools.get("team_spawn");
+		assert.ok(tool);
+		assert.match(tool.description, /If the user is interested, set `showOnHerdrPanes` to run each teammate in a visible Herdr pane\./);
+		assert.doesNotMatch(tool.promptSnippet ?? "", /showOnHerdrPanes/);
+		const properties = tool.parameters.properties as Record<string, { description?: string }>;
+		assert.equal(properties.showOnHerdrPanes?.description, undefined);
+		await host.shutdown();
+	});
 });
 
-type SessionShutdownHandler = (
-	event: { type: "session_shutdown"; reason: "quit" },
-	context: unknown,
-) => Promise<unknown> | unknown;
+type ExtensionEventHandler = (event: JsonRecord, context: unknown) => Promise<unknown> | unknown;
+
+type ScopedModel = {
+	model: {
+		provider: string;
+		id: string;
+	};
+};
+
+const fakeAvailableModels = [{ provider: "fake", id: "fake-model" }];
 
 type RecordedMessage = {
 	details?: {
@@ -69,13 +111,19 @@ type RecordedMessage = {
 
 class ExtensionHost {
 	readonly messages: RecordedMessage[] = [];
-	readonly shutdownHandlers: SessionShutdownHandler[] = [];
+	readonly shutdownHandlers: ExtensionEventHandler[] = [];
 	readonly tools = new Map<string, RegisteredTool>();
+	readonly context: ExtensionContext;
 
-	constructor(onMessage: () => void = () => undefined) {
+	constructor(onMessage: () => void = () => undefined, scopedModels: ScopedModel[] = []) {
+		this.context = {
+			scopedModels,
+			modelRegistry: { getAvailable: () => fakeAvailableModels },
+		} as unknown as ExtensionContext;
 		const api = {
-			on: (event: string, handler: SessionShutdownHandler) => {
+			on: (event: string, handler: ExtensionEventHandler) => {
 				if (event === "session_shutdown") this.shutdownHandlers.push(handler);
+				if (event === "session_start") handler({ reason: "startup" }, this.context);
 			},
 			registerMessageRenderer: () => undefined,
 			registerTool: (tool: RegisteredTool) => this.tools.set(tool.name, tool),
@@ -94,7 +142,7 @@ class ExtensionHost {
 		return result.details as T;
 	}
 
-	async executeResult(toolName: string, params: JsonRecord, context: unknown = {}): Promise<ToolResult> {
+	async executeResult(toolName: string, params: JsonRecord, context: unknown = this.context): Promise<ToolResult> {
 		const tool = this.tools.get(toolName);
 		assert.ok(tool, `Expected extension host to register tool ${JSON.stringify(toolName)}.`);
 		return tool.execute("test-call", params, new AbortController().signal, undefined, context);
@@ -226,8 +274,8 @@ describe("team ownership across in-process AgentSessions", () => {
 				team,
 				teamPrompt: "Color roster test.",
 				teammates: [
-					{ name: "implementer", prompt: "Wait.", model: "fake-model", thinking: "low" },
-					{ name: "reviewer", prompt: "Wait.", model: "fake-model", thinking: "low" },
+					{ name: "implementer", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+					{ name: "reviewer", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
 				],
 			});
 			const statusResult = await host.executeResult("teamstatus", { team });
@@ -321,12 +369,12 @@ describe("team ownership across in-process AgentSessions", () => {
 			await firstOwner.execute("team_spawn", {
 				team: "callback-owner-a",
 				teamPrompt: "Callback ownership test.",
-				teammates: [{ name: "teammate-a", prompt: "Wait.", model: "fake-model", thinking: "low" }],
+				teammates: [{ name: "teammate-a", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 			});
 			await secondOwner.execute("team_spawn", {
 				team: "callback-owner-b",
 				teamPrompt: "Callback ownership test.",
-				teammates: [{ name: "teammate-b", prompt: "Wait.", model: "fake-model", thinking: "low" }],
+				teammates: [{ name: "teammate-b", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 			});
 			await receipt.wait();
 
@@ -387,8 +435,8 @@ describe("context-window reports", () => {
 				team: "context-team",
 				teamPrompt: "Context-window report test.",
 				teammates: [
-					{ name: "product-head", prompt: "Wait.", model: "fake-model", thinking: "low" },
-					{ name: "reviewer", prompt: "Wait.", model: "fake-model", thinking: "low" },
+					{ name: "product-head", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+					{ name: "reviewer", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
 				],
 			});
 

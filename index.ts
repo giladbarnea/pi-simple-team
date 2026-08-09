@@ -6,7 +6,7 @@ import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { defineTool, type ContextUsage, type ExtensionAPI, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { formatContextWindowReport, requireKnownContextUsage, type KnownContextUsage } from "./context-window.ts";
-import { validateTeammateModels } from "./model-preflight.ts";
+import { formatScopedModelGuidance, validateTeammateModels, type ModelReference } from "./model-preflight.ts";
 import { composeSystemPrompt } from "./system-prompt.ts";
 import { readChildRuntimeConfig, registerChildTools } from "./child-tools.ts";
 import { appendTeamLog, filterTeamLog, normalizeChildEvent, nowText, pageTeamLog, preview, renderTeamLogPage, type TeamLogEntry } from "./teamlog.ts";
@@ -797,12 +797,14 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 	}
 }
 
-const teammateSchema = Type.Object({
-	name: Type.String({ description: "Teammate name" }),
-	prompt: Type.String({ description: "Individual teammate system prompt" }),
-	model: Type.String({ description: "Model pattern or provider/model id for this teammate" }),
-	thinking: Type.Optional(StringEnum(thinkingLevels, { description: "Thinking level for this teammate. Defaults to xhigh.", default: defaultThinkingLevel })),
-});
+function teammateSchema(modelGuidance: string) {
+	return Type.Object({
+		name: Type.String({ description: "Teammate name" }),
+		prompt: Type.String({ description: "Individual teammate system prompt" }),
+		model: Type.String({ description: `Canonical provider/model id for this teammate. ${modelGuidance}` }),
+		thinking: Type.Optional(StringEnum(thinkingLevels, { description: "Thinking level for this teammate. Defaults to xhigh.", default: defaultThinkingLevel })),
+	});
+}
 
 export default function (pi: ExtensionAPI) {
 	const childRuntimeConfig = readChildRuntimeConfig();
@@ -822,73 +824,76 @@ export default function (pi: ExtensionAPI) {
 		closeCallbackServerIfUnused();
 	});
 
-	// TODO: Should also "start" the entire team automatically, making `teammate_start` redundant. Solves the respective smell.
-	pi.registerTool(
-		defineTool({
-			name: "team_spawn",
-			label: "Team Spawn",
-			description: "Spawn a persistent team of Pi teammates with fresh context windows. Set showOnHerdrPanes to run each teammate in a visible Herdr pane. The main agent (you) is included automatically; do not specify it as a teammate.",
-			promptSnippet: "Spawn persistent Pi teammates. Set showOnHerdrPanes to true when user-visible teammate sessions add value. Currently, manually ‘starting’ the teammates is required after spawn. Unless required, don’t fill up your time by repeatedly busy-polling team information. Don’t bash sleep to wait for progress; instead, set your status to advertise that you are counting on teammates to send you important milestones or requests for help, and that otherwise you are staying idle. Send this actively to the team. Then end your turn by sending a simple message to the user, and finally stay put.",
-			renderShell: "self",
-			renderCall: (args, theme, context) => renderTeamToolCall("team_spawn", args, theme, context, sessionTeammateRoster),
-			renderResult: (result, options, theme, context) => renderTeamToolResult("team_spawn", result, options, theme, context, undefined, sessionTeammateRoster),
-			parameters: Type.Object({
-				team: Type.String({ description: "Team name" }),
-				teamPrompt: Type.String({ description: "Common team system prompt" }),
-				teammates: Type.Array(teammateSchema, { description: "Teammates to spawn" }),
-				showOnHerdrPanes: Type.Optional(Type.Boolean({ description: "Run each teammate in a visible Herdr pane instead of RPC mode", default: false })),
-			}),
-			async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-				const teamName = compactName(params.team);
-				if (teams.has(teamName)) throw new Error(`Team already exists: ${teamName}`);
-				const showOnHerdrPanes = Boolean(params.showOnHerdrPanes);
-				const herdrTabId = showOnHerdrPanes ? await validateHerdrAvailability() : undefined;
+	pi.on("session_start", (_event, context) => {
+		const scopedModels = (context as typeof context & { scopedModels?: ReadonlyArray<{ model: ModelReference }> }).scopedModels ?? [];
+		const modelGuidance = formatScopedModelGuidance(scopedModels.map(({ model }) => model));
+		pi.registerTool(
+			defineTool({
+				name: "team_spawn",
+				label: "Team Spawn",
+				description: `Spawn a persistent team of Pi teammates with fresh context windows. If the user is interested, set \`showOnHerdrPanes\` to run each teammate in a visible Herdr pane. The main agent (you) is included automatically; do not specify it as a teammate. ${modelGuidance}`,
+				promptSnippet: `Spawn persistent Pi teammates. ${modelGuidance} Unless required, don’t fill up your time by repeatedly busy-polling team information. Don’t bash sleep to wait for progress; instead, set your status to advertise that you are counting on teammates to send you important milestones or requests for help, and that otherwise you are staying idle. Send this actively to the team. Then end your turn by sending a simple message to the user, and finally stay put.`,
+				renderShell: "self",
+				renderCall: (args, theme, context) => renderTeamToolCall("team_spawn", args, theme, context, sessionTeammateRoster),
+				renderResult: (result, options, theme, context) => renderTeamToolResult("team_spawn", result, options, theme, context, undefined, sessionTeammateRoster),
+				parameters: Type.Object({
+					team: Type.String({ description: "Team name" }),
+					teamPrompt: Type.String({ description: "Common team system prompt" }),
+					teammates: Type.Array(teammateSchema(modelGuidance), { description: "Teammates to spawn" }),
+					showOnHerdrPanes: Type.Optional(Type.Boolean({ default: false })),
+				}),
+				async execute(_toolCallId, params, _signal, _onUpdate, context) {
+					const teamName = compactName(params.team);
+					if (teams.has(teamName)) throw new Error(`Team already exists: ${teamName}`);
+					const showOnHerdrPanes = Boolean(params.showOnHerdrPanes);
+					const herdrTabId = showOnHerdrPanes ? await validateHerdrAvailability() : undefined;
 
-				const teammateSpecs = params.teammates as TeammateSpec[];
-				const teammateNames = teammateSpecs.map((teammate) => compactName(teammate.name));
-				const duplicateNames = teammateNames.filter((name, index) => teammateNames.indexOf(name) !== index);
-				if (duplicateNames.length > 0) throw new Error(`Duplicate teammate name(s): ${[...new Set(duplicateNames)].join(", ")}`);
-				if (teammateNames.includes("main")) throw new Error('"main" is reserved');
+					const teammateSpecs = params.teammates as TeammateSpec[];
+					const teammateNames = teammateSpecs.map((teammate) => compactName(teammate.name));
+					const duplicateNames = teammateNames.filter((name, index) => teammateNames.indexOf(name) !== index);
+					if (duplicateNames.length > 0) throw new Error(`Duplicate teammate name(s): ${[...new Set(duplicateNames)].join(", ")}`);
+					if (teammateNames.includes("main")) throw new Error('"main" is reserved');
 
-				await validateTeammateModels(teammateSpecs);
-				sessionTeammateRoster.push(...teammateNames.filter((teammateName) => !sessionTeammateRoster.includes(teammateName)));
-				await ensureCallbackServer();
+					validateTeammateModels(teammateSpecs, context.modelRegistry.getAvailable());
+					sessionTeammateRoster.push(...teammateNames.filter((teammateName) => !sessionTeammateRoster.includes(teammateName)));
+					await ensureCallbackServer();
 
-				const team: TeamState = {
-					owner,
-					ownerPi: pi,
-					name: teamName,
-					showOnHerdrPanes,
-					teamPrompt: params.teamPrompt,
-					members: new Map(),
-					statuses: new Map([["main", status("available", "Main agent")]]),
-					created: nowText(),
-					log: [],
-					nextLogSequence: 1,
-				};
+					const team: TeamState = {
+						owner,
+						ownerPi: pi,
+						name: teamName,
+						showOnHerdrPanes,
+						teamPrompt: params.teamPrompt,
+						members: new Map(),
+						statuses: new Map([["main", status("available", "Main agent")]]),
+						created: nowText(),
+						log: [],
+						nextLogSequence: 1,
+					};
 
-				teams.set(teamName, team);
-				try {
-					for (const teammateSpec of teammateSpecs) {
-						const teammate = createTeammateState(team, teammateSpec);
-						team.members.set(teammate.name, teammate);
-						team.statuses.set(teammate.name, status("idle", "Spawned"));
-						await startTeammate(team, teammate, teammateNames, herdrTabId);
+					teams.set(teamName, team);
+					try {
+						for (const teammateSpec of teammateSpecs) {
+							const teammate = createTeammateState(team, teammateSpec);
+							team.members.set(teammate.name, teammate);
+							team.statuses.set(teammate.name, status("idle", "Spawned"));
+							await startTeammate(team, teammate, teammateNames, herdrTabId);
+						}
+					} catch (error) {
+						await shutdownTeam(team);
+						closeCallbackServerIfUnused();
+						throw error;
 					}
-				} catch (error) {
-					await shutdownTeam(team);
-					closeCallbackServerIfUnused();
-					throw error;
-				}
-				return toolResult({
-					accepted: true,
-					team: team.name,
-					teammates: [...team.members.keys()],
-					status: formatStatus(team),
-				});
-			},
-		}),
-	);
+					return toolResult({
+						accepted: true,
+						team: team.name,
+						teammates: [...team.members.keys()],
+						status: formatStatus(team),
+					});
+				},
+			}),
+		);
+	});
 
 	pi.registerTool(
 		defineTool({
