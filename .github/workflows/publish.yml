@@ -17,6 +17,8 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -65,3 +67,59 @@ jobs:
 
       - name: Publish ${{ steps.release.outputs.version }}
         run: npm publish
+
+  mirror:
+    name: Mirror to GitHub Packages
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: v${{ needs.publish.outputs.version }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: https://npm.pkg.github.com
+          scope: "@giladbarnea"
+          package-manager-cache: false
+
+      - name: Publish ${{ needs.publish.outputs.version }}
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    name: Create GitHub release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: v${{ needs.publish.outputs.version }}
+          fetch-depth: 0
+
+      - name: Release ${{ needs.publish.outputs.version }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${{ needs.publish.outputs.version }}"
+          previous_tag="$(git describe --tags --abbrev=0 HEAD^)"
+          notes="$(
+            printf 'Published to [npm](https://www.npmjs.com/package/@giladbarnea/pi-simple-team/v/%s).\n\n' "$version"
+            printf '## Changes\n\n'
+            git log \
+              --format="- %s ([%h]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/%H))" \
+              "$previous_tag..HEAD^"
+          )"
+          gh release create "v$version" \
+            --generate-notes \
+            --notes "$notes" \
+            --notes-start-tag "$previous_tag" \
+            --title "v$version" \
+            --verify-tag
