@@ -15,9 +15,11 @@ type ToolResult = { content: Array<{ type: string; text: string }>; details?: Js
 type RegisteredTool = { name: string; parameters: TSchema; execute: (id: string, params: JsonRecord, signal: AbortSignal, update: undefined, context: unknown) => Promise<ToolResult> };
 type ExtensionEventHandler = (event: JsonRecord, context: unknown) => Promise<void> | void;
 
+const fakeMainSessionFile = "/tmp/pi-simple-team-main-session.jsonl";
 const fakeMainContext = {
 	scopedModels: [],
 	modelRegistry: { getAvailable: () => [{ provider: "fake", id: "fake-model" }] },
+	sessionManager: { getSessionFile: () => fakeMainSessionFile },
 };
 
 class ExtensionHost {
@@ -394,6 +396,53 @@ describe("visible Herdr teammates", () => {
 			assert.equal(Value.Check(schema, { team: "rpc-team", teamPrompt: "test", teammates: [], showOnHerdrPanes: false }), true);
 			await host.execute("team_spawn", { team: "rpc-team", teamPrompt: "test", teammates: [] });
 			assert.deepEqual(lines(fake.logPath), []);
+		} finally {
+			await host.shutdown();
+			fake.restore();
+		}
+	});
+
+	test("rejects inherited context for an ephemeral main session", async () => {
+		const host = new ExtensionHost();
+		try {
+			await assert.rejects(
+				() => host.execute(
+					"team_spawn",
+					{
+						team: "ephemeral-team",
+						teamPrompt: "test",
+						teammates: [{ name: "inheritor", prompt: "wait", model: "fake/fake-model", inheritContext: true }],
+					},
+					{ ...fakeMainContext, sessionManager: { getSessionFile: () => undefined } },
+				),
+				/inheritContext requires a persistent main session/,
+			);
+		} finally {
+			await host.shutdown();
+		}
+	});
+
+	test("passes the main session fork only to inheriting visible teammates", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		try {
+			await host.execute("team_spawn", {
+				team: "inherited-visible-team",
+				teamPrompt: "test",
+				showOnHerdrPanes: true,
+				teammates: [
+					{ name: "inheritor", prompt: "wait", model: "fake/fake-model", thinking: "low", inheritContext: true },
+					{ name: "fresh", prompt: "wait", model: "fake/fake-model", thinking: "low" },
+				],
+			});
+			const starts = lines(fake.logPath).filter((entry) => entry.type === "start");
+			assert.equal(starts.length, 2);
+			const commandFor = (index: number): string[] => {
+				const args = starts[index]!.args as string[];
+				return args.slice(args.indexOf("--") + 1);
+			};
+			assert.deepEqual(commandFor(0).slice(0, 4), ["pi", "--fork", fakeMainSessionFile, "-e"]);
+			assert.equal(commandFor(1).includes("--fork"), false);
 		} finally {
 			await host.shutdown();
 			fake.restore();

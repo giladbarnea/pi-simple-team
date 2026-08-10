@@ -45,6 +45,7 @@ interface TeammateSpec {
 	prompt: string;
 	model: string;
 	thinking?: ThinkingLevel;
+	inheritContext?: boolean;
 }
 
 type TeammateTransport = "rpc" | "herdr";
@@ -54,6 +55,7 @@ interface TeammateState {
 	prompt: string;
 	model: string;
 	thinking: ThinkingLevel;
+	inheritContext: boolean;
 	transport: TeammateTransport;
 	process?: ChildProcess;
 	paneId?: string;
@@ -75,6 +77,7 @@ interface TeamState {
 	name: string;
 	showOnHerdrPanes: boolean;
 	teamPrompt: string;
+	mainSessionFile?: string;
 	members: Map<string, TeammateState>;
 	statuses: Map<string, TeamStatus>;
 	created: string;
@@ -488,6 +491,7 @@ function createTeammateState(team: TeamState, teammateSpec: TeammateSpec): Teamm
 		prompt: teammateSpec.prompt,
 		model: teammateSpec.model,
 		thinking,
+		inheritContext: Boolean(teammateSpec.inheritContext),
 		transport: team.showOnHerdrPanes ? "herdr" : "rpc",
 		visibleReady,
 		resolveVisibleReady,
@@ -519,15 +523,17 @@ function appendSpawnLog(team: TeamState, teammate: TeammateState): void {
 		teammate: teammate.name,
 		direction: "runtime",
 		kind: "spawn",
-		summary: `spawned ${teammate.name} (model=${teammate.model}, thinking=${teammate.thinking})`,
-		details: { model: teammate.model, thinking: teammate.thinking, transport: teammate.transport, paneId: teammate.paneId },
+		summary: `spawned ${teammate.name} (model=${teammate.model}, thinking=${teammate.thinking}, context=${teammate.inheritContext ? "inherited" : "fresh"})`,
+		details: { model: teammate.model, thinking: teammate.thinking, inheritContext: teammate.inheritContext, transport: teammate.transport, paneId: teammate.paneId },
 	});
 }
 
 function attachRpcTeammate(team: TeamState, teammate: TeammateState, participants: string[]): void {
+	const sessionArgs = teammate.inheritContext ? ["--fork", team.mainSessionFile!] : [];
 	const args = [
 		"--mode",
 		"rpc",
+		...sessionArgs,
 		"-e",
 		teamLiteExtensionPath,
 		"--no-prompt-templates",
@@ -583,7 +589,19 @@ async function attachVisibleTeammate(team: TeamState, teammate: TeammateState, p
 	for (const [name, value] of Object.entries(environment)) {
 		if (value !== undefined) args.push("--env", `${name}=${value}`);
 	}
-	args.push("--", "pi", "-e", teamLiteExtensionPath, "--model", teammate.model, "--thinking", teammate.thinking, "--system-prompt", systemPrompt);
+	args.push(
+		"--",
+		"pi",
+		...(teammate.inheritContext ? ["--fork", team.mainSessionFile!] : []),
+		"-e",
+		teamLiteExtensionPath,
+		"--model",
+		teammate.model,
+		"--thinking",
+		teammate.thinking,
+		"--system-prompt",
+		systemPrompt,
+	);
 	const result = await runCommand("herdr", args);
 	teammate.paneId = parseHerdrPaneId(result.stdout, teammate.name);
 	appendSpawnLog(team, teammate);
@@ -804,6 +822,7 @@ function teammateSchema(modelGuidance: string) {
 		prompt: Type.String({ description: "Individual teammate system prompt" }),
 		model: Type.String({ description: `Canonical provider/model id for this teammate. ${modelGuidance}` }),
 		thinking: Type.Optional(StringEnum(thinkingLevels, { description: "Thinking level for this teammate. Defaults to xhigh.", default: defaultThinkingLevel })),
+		inheritContext: Type.Optional(Type.Boolean({ description: "Start from a fork of main's persisted session. The fork is taken during asynchronous child startup. Defaults to false.", default: false })),
 	});
 }
 
@@ -832,7 +851,7 @@ export default function (pi: ExtensionAPI) {
 			defineTool({
 				name: "team_spawn",
 				label: "Team Spawn",
-				description: `Spawn a persistent team of Pi teammates with fresh context windows. If the user is interested, set \`showOnHerdrPanes\` to run each teammate in a visible Herdr pane. The main agent (you) is included automatically; do not specify it as a teammate. ${modelGuidance}`,
+				description: `Spawn a persistent team of Pi teammates. Teammates start with fresh context windows unless \`inheritContext\` is true. If the user is interested, set \`showOnHerdrPanes\` to run each teammate in a visible Herdr pane. The main agent (you) is included automatically; do not specify it as a teammate. ${modelGuidance}`,
 				promptSnippet: `Spawn persistent Pi teammates. ${modelGuidance} Unless required, don’t fill up your time by repeatedly busy-polling team information. Don’t bash sleep to wait for progress; instead, set your status to advertise that you are counting on teammates to send you important milestones or requests for help, and that otherwise you are staying idle. Send this actively to the team. Then end your turn by sending a simple message to the user, and finally stay put.`,
 				renderShell: "self",
 				renderCall: (args, theme, context) => renderTeamToolCall("team_spawn", args, theme, context, sessionTeammateRoster),
@@ -856,6 +875,9 @@ export default function (pi: ExtensionAPI) {
 					if (teammateNames.includes("main")) throw new Error('"main" is reserved');
 
 					validateTeammateModels(teammateSpecs, context.modelRegistry.getAvailable());
+					const inheritsMainContext = teammateSpecs.some((teammate) => Boolean(teammate.inheritContext));
+					const mainSessionFile = inheritsMainContext ? context.sessionManager.getSessionFile() : undefined;
+					if (inheritsMainContext && !mainSessionFile) throw new Error("inheritContext requires a persistent main session");
 					sessionTeammateRoster.push(...teammateNames.filter((teammateName) => !sessionTeammateRoster.includes(teammateName)));
 					await ensureCallbackServer();
 
@@ -865,6 +887,7 @@ export default function (pi: ExtensionAPI) {
 						name: teamName,
 						showOnHerdrPanes,
 						teamPrompt: params.teamPrompt,
+						mainSessionFile,
 						members: new Map(),
 						statuses: new Map([["main", status("available", "Main agent")]]),
 						created: nowText(),
