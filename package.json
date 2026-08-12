@@ -1,6 +1,6 @@
 {
   "name": "@giladbarnea/pi-simple-team",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "description": "A flat, live team of Pi agents.",
   "keywords": [
     "pi-package",
