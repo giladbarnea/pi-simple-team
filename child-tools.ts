@@ -255,7 +255,6 @@ export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig)
 			name: "report_context_window",
 			label: "Report Context Window",
 			description: "Report your current context-window use.",
-			promptSnippet: "Report your current context-window use",
 			parameters: Type.Object({}),
 			async execute(_toolCallId, _params, _signal, _onUpdate, context) {
 				const text = formatContextWindowReport("You have", requireKnownContextUsage(context.getContextUsage()));
@@ -269,10 +268,6 @@ export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig)
 			name: "teamsend",
 			label: "Team Send",
 			description: "Send a message to teammate(s) (not main). To message the main agent, use teammain. Returns once the runtime accepts the send request, not after recipients reply.",
-			promptSnippet: "Send a message to teammate(s)",
-			promptGuidelines: [
-				"Use teamsend to talk to teammates. From your POV (sender), it is fire-and-forget. From the recipient’s POV, it’s pushed to context as soon as possible.",
-			],
 			parameters: Type.Object({
 				to: Type.Array(Type.String(), { description: "Recipient teammate names" }),
 				message: Type.String({ description: "Message to send" }),
@@ -290,8 +285,6 @@ export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig)
 			name: "teammain",
 			label: "Team Main",
 			description: "Send a message to the main agent.",
-			promptSnippet: "Send a message to the main agent.",
-			promptGuidelines: ["Use teammain to update or ask the main agent. Main agent sees the big picture and has been aware of the team’s actions and status updates since the team was created."],
 			parameters: Type.Object({
 				message: Type.String({ description: "Message to send to the main agent" }),
 			}),
@@ -306,7 +299,6 @@ export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig)
 			name: "teamstatus",
 			label: "Team Status",
 			description: "Set your public status and read everyone's public status.",
-			promptSnippet: "Set/read the public team status map",
 		// TODO: If this typing system supports it, I want gerund and phrase optionality to be a XOR
 			parameters: Type.Object({
 				gerund: Type.Optional(Type.String({ description: "One-word gerund status." })),

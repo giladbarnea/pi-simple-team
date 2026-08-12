@@ -137,7 +137,7 @@ Teammates publish a one-liner:
 
 > <span style="color:grey">implementer  </span> Done, 89 tests green, awaiting review.
 
-> <span style="color:grey">reviewer      </span> Reading implementation, will finalize review in a few minutes"
+> <span style="color:grey">reviewer      </span> Reading implementation, will finalize review in a few minutes.
 
 Your main agent calls `teamstatus` and understands exactly what's going on. Main doesn't ask and clutter the teammates' context.
 
