@@ -239,10 +239,12 @@ class TeamOverviewOverlay implements Component {
 	}
 
 	private dashboard(team: TeamSnapshot, width: number, height: number): string[] {
-		const headerHeight = Math.min(3, Math.max(1, height - 3));
+		const contentWidth = Math.max(1, width - 2);
+		const contentHeight = Math.max(1, height - 2);
+		const headerHeight = Math.min(3, Math.max(1, contentHeight - 3));
 		const desiredStatusHeight = Math.min(Object.keys(team.statuses).length, RECENT_STATUS_LIMIT) + 2;
-		const statusHeight = Math.max(1, Math.min(desiredStatusHeight, height - headerHeight - 2));
-		const feedHeight = height - headerHeight - statusHeight;
+		const statusHeight = Math.max(1, Math.min(desiredStatusHeight, contentHeight - headerHeight - 2));
+		const feedHeight = contentHeight - headerHeight - statusHeight;
 		const messageHeight = Math.max(1, Math.min(feedHeight - 1, Math.round(feedHeight * 0.55)));
 		const logHeight = feedHeight - messageHeight;
 
@@ -257,7 +259,7 @@ class TeamOverviewOverlay implements Component {
 
 		const statusContentHeight = Math.max(0, statusHeight - 2);
 		const statuses = recentStatuses(team.statuses, Math.min(RECENT_STATUS_LIMIT, statusContentHeight));
-		const statusLines = statusRows(this.theme, statuses, team.roster, Math.max(0, width - 2));
+		const statusLines = statusRows(this.theme, statuses, team.roster, Math.max(0, contentWidth - 2));
 
 		const allMessages = team.log.flatMap((entry) => {
 			const message = teamMessage(entry);
@@ -279,12 +281,13 @@ class TeamOverviewOverlay implements Component {
 		const logContentHeight = Math.max(0, logHeight - 2);
 		const logLines = renderedLogLines.slice(-logContentHeight);
 
-		return [
-			...this.region(this.theme.fg("accent", this.theme.bold(`Team: ${team.name}`)), [this.theme.fg("muted", metadata)], width, headerHeight),
-			...this.region(`Team Status ${team.name} · latest ${statuses.length} of ${Object.keys(team.statuses).length}`, statusLines, width, statusHeight),
-			...this.region(`Messages · latest ${selectedMessages.messageCount} of ${allMessages.length}`, messageLines, width, messageHeight),
-			...this.region(`Team Log ${team.name} · latest ${logLines.length} rows · ${allLogEntries.length} events`, logLines, width, logHeight),
+		const content = [
+			...this.region(this.theme.fg("accent", this.theme.bold(`Team: ${team.name}`)), [this.theme.fg("muted", metadata)], contentWidth, headerHeight),
+			...this.region(`Team Status ${team.name} · latest ${statuses.length} of ${Object.keys(team.statuses).length}`, statusLines, contentWidth, statusHeight),
+			...this.region(`Messages · latest ${selectedMessages.messageCount} of ${allMessages.length}`, messageLines, contentWidth, messageHeight),
+			...this.region(`Team Log ${team.name} · latest ${logLines.length} rows · ${allLogEntries.length} events`, logLines, contentWidth, logHeight),
 		];
+		return this.frame(content, width, height);
 	}
 
 	private region(title: string, content: string[], width: number, height: number): string[] {
@@ -322,7 +325,7 @@ class TeamOverviewOverlay implements Component {
 		const innerWidth = frameWidth - 2;
 		const visibleContent = content.slice(0, innerHeight);
 		while (visibleContent.length < innerHeight) visibleContent.push("");
-		const row = (text: string): string => `${border("│")}${truncateToWidth(` ${text}`, innerWidth, "…", true)}${border("│")}`;
+		const row = (text: string): string => `${border("│")}${middleTruncateToWidth(text, innerWidth, true)}${border("│")}`;
 		return [border(`╭${"─".repeat(innerWidth)}╮`), ...visibleContent.map(row), border(`╰${"─".repeat(innerWidth)}╯`)];
 	}
 }

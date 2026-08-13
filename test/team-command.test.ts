@@ -207,6 +207,24 @@ describe("/team", () => {
 		}
 	});
 
+	test("wraps the team dashboard in an external border", async () => {
+		const host = new TeamCommandHost();
+		try {
+			await host.openSnapshots(() => [liveSnapshot([])], (component) => {
+				const lines = component.render(90);
+				assert.equal(lines.length, 36);
+				for (const line of lines) assert.equal(visibleWidth(line), 90);
+				assert.match(lines[0]!, /^╭─+╮$/);
+				assert.match(lines[1]!, /^│╭─ Team: live-team-command-test/);
+				assert.match(lines[2]!, /^││/);
+				assert.match(lines.at(-1)!, /^╰─+╯$/);
+				close(component);
+			});
+		} finally {
+			await host.shutdown();
+		}
+	});
+
 	test("keeps fixed bordered regions and bounds statuses by latest update", async () => {
 		const host = new TeamCommandHost();
 		const names = ["main", ...Array.from({ length: 7 }, (_, index) => `teammate-${index + 1}`)];
@@ -224,12 +242,12 @@ describe("/team", () => {
 				const lines = component.render(90);
 				assert.equal(lines.length, 36);
 				for (const line of lines) assert.equal(visibleWidth(line), 90);
-				assert.match(lines[0]!, /Team: live-team-command-test/);
-				assert.match(lines[3]!, /Status/);
-				assert.match(lines[10]!, /Messages/);
-				assert.match(lines[24]!, /Team Log/);
+				assert.match(lines[1]!, /Team: live-team-command-test/);
+				assert.match(lines[4]!, /Status/);
+				assert.match(lines[11]!, /Messages/);
+				assert.ok(lines.some((line) => line.includes("Team Log")));
 
-				const statusRows = lines.slice(4, 9).join("\n");
+				const statusRows = lines.slice(5, 10).join("\n");
 				assert.match(statusRows, /teammate-7[\s\S]*teammate-6[\s\S]*teammate-5[\s\S]*teammate-4[\s\S]*teammate-3/);
 				assert.doesNotMatch(statusRows, /teammate-[12]/);
 				assert.doesNotMatch(statusRows, /\bmain\b/);
@@ -250,7 +268,7 @@ describe("/team", () => {
 
 		try {
 			await host.openSnapshots(() => [snapshot], (component) => {
-				const rows = component.render(100).slice(4, 6);
+				const rows = component.render(100).slice(5, 7);
 				const mainRow = rows.find((row) => row.includes("main"));
 				const reviewerRow = rows.find((row) => row.includes("reviewer"));
 				assert.ok(mainRow);
@@ -259,8 +277,8 @@ describe("/team", () => {
 				assert.equal(mainRow.indexOf("waiting"), reviewerRow.indexOf("working"));
 				assert.equal(mainRow.indexOf("STATUS-BEGIN"), reviewerRow.indexOf("Short phrase"));
 				assert.equal(mainRow.indexOf("August"), reviewerRow.indexOf("August"));
-				assert.ok(mainRow.endsWith("August 12, 10:00:00│"));
-				assert.ok(reviewerRow.endsWith("August 12, 10:00:01│"));
+				assert.ok(mainRow.endsWith("August 12, 10:00:00││"));
+				assert.ok(reviewerRow.endsWith("August 12, 10:00:01││"));
 				assert.match(mainRow, /STATUS-BEGIN.*….*STATUS-END/);
 				close(component);
 			});
@@ -348,8 +366,8 @@ describe("/team", () => {
 				const text = populatedLines.join("\n");
 				assert.doesNotMatch(text, /message [1-4]/);
 				assert.match(text, /message 5[\s\S]*message 6/);
-				assert.doesNotMatch(text, /log [1-4]/);
-				assert.match(text, /log 5[\s\S]*log 6[\s\S]*log 7[\s\S]*log 8/);
+				assert.doesNotMatch(text, /log [1-5]/);
+				assert.match(text, /log 6[\s\S]*log 7[\s\S]*log 8/);
 				component.handleInput?.("\u001b[B");
 				component.handleInput?.("\u001b[6~");
 				assert.deepEqual(component.render(90), populatedLines);
