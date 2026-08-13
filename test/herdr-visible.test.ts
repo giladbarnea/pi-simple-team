@@ -37,6 +37,7 @@ class ExtensionHost {
 				if (event === "session_shutdown") this.shutdownHandlers.push(handler);
 				if (event === "session_start") handler({ reason: "startup" }, fakeMainContext);
 			},
+			registerCommand: () => undefined,
 			registerMessageRenderer: () => undefined,
 			registerTool: (tool: RegisteredTool) => this.tools.set(tool.name, tool),
 		} as unknown as ExtensionAPI;

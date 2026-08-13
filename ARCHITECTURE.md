@@ -110,9 +110,34 @@ Child tools call an authenticated localhost callback server. The callback suppli
 
 Teammate messages are pushed into recipient sessions. Idle teammates wake immediately, while busy teammates receive queued delivery after their current work settles.
 
+## The `/team` dashboard reads owner-bound live snapshots
+
+`index.ts` registers `/team` only in the parent runtime. Its handler passes `openTeamOverview()` a source bound to that extension runtime's private owner symbol.
+
+`ownedTeamSnapshots(owner)` is the view and data boundary. It filters the module-level team map by owner, then copies each owned team's metadata, roster, statuses, and log into a `TeamSnapshot`. This ownership check prevents one Pi session's dashboard from exposing another session's teams.
+
+`team-ui.ts` owns the read-only presentation layer. It defines `TeamSnapshot`, accepts only a `TeamSnapshotSource`, and never imports or changes `TeamState`. The view cannot send messages, change statuses, or reach teammate processes.
+
+The overlay calls its snapshot source on every render. A 500 ms timer requests a new render while the overlay is open. Live data therefore comes from fresh parent-owned snapshots instead of view-side state. Closing the overlay clears that timer.
+
+With no snapshots, the command renders an empty state. One snapshot opens directly. Multiple snapshots render a selector before the dashboard.
+
+The 90% overlay has one outer frame and fixed bordered regions for metadata, status, messages, and the non-message log. Region heights depend on the terminal height, not incoming data, so updates cannot move the boundaries. The view has no scrolling path.
+
+The status region shows at most the five most recently updated participants. It aligns the name, status word, and phrase columns, then right-aligns timestamps.
+
+The message region turns `send` and `main_message` entries into message views. It chooses the newest message groups that fit and keeps those groups in chronological order. If one message exceeds its region, the view retains its outer lines around an omission marker.
+
+The log region excludes messages and their delivery entries: `send`, `deliver`, `ack`, and `main_message`. This separation prevents message activity from duplicating the message view. The region considers at most the latest 20 non-message entries, then shows the newest rows that fit in chronological order.
+
+Every region uses middle truncation for horizontal overflow. This preserves both ends of names, status phrases, messages, and event rows without changing the fixed layout.
+
+The dashboard shows only live teams owned by the current parent runtime. Dormant attachments become visible after `team_resume` restores them into that runtime.
+
 ## Relevant implementation entrypoints
 
-- `index.ts`: team lifecycle tools, live state, transport startup, and message delivery
+- `index.ts`: team lifecycle tools, live state, owner-scoped dashboard snapshots, transport startup, and message delivery
+- `team-ui.ts`: `/team` selection, live refresh, and bounded dashboard rendering
 - `team-registry.ts`: manifests, project discovery, expiry, and leases
 - `child-tools.ts`: child callbacks, current-roster injection, and teammate tools
 - `system-prompt.ts`: teammate attachment instructions

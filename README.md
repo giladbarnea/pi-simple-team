@@ -41,6 +41,14 @@ Not scheduling a meeting.
 Tell your main agent:
 > Spawn a team.
 
+### Watch a live team with `/team`.
+
+`/team` is for you, not another agent tool. It gives you a live view of the room without turning the main agent into a status relay.
+
+The command opens a read-only overlay with recent statuses, messages, and a separate event log. With no teams, it shows an empty state. With one team, it opens that team directly. With several teams, it starts with a selector.
+
+The fixed layout keeps the latest content in view as work arrives, without scrolling or jumping around. It is an overview of the room, not a teammate drill-down or transcript.
+
 ### Throw a team at something hard.
 
 The team takes the shape of the mission.
@@ -229,12 +237,10 @@ Kept minimal:
 **User involvement track:**
 
 - [x] Herdr panes for teammates.
-
-Slash commands for:
-
-- [ ] 💠 Live control panel. 
-- [ ] 👋 Joining and steering teams.
-- [ ] 🪄 Spawning teams directly.
+- [x] `/team`: live, read-only team dashboard.
+- [ ] Teammate drill-down and transcripts.
+- [ ] Joining and steering teams from slash commands.
+- [ ] Spawning teams directly from slash commands.
 
 **Functional:**
 

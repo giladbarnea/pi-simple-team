@@ -42,6 +42,7 @@ class ExtensionHost {
 				if (event === "session_start") this.sessionStartHandlers.push(handler);
 				if (event === "session_shutdown") this.sessionShutdownHandlers.push(handler);
 			},
+			registerCommand: () => undefined,
 			registerMessageRenderer: () => undefined,
 			registerTool: (tool: RegisteredTool) => this.tools.set(tool.name, tool),
 			sendMessage: () => undefined,
