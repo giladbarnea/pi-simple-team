@@ -1,7 +1,9 @@
 import * as childProcess from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
+import * as fs from "node:fs";
 import http from "node:http";
+import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { defineTool, type ContextUsage, type ExtensionAPI, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
@@ -10,6 +12,18 @@ import { formatContextWindowReport, requireKnownContextUsage, type KnownContextU
 import { formatScopedModelGuidance, validateTeammateModels, type ModelReference } from "./model-preflight.ts";
 import { composeSystemPrompt } from "./system-prompt.ts";
 import { readChildRuntimeConfig, registerChildTools } from "./child-tools.ts";
+import {
+	canonicalProjectDirectory,
+	claimTeamLease,
+	dormantManifestRetentionMilliseconds,
+	listTeamManifests,
+	readTeamLeaseState,
+	releaseTeamLease,
+	writeTeamManifest,
+	type TeamLease,
+	type TeamManifest,
+	type TeamManifestMember,
+} from "./team-registry.ts";
 import { appendTeamLog, filterTeamLog, normalizeChildEvent, nowText, pageTeamLog, preview, renderTeamLogPage, type TeamLogEntry } from "./teamlog.ts";
 import { renderTeamMessage, renderTeamToolCall, renderTeamToolResult, type TeamMessageDetails } from "./render.ts";
 import { StringEnum } from "@earendil-works/pi-ai";
@@ -57,6 +71,9 @@ interface TeammateState {
 	thinking: ThinkingLevel;
 	inheritContext: boolean;
 	transport: TeammateTransport;
+	sessionId?: string;
+	sessionFile?: string;
+	sessionMaterialized: boolean;
 	process?: ChildProcess;
 	paneId?: string;
 	visibleUrl?: string;
@@ -74,13 +91,17 @@ interface TeammateState {
 interface TeamState {
 	owner: symbol;
 	ownerPi: ExtensionAPI;
+	id?: string;
 	name: string;
+	projectDirectory?: string;
 	showOnHerdrPanes: boolean;
 	teamPrompt: string;
 	mainSessionFile?: string;
 	members: Map<string, TeammateState>;
 	statuses: Map<string, TeamStatus>;
 	created: string;
+	manifest?: TeamManifest;
+	lease?: TeamLease;
 	log: TeamLogEntry[];
 	nextLogSequence: number;
 }
@@ -386,17 +407,18 @@ function enqueueDelivery(team: TeamState, from: string, recipient: TeammateState
 		});
 }
 
-function resolveTeam(owner: symbol, teamName?: string): TeamState {
+function resolveTeam(owner: symbol, teamIdentifier?: string): TeamState {
 	const ownedTeams = [...teams.values()].filter((team) => team.owner === owner);
-	if (teamName) {
-		const team = teams.get(teamName);
-		if (!team || team.owner !== owner) throw new Error(`Unknown team: ${teamName}`);
-		return team;
+	if (teamIdentifier) {
+		const matches = ownedTeams.filter((team) => team.id === teamIdentifier || team.name === teamIdentifier);
+		if (matches.length === 0) throw new Error(`Unknown team: ${teamIdentifier}`);
+		if (matches.length > 1) throw new Error(`Ambiguous team name: ${teamIdentifier}. Pass the persistent team ID.`);
+		return matches[0]!;
 	}
 
 	if (ownedTeams.length === 1) return ownedTeams[0];
 	if (ownedTeams.length === 0) throw new Error("No teams exist. Use team_spawn first.");
-	throw new Error(`Multiple teams exist: ${ownedTeams.map((team) => team.name).join(", ")}. Pass team explicitly.`);
+	throw new Error(`Multiple teams exist: ${ownedTeams.map((team) => team.id ?? team.name).join(", ")}. Pass team explicitly.`);
 }
 
 function resolveCallbackTeam(teamName: string): TeamState {
@@ -493,6 +515,7 @@ function createTeammateState(team: TeamState, teammateSpec: TeammateSpec): Teamm
 		thinking,
 		inheritContext: Boolean(teammateSpec.inheritContext),
 		transport: team.showOnHerdrPanes ? "herdr" : "rpc",
+		sessionMaterialized: false,
 		visibleReady,
 		resolveVisibleReady,
 		rejectVisibleReady,
@@ -511,7 +534,8 @@ function childEnvironmentOverrides(team: TeamState, teammate: TeammateState, par
 		PI_SIMPLE_TEAM_VISIBLE_CHILD: visible ? "1" : "0",
 		PI_SIMPLE_TEAM_CALLBACK_URL: callbackUrl,
 		PI_SIMPLE_TEAM_CALLBACK_TOKEN: callbackToken,
-		PI_SIMPLE_TEAM_TEAM: team.name,
+		PI_SIMPLE_TEAM_TEAM: team.id ?? team.name,
+		PI_SIMPLE_TEAM_TEAM_NAME: team.name,
 		PI_SIMPLE_TEAM_MEMBER: teammate.name,
 		PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(participants),
 	};
@@ -528,29 +552,39 @@ function appendSpawnLog(team: TeamState, teammate: TeammateState): void {
 	});
 }
 
-function attachRpcTeammate(team: TeamState, teammate: TeammateState, participants: string[]): void {
-	const sessionArgs = teammate.inheritContext ? ["--fork", team.mainSessionFile!] : [];
+interface RpcStartOptions {
+	sessionFile?: string;
+	restartEmpty?: boolean;
+}
+
+function attachRpcTeammate(team: TeamState, teammate: TeammateState, participants: string[], options: RpcStartOptions): void {
+	const sessionArgs = options.sessionFile
+		? ["--session", options.sessionFile]
+		: teammate.inheritContext && !options.restartEmpty
+			? ["--fork", team.mainSessionFile!]
+			: [];
+	const modelArgs = options.sessionFile ? [] : ["--model", teammate.model, "--thinking", teammate.thinking];
 	const args = [
 		"--mode",
 		"rpc",
 		...sessionArgs,
+		"--no-extensions",
 		"-e",
 		teamLiteExtensionPath,
 		"--no-prompt-templates",
 		"--no-themes",
-		"--model",
-		teammate.model,
-		"--thinking",
-		teammate.thinking,
+		...modelArgs,
 		"--system-prompt",
 		composeSystemPrompt(team.name, team.teamPrompt, teammate.name, teammate.prompt, participants),
 	];
 	const proc = childProcess.spawn("pi", args, {
-		cwd: process.cwd(),
+		cwd: team.projectDirectory ?? process.cwd(),
 		stdio: ["pipe", "pipe", "pipe"],
 		env: { ...process.env, ...childEnvironmentOverrides(team, teammate, participants, false) },
 	});
 	teammate.process = proc;
+	teammate.alive = true;
+	teammate.busy = false;
 
 	attachJsonlReader(proc.stdout!, (line) => {
 		if (!line.trim()) return;
@@ -575,6 +609,18 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 	appendSpawnLog(team, teammate);
 }
 
+async function captureRpcSessionIdentity(teammate: TeammateState): Promise<void> {
+	const response = await sendRpc(teammate, { type: "get_state" }, 10_000);
+	await requireSuccessfulResponse(response, `read session identity from ${teammate.name}`);
+	const state = response.data as { sessionId?: unknown; sessionFile?: unknown } | undefined;
+	if (typeof state?.sessionId !== "string" || typeof state.sessionFile !== "string" || !path.isAbsolute(state.sessionFile)) {
+		throw new Error(`Teammate ${teammate.name} reported an invalid session identity`);
+	}
+	teammate.sessionId = state.sessionId;
+	teammate.sessionFile = state.sessionFile;
+	teammate.sessionMaterialized = fs.existsSync(state.sessionFile);
+}
+
 function parseHerdrPaneId(stdout: string, teammateName: string): string {
 	const response = JSON.parse(stdout) as { result?: { agent?: { pane_id?: string } } };
 	const paneId = response.result?.agent?.pane_id;
@@ -582,23 +628,33 @@ function parseHerdrPaneId(stdout: string, teammateName: string): string {
 	return paneId;
 }
 
-async function attachVisibleTeammate(team: TeamState, teammate: TeammateState, participants: string[], herdrTabId: string): Promise<void> {
+async function attachVisibleTeammate(
+	team: TeamState,
+	teammate: TeammateState,
+	participants: string[],
+	herdrTabId: string,
+	options: RpcStartOptions,
+): Promise<void> {
 	const systemPrompt = composeSystemPrompt(team.name, team.teamPrompt, teammate.name, teammate.prompt, participants);
 	const environment = childEnvironmentOverrides(team, teammate, participants, true);
-	const args = ["agent", "start", teammate.name, "--tab", herdrTabId, "--split", "right", "--no-focus", "--cwd", process.cwd()];
+	const sessionArgs = options.sessionFile
+		? ["--session", options.sessionFile]
+		: teammate.inheritContext && !options.restartEmpty
+			? ["--fork", team.mainSessionFile!]
+			: [];
+	const modelArgs = options.sessionFile ? [] : ["--model", teammate.model, "--thinking", teammate.thinking];
+	const args = ["agent", "start", teammate.name, "--tab", herdrTabId, "--split", "right", "--no-focus", "--cwd", team.projectDirectory ?? process.cwd()];
 	for (const [name, value] of Object.entries(environment)) {
 		if (value !== undefined) args.push("--env", `${name}=${value}`);
 	}
 	args.push(
 		"--",
 		"pi",
-		...(teammate.inheritContext ? ["--fork", team.mainSessionFile!] : []),
+		...sessionArgs,
+		"--no-extensions",
 		"-e",
 		teamLiteExtensionPath,
-		"--model",
-		teammate.model,
-		"--thinking",
-		teammate.thinking,
+		...modelArgs,
 		"--system-prompt",
 		systemPrompt,
 	);
@@ -622,12 +678,52 @@ async function attachVisibleTeammate(team: TeamState, teammate: TeammateState, p
 	}
 }
 
-async function startTeammate(team: TeamState, teammate: TeammateState, participants: string[], herdrTabId?: string): Promise<void> {
+async function startTeammate(
+	team: TeamState,
+	teammate: TeammateState,
+	participants: string[],
+	herdrTabId?: string,
+	rpcOptions: RpcStartOptions = {},
+): Promise<void> {
 	if (teammate.transport === "herdr") {
-		await attachVisibleTeammate(team, teammate, participants, herdrTabId!);
+		await attachVisibleTeammate(team, teammate, participants, herdrTabId!, rpcOptions);
 		return;
 	}
-	attachRpcTeammate(team, teammate, participants);
+	attachRpcTeammate(team, teammate, participants, rpcOptions);
+	if (team.id) await captureRpcSessionIdentity(teammate);
+}
+
+function manifestMemberFromTeammate(teammate: TeammateState): TeamManifestMember {
+	if (!teammate.sessionId || !teammate.sessionFile) {
+		throw new Error(`Teammate ${teammate.name} has no reported session identity`);
+	}
+	if (fs.existsSync(teammate.sessionFile)) teammate.sessionMaterialized = true;
+	return {
+		name: teammate.name,
+		prompt: teammate.prompt,
+		model: teammate.model,
+		thinking: teammate.thinking,
+		inheritContext: teammate.inheritContext,
+		transport: teammate.transport,
+		live: teammate.alive,
+		sessionId: teammate.sessionId,
+		sessionFile: teammate.sessionFile,
+		sessionMaterialized: teammate.sessionMaterialized,
+	};
+}
+
+function persistActiveTeamManifest(team: TeamState): void {
+	if (!team.manifest) return;
+	const updatedAt = new Date().toISOString();
+	team.manifest = {
+		...team.manifest,
+		members: [...team.members.values()].map(manifestMemberFromTeammate),
+		state: "active",
+		updatedAt,
+		shutdownAt: undefined,
+		expiresAt: undefined,
+	};
+	writeTeamManifest(team.manifest);
 }
 
 function isHerdrPaneNotFound(error: unknown): boolean {
@@ -644,11 +740,29 @@ async function closeVisiblePane(teammate: TeammateState): Promise<void> {
 	teammate.paneId = undefined;
 }
 
+async function stopRpcTeammate(teammate: TeammateState): Promise<void> {
+	const processToStop = teammate.process;
+	if (!processToStop || !teammate.alive) return;
+
+	await new Promise<void>((resolve) => {
+		let forceKillTimeout: ReturnType<typeof setTimeout> | undefined;
+		const resolveExit = (): void => {
+			if (forceKillTimeout) clearTimeout(forceKillTimeout);
+			resolve();
+		};
+		processToStop.once("exit", resolveExit);
+		processToStop.kill("SIGTERM");
+		forceKillTimeout = setTimeout(() => processToStop.kill("SIGKILL"), 1_000);
+		forceKillTimeout.unref();
+	});
+	teammate.process = undefined;
+}
+
 async function shutdownTeam(team: TeamState): Promise<string[]> {
 	const errors: string[] = [];
 	for (const teammate of team.members.values()) {
-		teammate.alive = false;
 		if (teammate.transport === "herdr") {
+			teammate.alive = false;
 			try {
 				await closeVisiblePane(teammate);
 			} catch (error) {
@@ -656,13 +770,33 @@ async function shutdownTeam(team: TeamState): Promise<string[]> {
 			}
 			continue;
 		}
-		if (!teammate.process) continue;
-		teammate.process.kill("SIGTERM");
-		setTimeout(() => {
-			if (teammate.process?.exitCode === null) teammate.process.kill("SIGKILL");
-		}, 1_000).unref();
+		await stopRpcTeammate(teammate);
 	}
-	teams.delete(team.name);
+	if (team.manifest) {
+		try {
+			const shutdownAt = new Date().toISOString();
+			team.manifest = {
+				...team.manifest,
+				members: [...team.members.values()].map(manifestMemberFromTeammate),
+				state: "dormant",
+				updatedAt: shutdownAt,
+				shutdownAt,
+				expiresAt: new Date(Date.parse(shutdownAt) + dormantManifestRetentionMilliseconds).toISOString(),
+			};
+			writeTeamManifest(team.manifest);
+		} catch (error) {
+			errors.push(error instanceof Error ? error.message : String(error));
+		}
+	}
+	if (team.lease) {
+		try {
+			releaseTeamLease(team.lease);
+		} catch (error) {
+			errors.push(error instanceof Error ? error.message : String(error));
+		}
+		team.lease = undefined;
+	}
+	teams.delete(team.id ?? team.name);
 	return errors;
 }
 
@@ -758,6 +892,11 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 		if (tool === "visible_register") {
 			if (!teammate || teammate.transport !== "herdr") throw new Error(`Unknown visible teammate: ${from}`);
 			const url = String(args.url ?? "");
+			const sessionId = args.sessionId;
+			const sessionFile = args.sessionFile;
+			if (typeof sessionId !== "string" || typeof sessionFile !== "string" || !path.isAbsolute(sessionFile)) {
+				throw new Error(`Visible teammate ${from} reported an invalid session identity`);
+			}
 			try {
 				teammate.visibleUrl = validateVisibleChildUrl(url, from);
 			} catch (error) {
@@ -765,6 +904,9 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 				teammate.rejectVisibleReady?.(failure);
 				throw failure;
 			}
+			teammate.sessionId = sessionId;
+			teammate.sessionFile = sessionFile;
+			teammate.sessionMaterialized = fs.existsSync(sessionFile);
 			teammate.alive = true;
 			teammate.busy = false;
 			team.statuses.set(teammate.name, status("idle", "Spawned"));
@@ -777,6 +919,17 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 			if (!teammate || teammate.transport !== "herdr") throw new Error(`Unknown visible teammate: ${from}`);
 			handleVisibleEvent(team, teammate, (args.event ?? {}) as JsonRecord);
 			writeJson(response, 200, { accepted: true, team: team.name, from });
+			return;
+		}
+
+		if (tool === "team_context") {
+			if (!teammate) throw new Error(`Unknown teammate: ${from}`);
+			writeJson(response, 200, {
+				team: team.name,
+				from,
+				participants: [...team.members.keys()],
+				status: formatStatus(team),
+			});
 			return;
 		}
 
@@ -826,6 +979,60 @@ function teammateSchema(modelGuidance: string) {
 	});
 }
 
+function restoreTeamState(owner: symbol, ownerPi: ExtensionAPI, manifest: TeamManifest, lease: TeamLease): TeamState {
+	const team: TeamState = {
+		owner,
+		ownerPi,
+		id: manifest.id,
+		name: manifest.name,
+		projectDirectory: manifest.projectDirectory,
+		showOnHerdrPanes: false,
+		teamPrompt: manifest.teamPrompt,
+		members: new Map(),
+		statuses: new Map([["main", status("available", "Main agent")]]),
+		created: manifest.createdAt,
+		manifest,
+		lease,
+		log: [],
+		nextLogSequence: 1,
+	};
+	for (const member of manifest.members) {
+		const teammate = createTeammateState(team, {
+			name: member.name,
+			prompt: member.prompt,
+			model: member.model,
+			thinking: member.thinking as ThinkingLevel,
+			inheritContext: member.inheritContext,
+		});
+		teammate.transport = "rpc";
+		teammate.sessionId = member.sessionId;
+		teammate.sessionFile = member.sessionFile;
+		teammate.sessionMaterialized = member.sessionMaterialized;
+		teammate.alive = false;
+		team.members.set(teammate.name, teammate);
+		team.statuses.set(teammate.name, status("stopped", "Dormant"));
+	}
+	return team;
+}
+
+function prepareVisibleTeammate(teammate: TeammateState): void {
+	teammate.transport = "herdr";
+	teammate.visibleReady = new Promise<void>((resolve, reject) => {
+		teammate.resolveVisibleReady = resolve;
+		teammate.rejectVisibleReady = reject;
+	});
+}
+
+function sessionFileForResume(teammate: TeammateState): string | undefined {
+	if (!teammate.sessionFile) throw new Error(`Teammate ${teammate.name} has no reported session file`);
+	if (fs.existsSync(teammate.sessionFile)) return teammate.sessionFile;
+	if (teammate.sessionMaterialized) {
+		throw new Error(`Materialized session file for ${teammate.name} is missing: ${teammate.sessionFile}`);
+	}
+	// This empty restart becomes redundant when team creation wakes every teammate and guarantees session persistence.
+	return undefined;
+}
+
 export default function (pi: ExtensionAPI) {
 	const childRuntimeConfig = readChildRuntimeConfig();
 	if (childRuntimeConfig) {
@@ -864,7 +1071,6 @@ export default function (pi: ExtensionAPI) {
 				}),
 				async execute(_toolCallId, params, _signal, _onUpdate, context) {
 					const teamName = compactName(params.team);
-					if (teams.has(teamName)) throw new Error(`Team already exists: ${teamName}`);
 					const showOnHerdrPanes = Boolean(params.showOnHerdrPanes);
 					const herdrTabId = showOnHerdrPanes ? await validateHerdrAvailability() : undefined;
 
@@ -878,30 +1084,68 @@ export default function (pi: ExtensionAPI) {
 					const inheritsMainContext = teammateSpecs.some((teammate) => Boolean(teammate.inheritContext));
 					const mainSessionFile = inheritsMainContext ? context.sessionManager.getSessionFile() : undefined;
 					if (inheritsMainContext && !mainSessionFile) throw new Error("inheritContext requires a persistent main session");
+					const originMainSessionId = context.sessionManager?.getSessionId?.();
+					const rawProjectDirectory = context.sessionManager?.getCwd?.() ?? context.cwd;
+					const projectDirectory = rawProjectDirectory ? canonicalProjectDirectory(rawProjectDirectory) : undefined;
+					const teamId = originMainSessionId && projectDirectory ? `${originMainSessionId}-${teamName}` : undefined;
+					const runtimeTeamId = teamId ?? teamName;
+					if (teams.has(runtimeTeamId)) throw new Error(`Team already exists: ${runtimeTeamId}`);
+					const lease = teamId ? claimTeamLease(teamId, originMainSessionId) : undefined;
+					if (teamId && projectDirectory && listTeamManifests(projectDirectory).some((manifest) => manifest.id === teamId)) {
+						releaseTeamLease(lease!);
+						throw new Error(`Team already exists: ${teamId}. Use team_resume.`);
+					}
 					sessionTeammateRoster.push(...teammateNames.filter((teammateName) => !sessionTeammateRoster.includes(teammateName)));
-					await ensureCallbackServer();
+					try {
+						await ensureCallbackServer();
+					} catch (error) {
+						if (lease) releaseTeamLease(lease);
+						throw error;
+					}
 
 					const team: TeamState = {
 						owner,
 						ownerPi: pi,
+						id: teamId,
 						name: teamName,
+						projectDirectory,
 						showOnHerdrPanes,
 						teamPrompt: params.teamPrompt,
 						mainSessionFile,
 						members: new Map(),
 						statuses: new Map([["main", status("available", "Main agent")]]),
 						created: nowText(),
+						lease,
 						log: [],
 						nextLogSequence: 1,
 					};
 
-					teams.set(teamName, team);
+					teams.set(runtimeTeamId, team);
 					try {
 						for (const teammateSpec of teammateSpecs) {
 							const teammate = createTeammateState(team, teammateSpec);
 							team.members.set(teammate.name, teammate);
 							team.statuses.set(teammate.name, status("idle", "Spawned"));
 							await startTeammate(team, teammate, teammateNames, herdrTabId);
+						}
+
+						if (teamId && originMainSessionId && projectDirectory) {
+							const timestamp = new Date().toISOString();
+							const manifest: TeamManifest = {
+								version: 1,
+								id: teamId,
+								name: team.name,
+								originMainSessionId,
+								projectDirectory,
+								teamPrompt: team.teamPrompt,
+								showOnHerdrPanes: team.showOnHerdrPanes,
+								members: [...team.members.values()].map(manifestMemberFromTeammate),
+								state: "active",
+								createdAt: timestamp,
+								updatedAt: timestamp,
+							};
+							writeTeamManifest(manifest);
+							team.manifest = manifest;
 						}
 					} catch (error) {
 						await shutdownTeam(team);
@@ -910,8 +1154,14 @@ export default function (pi: ExtensionAPI) {
 					}
 					return toolResult({
 						accepted: true,
+						id: team.id,
 						team: team.name,
 						teammates: [...team.members.keys()],
+						sessions: Object.fromEntries(
+							[...team.members.values()]
+								.filter((teammate) => teammate.sessionId && teammate.sessionFile)
+								.map((teammate) => [teammate.name, { sessionId: teammate.sessionId, sessionFile: teammate.sessionFile }]),
+						),
 						status: formatStatus(team),
 						instruction: bundledAiToAiSkillInstruction,
 					});
@@ -919,6 +1169,212 @@ export default function (pi: ExtensionAPI) {
 			}),
 		);
 	});
+
+	pi.registerTool(
+		defineTool({
+			name: "team_list",
+			label: "Team List",
+			description: "List active and dormant teams for the current project.",
+			promptSnippet: "List teams for the current project",
+			parameters: Type.Object({}),
+			async execute(_toolCallId, _params, _signal, _onUpdate, context) {
+				const projectDirectory = context.sessionManager?.getCwd?.() ?? context.cwd;
+				if (!projectDirectory) throw new Error("team_list requires a project directory");
+				const manifests = listTeamManifests(projectDirectory);
+				return toolResult({
+					teams: manifests.map((manifest) => {
+						const liveTeam = teams.get(manifest.id);
+						return {
+							id: manifest.id,
+							name: manifest.name,
+							state: manifest.state,
+							leaseState: readTeamLeaseState(manifest.id).state,
+							teammates: manifest.members.map((member) => member.name),
+							members: manifest.members.map((member) => ({
+								name: member.name,
+								live: liveTeam?.members.get(member.name)?.alive ?? member.live,
+								sessionId: member.sessionId,
+								sessionFile: member.sessionFile,
+							})),
+							createdAt: manifest.createdAt,
+							updatedAt: manifest.updatedAt,
+							shutdownAt: manifest.shutdownAt,
+							expiresAt: manifest.expiresAt,
+						};
+					}),
+				});
+			},
+		}),
+	);
+
+	pi.registerTool(
+		defineTool({
+			name: "team_resume",
+			label: "Team Resume",
+			description: "Resume all stopped teammates in a dormant current-project team, or only selected stopped teammates.",
+			promptSnippet: "Resume all or selected stopped teammates",
+			parameters: Type.Object({
+				team: Type.String({ description: "Persistent team ID" }),
+				teammates: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: "Stopped teammate names. Omit to resume all stopped teammates." })),
+				showOnHerdrPanes: Type.Optional(Type.Boolean({ default: false, description: "Resume selected teammates in visible Herdr panes. Defaults to RPC." })),
+			}),
+			async execute(_toolCallId, params, _signal, _onUpdate, context) {
+				const rawProjectDirectory = context.sessionManager?.getCwd?.() ?? context.cwd;
+				if (!rawProjectDirectory) throw new Error("team_resume requires a project directory");
+				const manifest = listTeamManifests(rawProjectDirectory).find((candidate) => candidate.id === params.team);
+				if (!manifest) throw new Error(`Unknown current-project team: ${params.team}`);
+				const requestedNames = params.teammates?.map(compactName) ?? manifest.members.map((member) => member.name);
+				const duplicateNames = requestedNames.filter((name, index) => requestedNames.indexOf(name) !== index);
+				if (duplicateNames.length > 0) throw new Error(`Duplicate teammate name(s): ${[...new Set(duplicateNames)].join(", ")}`);
+				const manifestMemberNames = new Set(manifest.members.map((member) => member.name));
+				const missingNames = requestedNames.filter((name) => !manifestMemberNames.has(name));
+				if (missingNames.length > 0) throw new Error(`Unknown teammate(s) in ${manifest.name}: ${missingNames.join(", ")}`);
+				const showOnHerdrPanes = Boolean(params.showOnHerdrPanes);
+				const herdrTabId = showOnHerdrPanes ? await validateHerdrAvailability() : undefined;
+
+				const existingTeam = [...teams.values()].find((candidate) => candidate.id === manifest.id);
+				if (existingTeam && existingTeam.owner !== owner) {
+					throw new Error(`Team ${manifest.id} is already owned by another main session`);
+				}
+
+				let team = existingTeam;
+				if (!team) {
+					const mainSessionId = context.sessionManager?.getSessionId?.();
+					if (!mainSessionId) throw new Error("team_resume requires a persistent main session");
+					const lease = claimTeamLease(manifest.id, mainSessionId);
+					try {
+						await ensureCallbackServer();
+						team = restoreTeamState(owner, pi, manifest, lease);
+						teams.set(team.id!, team);
+					} catch (error) {
+						releaseTeamLease(lease);
+						closeCallbackServerIfUnused();
+						throw error;
+					}
+				}
+
+				const teammates = requestedNames.map((name) => team.members.get(name)!).filter((teammate) => !teammate.alive);
+				let starts: Array<{ teammate: TeammateState; sessionFile: string | undefined }>;
+				try {
+					starts = teammates.map((teammate) => ({ teammate, sessionFile: sessionFileForResume(teammate) }));
+				} catch (error) {
+					if (!existingTeam) {
+						await shutdownTeam(team);
+						closeCallbackServerIfUnused();
+					}
+					throw error;
+				}
+				const participantNames = [...team.members.keys()];
+				sessionTeammateRoster.push(...participantNames.filter((name) => !sessionTeammateRoster.includes(name)));
+
+				try {
+					for (const { teammate, sessionFile } of starts) {
+						if (showOnHerdrPanes) prepareVisibleTeammate(teammate);
+						else teammate.transport = "rpc";
+						await startTeammate(team, teammate, participantNames, herdrTabId, {
+							sessionFile,
+							restartEmpty: sessionFile === undefined,
+						});
+						team.statuses.set(teammate.name, status("idle", "Resumed"));
+					}
+					persistActiveTeamManifest(team);
+				} catch (error) {
+					if (!existingTeam) {
+						await shutdownTeam(team);
+						closeCallbackServerIfUnused();
+						throw error;
+					}
+					for (const { teammate } of starts) {
+						if (teammate.transport === "herdr") {
+							teammate.alive = false;
+							await closeVisiblePane(teammate);
+						} else {
+							await stopRpcTeammate(teammate);
+						}
+						team.statuses.set(teammate.name, status("stopped", "Resume failed"));
+					}
+					throw error;
+				}
+
+				return toolResult({
+					accepted: true,
+					id: team.id,
+					team: team.name,
+					resumed: starts.map(({ teammate }) => teammate.name),
+					sessions: Object.fromEntries(
+						starts.map(({ teammate }) => [teammate.name, { sessionId: teammate.sessionId, sessionFile: teammate.sessionFile }]),
+					),
+				});
+			},
+		}),
+	);
+
+	pi.registerTool(
+		defineTool({
+			name: "team_add",
+			label: "Team Add",
+			description: "Add one or more new RPC teammates to a running team owned by this main session.",
+			promptSnippet: "Add new teammates to a running team",
+			parameters: Type.Object({
+				team: Type.String({ description: "Persistent team ID" }),
+				teammates: Type.Array(teammateSchema(""), { minItems: 1, description: "New teammates to add" }),
+			}),
+			async execute(_toolCallId, params, _signal, _onUpdate, context) {
+				const team = [...teams.values()].find((candidate) => candidate.id === params.team && candidate.owner === owner);
+				if (!team || !team.manifest || !team.lease || team.manifest.state !== "active") {
+					throw new Error(`team_add requires a running team owned by this main session: ${params.team}`);
+				}
+
+				const teammateSpecs = params.teammates as TeammateSpec[];
+				const teammateNames = teammateSpecs.map((teammate) => compactName(teammate.name));
+				const duplicateNames = teammateNames.filter(
+					(name, index) => teammateNames.indexOf(name) !== index || team.members.has(name),
+				);
+				if (duplicateNames.length > 0) {
+					throw new Error(`Duplicate teammate name(s): ${[...new Set(duplicateNames)].join(", ")}`);
+				}
+				if (teammateNames.includes("main")) throw new Error('"main" is reserved');
+				validateTeammateModels(teammateSpecs, context.modelRegistry.getAvailable());
+
+				const inheritsMainContext = teammateSpecs.some((teammate) => Boolean(teammate.inheritContext));
+				const mainSessionFile = inheritsMainContext ? context.sessionManager.getSessionFile() : undefined;
+				if (inheritsMainContext && !mainSessionFile) throw new Error("inheritContext requires a persistent main session");
+				if (mainSessionFile) team.mainSessionFile = mainSessionFile;
+
+				const addedTeammates = teammateSpecs.map((teammateSpec) => createTeammateState(team, teammateSpec));
+				for (const teammate of addedTeammates) {
+					teammate.transport = "rpc";
+					team.members.set(teammate.name, teammate);
+					team.statuses.set(teammate.name, status("idle", "Spawned"));
+				}
+				const participantNames = [...team.members.keys()];
+				sessionTeammateRoster.push(...teammateNames.filter((name) => !sessionTeammateRoster.includes(name)));
+
+				try {
+					for (const teammate of addedTeammates) await startTeammate(team, teammate, participantNames);
+					persistActiveTeamManifest(team);
+				} catch (error) {
+					for (const teammate of addedTeammates) await stopRpcTeammate(teammate);
+					for (const teammate of addedTeammates) {
+						team.members.delete(teammate.name);
+						team.statuses.delete(teammate.name);
+					}
+					throw error;
+				}
+
+				return toolResult({
+					accepted: true,
+					id: team.id,
+					team: team.name,
+					added: teammateNames,
+					sessions: Object.fromEntries(
+						addedTeammates.map((teammate) => [teammate.name, { sessionId: teammate.sessionId, sessionFile: teammate.sessionFile }]),
+					),
+					status: formatStatus(team),
+				});
+			},
+		}),
+	);
 
 	pi.registerTool(
 		defineTool({

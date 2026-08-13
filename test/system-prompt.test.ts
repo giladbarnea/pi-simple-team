@@ -42,3 +42,9 @@ describe("composeSystemPrompt proactive handoff instruction (review issue 3)", (
 		expect(text).toMatch(/teamsend|teammain/);
 	});
 });
+
+test("does not claim that the current main observed work before a resume", () => {
+	const text = prompt();
+	expect(text).not.toContain("since the team was created");
+	expect(text).toContain("current coordinator");
+});

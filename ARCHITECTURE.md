@@ -1,113 +1,119 @@
 ---
-updated: 2026-08-04
-status: partial
+updated: 2026-08-13
+status: current
 audience: AI agents and maintainers
 ---
 
 # Architecture
 
-`pi-simple-team` runs one parent extension runtime and one persistent `pi --mode rpc` child process per teammate. `team_spawn` configures idle child sessions. A teammate model runs only after the parent delivers its first message.
+A teammate is first a durable Pi session. A team attachment and an optional live runtime make that session a teammate.
 
-## Runtime actors and ownership
-
-The **main agent** is the LLM in the parent Pi session. It chooses when to create a team and use its tools.
-
-The **parent extension runtime** owns every team created by its Pi session. Its `TeamState` contains members, statuses, the event log, and the session owner symbol.
-
-Each **teammate runtime** is a separate Pi RPC process with its own context. Child tools reach parent-owned state through an authenticated localhost callback server.
-
-## The spawn path has six phases
-
-### 1. Validate the request
-
-Pi first validates the `team_spawn` call against its TypeBox schema. The extension then rejects an existing team name, duplicate teammate names, and the reserved name `main`.
-
-`validateTeammateModels()` checks all model patterns concurrently through `pi --list-models`. These checks confirm that each pattern resolves, but do not inspect model-specific thinking levels.
-
-If validation fails, the extension creates no team state or child process.
-
-### 2. Create parent-owned state
-
-The extension starts or reuses a callback server on `127.0.0.1` with an ephemeral port and random process-local token.
-
-It then creates `TeamState` and stores it in the module-level team map. Only `main` has a status at this point: `available / Main agent`.
-
-### 3. Start each child process
-
-`startTeammate()` uses the requested thinking level or the default `xhigh`. It spawns approximately:
-
-```sh
-pi \
-  --mode rpc \
-  -e <path-to-pi-simple-team/index.ts> \
-  --no-prompt-templates \
-  --no-themes \
-  --model <requested-model> \
-  --thinking <requested-level> \
-  --system-prompt <composed-system-prompt>
+```text
+Team attachment
+└─ Member
+   ├─ Pi session identity and JSONL file
+   ├─ Team prompt, teammate prompt, and roster
+   └─ Optional RPC process or Herdr pane
 ```
 
-The system prompt combines the team prompt, teammate prompt, identity, participant list, and coordination instructions.
+The Pi session owns the conversation. The attachment owns team membership and configuration. The runtime owns only the current process or pane.
 
-Environment variables carry the team identity, callback URL, and callback token. `PI_SIMPLE_TEAM_CHILD=1` makes the extension register only child-facing tools in that process.
+**One Pi session can have at most one live runtime.** Pi does not lock session files against concurrent writers.
 
-Normal extension discovery remains enabled. The explicit `-e` flag makes sure `pi-simple-team` also loads in the child.
+## The registry persists attachments, not conversations
 
-### 4. Attach process plumbing
+Persistent team manifests live under:
 
-After `child_process.spawn()` returns, the parent attaches the JSONL reader, stderr collection, RPC response correlation, exit handling, and serialized delivery queue.
-
-The parent records a `spawn` log entry and an `idle / Spawned` status. It does not wait for a child readiness signal.
-
-### 5. Return acceptance
-
-`team_spawn` returns `accepted: true`, the team name, teammate names, and the current status map.
-
-Acceptance means that preflight passed and child processes were started. It does not confirm child initialization or the actual thinking level selected by Pi.
-
-### 6. Deliver the first message
-
-A later `teamsend` enters the recipient's delivery queue. The parent sends an RPC `prompt`, `steer`, or abort-then-prompt sequence based on the recipient state.
-
-## Current limitations
-
-- Model preflight accepts any `pi --list-models` match. A fuzzy pattern can resolve to more than one model.
-- `team_spawn` has no readiness handshake. A child can still be initializing when the tool returns.
-- The parent stores the requested thinking level. Child Pi can clamp it to a supported level without reporting that change to the parent.
-
-The extension's `get_state` polling reads `isStreaming` and ignores the returned `thinkingLevel`. Its practical policy is to request a level, accept Pi's choice, and expose only the request.
-
-## An RPC query could make spawn authoritative without racing inference
-
-Pi exposes this child RPC command:
-
-```json
-{"type":"get_available_thinking_levels"}
+```text
+~/.pi/agent/pi-simple-team/teams/
 ```
 
-`pi-simple-team` does not currently use it. If adopted, it belongs inside `team_spawn`, between child initialization and the successful tool result—not as another main-agent tool call.
+A team ID has this form:
 
-The strengthened initialization sequence would be:
+```text
+{origin-main-session-id}-{team-name}
+```
 
-1. Start the child RPC process.
-2. Send `get_available_thinking_levels` through the child's stdin and await its correlated response.
-3. Decide how an unsupported explicit request should be handled, or choose a supported default when no level was supplied.
-4. If needed, send the already-existing RPC command:
+The manifest stores the team ID, display name, canonical project directory, prompts, transport settings, and member session identities. It also stores lifecycle timestamps and whether each session file has ever materialized.
 
-   ```json
-   {"type":"set_thinking_level","level":"high"}
-   ```
+`team_list` reads only manifests whose canonical project directory matches the current project. Symlinked paths resolve to the same project.
 
-5. Store and log the resulting actual level.
-6. Only then return `team_spawn` success.
+Pi session JSONL files are the canonical conversation history for main and teammates. The registry stores no messages or tool results.
 
-Pi would still perform its initial clamp before the query because a model and initial thinking level are needed to construct the child session. That clamp is harmless at this stage: the child is idle and has made no provider request. The extension can query and update the session before exposing the completed team to the main agent.
+The in-memory `teamlog` records events only for the current parent runtime. The extension persists no separate parent-runtime log or durable `teamlog`.
 
-This handshake would require no extra tool call or reasoning step from the main agent. The main agent would remain suspended inside its original `team_spawn` tool call until initialization became authoritative.
+## A lease prevents two parent runtimes from owning one team
+
+An active team has an atomic lease beside its manifest. The lease identifies the main session, process, and random ownership token.
+
+A second parent runtime cannot claim a live lease. This keeps the extension from starting two runtimes for the same teammate sessions.
+
+A dead lease owner makes the lease stale. The next claim replaces the stale lease and marks an abandoned active manifest dormant.
+
+The lease protects extension-managed runtimes. Users must still avoid opening a live teammate session through another Pi process.
+
+## Team lifecycle operations change attachments and runtimes
+
+### `team_spawn` creates sessions and a live attachment
+
+`team_spawn` validates the roster and model patterns, claims the team lease, then starts each teammate.
+
+RPC is the default transport. `showOnHerdrPanes` starts teammates in visible Herdr panes instead.
+
+RPC teammates start with `pi --mode rpc`. Children disable discovered extensions and load only the explicit child side of `pi-simple-team`.
+
+Each RPC child receives a `get_state` readiness query. A visible child reports the same identity during callback registration.
+
+The parent records every teammate session ID and absolute session file path before it writes the active manifest. The tool result returns these identities.
+
+### `team_add` grows only a running owned team
+
+`team_add` requires an active team lease owned by the current main session. It creates one or more new RPC Pi sessions.
+
+The operation does not attach an existing Pi session. Existing teammates stay asleep while the roster grows.
+
+Before every teammate turn, the child asks the parent for the current roster. The system prompt therefore reflects additions without waking all members.
+
+### `team_shutdown` makes the team dormant
+
+`team_shutdown` waits for every RPC process to exit and closes every Herdr pane. It then marks the manifest dormant and releases the lease.
+
+Shutdown preserves each Pi session and its team attachment. The parent also follows this path when its Pi session shuts down.
+
+A dormant manifest expires 30 days after shutdown. The next registry access removes the expired manifest and lease only.
+
+Expiration never removes or changes a Pi session JSONL file.
+
+### `team_resume` starts all or selected stopped members
+
+`team_resume` discovers the team through the current project registry. It resumes all stopped members unless the caller names a selection.
+
+Resume uses RPC by default. The caller must explicitly request Herdr panes.
+
+A persisted member starts with `pi --session <stored-session-file>`. The extension does not pass the original model or thinking level because Pi restores current session state.
+
+Selective resume creates a valid partially running team. A later resume can start the remaining stopped members.
+
+## Session materialization controls resume behavior
+
+Pi assigns an idle child a session ID and session file path before it creates the JSONL file. Pi creates that file only after the first assistant response.
+
+If the file exists, resume uses it. If the file once materialized but is now missing, resume fails instead of replacing conversation history.
+
+If the teammate never produced an assistant response, its provisional file does not exist. Resume starts a new empty session and replaces the provisional identity.
+
+## Runtime communication remains parent coordinated
+
+The parent extension runtime owns live team state, status maps, delivery queues, and the process-local event log.
+
+Child tools call an authenticated localhost callback server. The callback supplies messaging, statuses, current roster data, and visible-child lifecycle events.
+
+Teammate messages are pushed into recipient sessions. Idle teammates wake immediately, while busy teammates receive queued delivery after their current work settles.
 
 ## Relevant implementation entrypoints
 
-- `index.ts`: parent team state, RPC transport, `startTeammate()`, and `team_spawn`
+- `index.ts`: team lifecycle tools, live state, transport startup, and message delivery
+- `team-registry.ts`: manifests, project discovery, expiry, and leases
+- `child-tools.ts`: child callbacks, current-roster injection, and teammate tools
+- `system-prompt.ts`: teammate attachment instructions
 - `model-preflight.ts`: model-pattern availability checks
-- `system-prompt.ts`: teammate system-prompt composition
-- `child-tools.ts`: tools registered inside teammate RPC processes

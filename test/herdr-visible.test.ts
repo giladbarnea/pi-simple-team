@@ -17,9 +17,14 @@ type ExtensionEventHandler = (event: JsonRecord, context: unknown) => Promise<vo
 
 const fakeMainSessionFile = "/tmp/pi-simple-team-main-session.jsonl";
 const fakeMainContext = {
+	cwd: process.cwd(),
 	scopedModels: [],
 	modelRegistry: { getAvailable: () => [{ provider: "fake", id: "fake-model" }] },
-	sessionManager: { getSessionFile: () => fakeMainSessionFile },
+	sessionManager: {
+		getCwd: () => process.cwd(),
+		getSessionFile: () => fakeMainSessionFile,
+		getSessionId: () => "fake-main-session-id",
+	},
 };
 
 class ExtensionHost {
@@ -52,18 +57,41 @@ class ExtensionHost {
 const fakePi = String.raw`#!/usr/bin/env node
 const http = require("node:http");
 const fs = require("node:fs");
+const path = require("node:path");
 const args = process.argv.slice(2);
 if (args.includes("--list-models")) {
   process.stdout.write("provider  model  context  max-out  thinking  images\nfake  fake-model  1K  1K  yes  no\n");
   process.exit(0);
 }
+const logPath = process.env.FAKE_HERDR_EVENTS;
+function record(value) { fs.appendFileSync(logPath, JSON.stringify(value) + "\n"); }
+const sessionArgumentIndex = args.indexOf("--session");
+const sessionFile = sessionArgumentIndex === -1
+  ? path.join(process.env.FAKE_HERDR_SESSIONS, process.env.PI_SIMPLE_TEAM_MEMBER + "-" + process.pid + ".jsonl")
+  : args[sessionArgumentIndex + 1];
+const sessionId = path.basename(sessionFile, ".jsonl");
+record({ type: "pi_start", args, visible: process.env.PI_SIMPLE_TEAM_VISIBLE_CHILD === "1", sessionId, sessionFile });
 if (process.env.PI_SIMPLE_TEAM_VISIBLE_CHILD !== "1") {
-  setInterval(() => {}, 1000);
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    input += chunk;
+    while (input.includes("\n")) {
+      const newline = input.indexOf("\n");
+      const command = JSON.parse(input.slice(0, newline));
+      input = input.slice(newline + 1);
+      process.stdout.write(JSON.stringify({
+        type: "response",
+        id: command.id,
+        command: command.type,
+        success: true,
+        data: command.type === "get_state" ? { isStreaming: false, sessionId, sessionFile } : undefined,
+      }) + "\n");
+    }
+  });
   process.stdin.resume();
   return;
 }
-const logPath = process.env.FAKE_HERDR_EVENTS;
-function record(value) { fs.appendFileSync(logPath, JSON.stringify(value) + "\n"); }
 async function parent(tool, args) {
   record({ type: "parent", tool, args });
   const response = await fetch(process.env.PI_SIMPLE_TEAM_CALLBACK_URL, {
@@ -95,7 +123,7 @@ server.listen(0, "127.0.0.1", async () => {
   const address = server.address();
   const url = process.env.FAKE_VISIBLE_BAD_REGISTER ? "http://localhost:1234/deliver" : "http://127.0.0.1:" + address.port + "/deliver";
   try {
-    await parent("visible_register", { url });
+    await parent("visible_register", { url, sessionId, sessionFile });
     record({ type: "ready", url });
   } catch (error) {
     record({ type: "register_error", error: String(error) });
@@ -170,16 +198,22 @@ function installFakeCommands(): { directory: string; logPath: string; eventsPath
 	const eventsPath = path.join(directory, "events.log");
 	const childrenPath = path.join(directory, "children.log");
 	const startCountPath = path.join(directory, "start-count");
+	const sessionsDirectory = path.join(directory, "sessions");
+	const agentDirectory = path.join(directory, "agent");
+	fs.mkdirSync(sessionsDirectory);
+	fs.mkdirSync(agentDirectory);
 	for (const [name, content] of [["pi", fakePi], ["herdr", fakeHerdr]] as const) {
 		const executable = path.join(directory, name);
 		fs.writeFileSync(executable, content, { mode: 0o755 });
 	}
-	const previous = { path: process.env.PATH, tab: process.env.HERDR_TAB_ID, pane: process.env.HERDR_PANE_ID, log: process.env.FAKE_HERDR_LOG, events: process.env.FAKE_HERDR_EVENTS, children: process.env.FAKE_HERDR_CHILDREN, count: process.env.FAKE_HERDR_START_COUNT, fail: process.env.FAKE_HERDR_FAIL_START, bad: process.env.FAKE_VISIBLE_BAD_REGISTER, notFound: process.env.FAKE_HERDR_PANE_NOT_FOUND };
+	const previous = { path: process.env.PATH, agent: process.env.PI_CODING_AGENT_DIR, tab: process.env.HERDR_TAB_ID, pane: process.env.HERDR_PANE_ID, log: process.env.FAKE_HERDR_LOG, events: process.env.FAKE_HERDR_EVENTS, sessions: process.env.FAKE_HERDR_SESSIONS, children: process.env.FAKE_HERDR_CHILDREN, count: process.env.FAKE_HERDR_START_COUNT, fail: process.env.FAKE_HERDR_FAIL_START, bad: process.env.FAKE_VISIBLE_BAD_REGISTER, notFound: process.env.FAKE_HERDR_PANE_NOT_FOUND };
 	process.env.PATH = `${directory}${path.delimiter}${previous.path ?? ""}`;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
 	process.env.HERDR_TAB_ID = "fake-tab";
 	process.env.HERDR_PANE_ID = "main-pane";
 	process.env.FAKE_HERDR_LOG = logPath;
 	process.env.FAKE_HERDR_EVENTS = eventsPath;
+	process.env.FAKE_HERDR_SESSIONS = sessionsDirectory;
 	process.env.FAKE_HERDR_CHILDREN = childrenPath;
 	process.env.FAKE_HERDR_START_COUNT = startCountPath;
 	delete process.env.FAKE_HERDR_FAIL_START;
@@ -191,10 +225,12 @@ function installFakeCommands(): { directory: string; logPath: string; eventsPath
 		eventsPath,
 		restore: () => {
 			process.env.PATH = previous.path;
+			process.env.PI_CODING_AGENT_DIR = previous.agent;
 			process.env.HERDR_TAB_ID = previous.tab;
 			process.env.HERDR_PANE_ID = previous.pane;
 			process.env.FAKE_HERDR_LOG = previous.log;
 			process.env.FAKE_HERDR_EVENTS = previous.events;
+			process.env.FAKE_HERDR_SESSIONS = previous.sessions;
 			process.env.FAKE_HERDR_CHILDREN = previous.children;
 			process.env.FAKE_HERDR_START_COUNT = previous.count;
 			process.env.FAKE_HERDR_FAIL_START = previous.fail;
@@ -276,6 +312,10 @@ async function startVisibleChildForTest(failingVisibleEvents: number): Promise<{
 	await handlers.get("session_start")?.({}, {
 		shutdown: () => undefined,
 		getContextUsage: () => ({ tokens: 87_000, contextWindow: 272_000, percent: 31.985 }),
+		sessionManager: {
+			getSessionId: () => "visible-child-test-session-id",
+			getSessionFile: () => "/tmp/visible-child-test-session.jsonl",
+		},
 	});
 	assert.ok(receiver.requests.some((request) => request.tool === "visible_register"));
 	let closed = false;
@@ -441,7 +481,7 @@ describe("visible Herdr teammates", () => {
 				const args = starts[index]!.args as string[];
 				return args.slice(args.indexOf("--") + 1);
 			};
-			assert.deepEqual(commandFor(0).slice(0, 4), ["pi", "--fork", fakeMainSessionFile, "-e"]);
+			assert.deepEqual(commandFor(0).slice(0, 5), ["pi", "--fork", fakeMainSessionFile, "--no-extensions", "-e"]);
 			assert.equal(commandFor(1).includes("--fork"), false);
 		} finally {
 			await host.shutdown();
@@ -490,6 +530,73 @@ describe("visible Herdr teammates", () => {
 			);
 		} finally {
 			await host.shutdown();
+			fake.restore();
+		}
+	});
+
+	test("persists visible teammates and resumes them through RPC by default", async () => {
+		const fake = installFakeCommands();
+		const originHost = new ExtensionHost();
+		let resumingHost: ExtensionHost | undefined;
+		try {
+			const teamName = "durable-visible-team";
+			const teamId = `fake-main-session-id-${teamName}`;
+			const spawnResult = await originHost.execute("team_spawn", {
+				team: teamName,
+				teamPrompt: "test",
+				showOnHerdrPanes: true,
+				teammates: [{ name: "reviewer", prompt: "wait", model: "fake/fake-model", thinking: "low" }],
+			});
+			const visibleStart = lines(fake.eventsPath).find((entry) => entry.type === "pi_start");
+			assert.deepEqual(
+				spawnResult.details?.sessions,
+				{ reviewer: { sessionId: visibleStart?.sessionId, sessionFile: visibleStart?.sessionFile } },
+				`Expected visible spawn to return the Pi session identity. Got: ${JSON.stringify(spawnResult.details)}`,
+			);
+			await originHost.execute("team_shutdown", { team: teamId });
+
+			resumingHost = new ExtensionHost();
+			const resumeResult = await resumingHost.execute("team_resume", { team: teamId });
+			assert.deepEqual(resumeResult.details?.resumed, ["reviewer"], `Expected the visible member to remain resumable. Got: ${JSON.stringify(resumeResult.details)}`);
+			const piStarts = lines(fake.eventsPath).filter((entry) => entry.type === "pi_start");
+			assert.equal(piStarts.at(-1)?.visible, false, `Expected default resume to use RPC. Got: ${JSON.stringify(piStarts)}`);
+			assert.equal(lines(fake.logPath).filter((entry) => entry.type === "start").length, 1, "Expected default resume not to open another Herdr pane.");
+		} finally {
+			await resumingHost?.shutdown();
+			await originHost.shutdown();
+			fake.restore();
+		}
+	});
+
+	test("resumes a persisted session in visible panes only when explicitly requested", async () => {
+		const fake = installFakeCommands();
+		const originHost = new ExtensionHost();
+		let resumingHost: ExtensionHost | undefined;
+		try {
+			const teamName = "visible-resume-team";
+			const teamId = `fake-main-session-id-${teamName}`;
+			const spawnResult = await originHost.execute("team_spawn", {
+				team: teamName,
+				teamPrompt: "test",
+				showOnHerdrPanes: true,
+				teammates: [{ name: "reviewer", prompt: "wait", model: "fake/fake-model", thinking: "low" }],
+			});
+			const sessions = spawnResult.details?.sessions as JsonRecord;
+			const reviewerSession = sessions.reviewer as JsonRecord;
+			fs.writeFileSync(String(reviewerSession.sessionFile), '{"type":"session"}\n');
+			await originHost.execute("team_shutdown", { team: teamId });
+
+			resumingHost = new ExtensionHost();
+			await resumingHost.execute("team_resume", { team: teamId, showOnHerdrPanes: true });
+			const starts = lines(fake.logPath).filter((entry) => entry.type === "start");
+			assert.equal(starts.length, 2, `Expected explicit visible resume to open a new Herdr pane. Got: ${JSON.stringify(starts)}`);
+			const resumeArgs = starts.at(-1)?.args as string[];
+			const command = resumeArgs.slice(resumeArgs.indexOf("--") + 1);
+			assert.equal(command[command.indexOf("--session") + 1], reviewerSession.sessionFile, `Expected visible resume to use the durable session file. Got: ${JSON.stringify(command)}`);
+			assert.equal(command.includes("--model"), false, `Expected the persisted session to restore its own model. Got: ${JSON.stringify(command)}`);
+		} finally {
+			await resumingHost?.shutdown();
+			await originHost.shutdown();
 			fake.restore();
 		}
 	});

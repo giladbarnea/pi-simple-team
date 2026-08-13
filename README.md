@@ -155,13 +155,13 @@ Main agent knows its own and everyone else's too.
 - 17:32:01: Release teammate sets status: "Ran `git add .`, preparing commit and push."
 - 17:32:02: Scout immediately interrupts. Key never leaves the machine. Developer keeps their job.
 
-### 📡 Complete observability by design.
+### 📡 Live observability without a second history.
 
-The main agent can access one exhaustive, **timestamped history** of tool calls, messages, and lifecycle events, **recorded by the harness itself.**
+While a team runs, `teamlog` exposes a timestamped, filterable timeline of messages, tool calls, and lifecycle events.
 
-Main can filter and page that shared timeline on demand.
+That live timeline stays in parent-process memory and starts fresh after a resume. Pi session JSONL files are the canonical conversation history.
 
-Useful for tracing a failure *across* teammates—without asking anyone to reconstruct it from memory.
+`pi-simple-team` does not persist a separate parent-runtime log or duplicate `teamlog` data.
 
 <br>
 
@@ -174,6 +174,24 @@ Useful for tracing a failure *across* teammates—without asking anyone to recon
 
 - Live view of the room.
 - Talk directly with teammates.
+
+### 🧱 Teammates are durable Pi sessions.
+
+A teammate is a normal Pi session with a team attachment and an optional live runtime. The attachment adds its team prompt, roster, and communication tools.
+
+Each team ID is `{origin-main-session-id}-{team-name}`. `team_list` discovers active and dormant teams from the same canonical project directory.
+
+`team_shutdown` stops every live runtime and leaves the team dormant. Its manifest expires after 30 days, but expiration never deletes Pi session files.
+
+`team_resume` starts all stopped teammates by default, or only selected teammates. Resume uses RPC unless `showOnHerdrPanes` is explicitly set.
+
+Pi creates a session path before it writes the session JSONL file. A teammate without a first assistant response therefore restarts empty.
+
+A missing file that once held session history causes resume to fail. Persisted sessions restore their own model and thinking state from Pi.
+
+`team_add` creates new RPC teammates only for a running team owned by the current main session.
+
+**One Pi session can have only one live runtime.** Pi does not lock session files against concurrent writers.
 
 
 ## Install
@@ -190,16 +208,16 @@ pi install npm:@giladbarnea/pi-simple-team
 Kept minimal:
 
 
-| Role           | For            | Tools                         |
-| -------------- | -------------- | ----------------------------- |
-| **Main agent** | Team lifecycle | `team_spawn`, `team_shutdown` |
-|                | With team      | `teamsend`                    |
-|                | On team        | `teamstatus`, `teamlog`       |
-|                | On everyone    | `report_context_window`       |
-| **Teammates**  | With team      | `teamsend`                    |
-|                | With main      | `teammain`                    |
-|                | On self        | `report_context_window`       |
-| **Everyone**   | For everyone   | `teamstatus`                  |
+| Role           | For            | Tools                                                            |
+| -------------- | -------------- | ---------------------------------------------------------------- |
+| **Main agent** | Team lifecycle | `team_spawn`, `team_list`, `team_resume`, `team_add`, `team_shutdown` |
+|                | With team      | `teamsend`                                                       |
+|                | On team        | `teamstatus`, `teamlog`                                          |
+|                | On everyone    | `report_context_window`                                          |
+| **Teammates**  | With team      | `teamsend`                                                       |
+|                | With main      | `teammain`                                                       |
+|                | On self        | `report_context_window`                                          |
+| **Everyone**   | For everyone   | `teamstatus`                                                     |
 
 
 ---
@@ -220,5 +238,6 @@ Slash commands for:
 
 **Functional:**
 
-- [ ] Add new teammates after team has spawned.
+- [x] Resume all or selected teammates from a dormant team.
+- [x] Add new teammates after a team has spawned.
 - [ ] Main forces `/compact` on select teammate.
