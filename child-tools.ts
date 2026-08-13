@@ -13,6 +13,7 @@ const visibleLifecycleRetryAttempts = 3;
 export interface ChildRuntimeConfig {
 	callbackUrl: string;
 	callbackToken: string;
+	teamId?: string;
 	teamName: string;
 	teammateName: string;
 	visible: boolean;
@@ -36,10 +37,12 @@ function readParticipants(): string[] {
 }
 
 function readRequiredChildRuntimeConfig(): ChildRuntimeConfig {
+	const teamId = requiredEnvironmentVariable("PI_SIMPLE_TEAM_TEAM");
 	return {
 		callbackUrl: requiredEnvironmentVariable("PI_SIMPLE_TEAM_CALLBACK_URL"),
 		callbackToken: requiredEnvironmentVariable("PI_SIMPLE_TEAM_CALLBACK_TOKEN"),
-		teamName: requiredEnvironmentVariable("PI_SIMPLE_TEAM_TEAM"),
+		teamId,
+		teamName: process.env.PI_SIMPLE_TEAM_TEAM_NAME ?? teamId,
 		teammateName: requiredEnvironmentVariable("PI_SIMPLE_TEAM_MEMBER"),
 		visible: process.env.PI_SIMPLE_TEAM_VISIBLE_CHILD === "1",
 		participants: readParticipants(),
@@ -57,7 +60,7 @@ async function callParent(config: ChildRuntimeConfig, tool: string, args: JsonRe
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({
 			token: config.callbackToken,
-			team: config.teamName,
+			team: config.teamId ?? config.teamName,
 			from: config.teammateName,
 			tool,
 			args,
@@ -226,7 +229,11 @@ function startVisibleChild(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 		if (!address || typeof address === "string") throw new Error("Visible teammate server did not get a port");
 
 		try {
-			await callParent(config, "visible_register", { url: `http://127.0.0.1:${address.port}/deliver` });
+			await callParent(config, "visible_register", {
+				url: `http://127.0.0.1:${address.port}/deliver`,
+				sessionId: context.sessionManager.getSessionId(),
+				sessionFile: context.sessionManager.getSessionFile(),
+			});
 		} catch (error) {
 			context.shutdown();
 			throw error;
@@ -248,6 +255,25 @@ function startVisibleChild(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 
 export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 	pi.registerMessageRenderer(teamMessageType, (message, _options, theme) => renderTeamMessage(message, theme, getMarkdownTheme(), config.participants));
+	const startupRosterInstruction = `Participants: main, ${config.participants.join(", ")}.`;
+	pi.on("before_agent_start", async (event, context) => {
+		const teamContext = await callParent(config, "team_context", {}, context.signal);
+		const rawParticipants: unknown = teamContext.participants;
+		if (!Array.isArray(rawParticipants) || rawParticipants.some((participant: unknown) => typeof participant !== "string")) {
+			throw new Error("team runtime returned an invalid participant list");
+		}
+		const participants = rawParticipants as string[];
+		if (!event.systemPrompt.includes(startupRosterInstruction)) {
+			throw new Error("team runtime could not find its startup roster instruction");
+		}
+		config.participants.splice(0, config.participants.length, ...participants);
+		return {
+			systemPrompt: event.systemPrompt.replace(
+				startupRosterInstruction,
+				`Participants: main, ${participants.join(", ")}.`,
+			),
+		};
+	});
 	if (config.visible) startVisibleChild(pi, config);
 
 	pi.registerTool(

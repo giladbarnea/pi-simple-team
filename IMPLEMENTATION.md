@@ -1,23 +1,43 @@
 ---
-updated: 2026-08-04
+updated: 2026-08-13
 status: working
 ---
 
 # pi-simple-team implementation notes
 
-`pi-simple-team` was built as the smallest viable team runtime: the main Pi session owns a parent orchestrator, and each teammate is a persistent child `pi --mode rpc` process with its own fresh context window.
+`pi-simple-team` treats each teammate as a normal Pi session with a durable team attachment. A child RPC process or Herdr pane supplies its temporary live runtime.
 
-The key design choice was to keep the social model flat. Teammates get only `teamsend`, `teammain`, and `teamstatus`; the main session gets `team_spawn`, `teamsend`, `teamstatus`, `teamlog`, and `team_shutdown`. There is no inbox, no polling loop, no explicit done primitive, and no message broker.
+The social model stays flat. Teammates get communication, status, and context-window tools. Main gets team lifecycle, communication, status, log, and context-window tools.
 
-The only extra IPC is a localhost HTTP callback server with a random token. Child tools call it so `teamstatus` can synchronously return the parent-owned status map, while `teamsend` and `teammain` remain fire-and-forget.
+There is no inbox, polling loop, explicit done primitive, or message broker. The only extra IPC is an authenticated localhost callback server.
 
-The implementation deliberately uses child CLI/RPC processes rather than Pi SDK sessions. Before implementation, small proofs verified that RPC children stay alive while idle, preserve context, can be interrupted during model-driven tool work, can load custom tools, and can call back into the parent runtime.
+The implementation uses child CLI processes rather than Pi SDK sessions. RPC children stay alive while idle and accept pushed prompts, steering, interrupts, and state queries.
 
-The biggest practical finding was that teammate model names should be explicit provider/model ids. Fuzzy model strings can resolve differently in child processes than intended.
+## Durable team attachments
 
-Current persistence behavior uses Pi's default session storage for teammate child processes. The extension does not set a custom session directory or session name, so teammate sessions land wherever normal Pi sessions for that working directory land and can be named by the user's existing auto-session naming extension.
+A team ID is `{origin-main-session-id}-{team-name}`. The registry stores same-project attachments under the Pi agent directory.
 
-Child processes now load normal extension discovery. `pi-simple-team` marks them with `PI_SIMPLE_TEAM_CHILD=1`, so the same extension registers only the child callback tools (`teamsend`, `teammain`, `teamstatus`) inside teammate processes instead of recursively exposing the parent orchestration tools.
+Each active team holds an atomic lease. This lease enforces one extension-managed live runtime per teammate session.
+
+`team_spawn` and `team_add` query each RPC child with `get_state`. Visible children report their session identity when they register their callback.
+
+Pi can report a session file before creating it. The file appears after the first assistant response.
+
+Resume uses an existing session file without overriding its stored model state. A missing materialized file fails, while a never-materialized session restarts empty.
+
+`team_shutdown` stops runtimes, releases the lease, and leaves a dormant manifest. Registry access removes dormant manifests 30 days after shutdown.
+
+Manifest expiry never deletes Pi session files. Pi session JSONL files remain the canonical conversation history.
+
+The process-local `teamlog` is not durable. The extension persists no separate parent-runtime log.
+
+`team_add` creates new RPC sessions only for a running team owned by the current main session. It does not attach existing Pi sessions.
+
+Child Pi processes use `--no-extensions` and explicitly load the child side of `pi-simple-team`. This prevents unrelated discovered extensions from conflicting or recursively exposing parent tools.
+
+Teammate sessions remain in Pi's normal session storage for their project directory. The extension stores their reported IDs and absolute file paths without moving them.
+
+Teammate model names should use explicit provider/model IDs. Fuzzy model strings can resolve differently in child processes than intended.
 
 ## Rendering
 

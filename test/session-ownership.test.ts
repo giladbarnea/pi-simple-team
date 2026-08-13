@@ -420,6 +420,7 @@ describe("context-window reports", () => {
 	test("a teammate reports its own context window with no arguments", async () => {
 		const tools = new Map<string, RegisteredTool>();
 		const api = {
+			on: () => undefined,
 			registerMessageRenderer: () => undefined,
 			registerTool: (tool: RegisteredTool) => tools.set(tool.name, tool),
 		} as unknown as ExtensionAPI;
