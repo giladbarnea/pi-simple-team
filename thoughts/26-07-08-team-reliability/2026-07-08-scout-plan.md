@@ -45,7 +45,7 @@ No unresolved rows for a given teammate → reject that model, abort the whole s
 ## References
 
 - `agent/extensions/pi-simple-team/index.ts` — `composeSystemPrompt` (`:283`), `startTeammate` (`:296`), `childProcess.spawn` (`:315`), `team_spawn` tool + teammate loop (`:485`, `:514`, error teardown `:517-520`)
-- `agent/extensions/pi-simple-team/26-07-06-usage-review.md` — source of the five issues and their priorities
+- `thoughts/26-07-08-team-reliability/26-07-06-usage-review.md` — source of the five issues and their priorities
 - `agent/extensions/pi-simple-team/IMPLEMENTATION.md` — existing design notes and rationale
 - `/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/rpc.md`, `docs/extensions.md` — RPC protocol and extension API surface consulted while scouting
 - `@earendil-works/pi-coding-agent` public export `ModelRegistry` (`dist/core/model-registry.d.ts`, re-exported at `dist/index.d.ts:11`) — considered as an in-process alternative to shelling out to `--list-models`, documented above as the rejected alternative

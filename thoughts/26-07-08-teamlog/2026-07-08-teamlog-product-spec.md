@@ -277,7 +277,7 @@ Prefer testing these pure helpers directly, then lightly wire them into `index.t
 - `agent/extensions/pi-simple-team/system-prompt.ts`
 - `agent/extensions/pi-simple-team/model-preflight.ts`
 - `agent/extensions/pi-simple-team/IMPLEMENTATION.md`
-- `agent/extensions/pi-simple-team/26-07-08-usage-report.md`
-- `agent/extensions/pi-simple-team/2026-07-08-scout-plan.md`
+- `thoughts/26-07-08-teamlog/26-07-08-usage-report.md`
+- `thoughts/26-07-08-team-reliability/2026-07-08-scout-plan.md`
 - `/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/rpc.md`
 - `/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
