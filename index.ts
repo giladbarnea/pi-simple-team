@@ -12,6 +12,7 @@ import { composeSystemPrompt } from "./system-prompt.ts";
 import { readChildRuntimeConfig, registerChildTools } from "./child-tools.ts";
 import { appendTeamLog, filterTeamLog, normalizeChildEvent, nowText, pageTeamLog, preview, renderTeamLogPage, type TeamLogEntry } from "./teamlog.ts";
 import { renderTeamMessage, renderTeamToolCall, renderTeamToolResult, type TeamMessageDetails } from "./render.ts";
+import { openTeamOverview, type TeamSnapshot } from "./team-ui.ts";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
@@ -366,7 +367,7 @@ function enqueueDelivery(team: TeamState, from: string, recipient: TeammateState
 		direction: from === "main" ? "main->teammate" : "teammate->teammate",
 		kind: "send",
 		summary: preview(message),
-		details: { from, to: recipient.name, interrupt },
+		details: { from, to: recipient.name, interrupt, message },
 	});
 
 	recipient.deliveryQueue = recipient.deliveryQueue
@@ -453,6 +454,19 @@ function formatStatus(team: TeamState): Record<string, TeamStatus> {
 
 function allStatuses(owner: symbol): Record<string, Record<string, TeamStatus>> {
 	return Object.fromEntries([...teams.values()].filter((team) => team.owner === owner).map((team) => [team.name, formatStatus(team)]));
+}
+
+function ownedTeamSnapshots(owner: symbol): TeamSnapshot[] {
+	return [...teams.values()]
+		.filter((team) => team.owner === owner)
+		.map((team) => ({
+			name: team.name,
+			created: team.created,
+			showOnHerdrPanes: team.showOnHerdrPanes,
+			roster: [...team.members.keys()],
+			statuses: formatStatus(team),
+			log: [...team.log],
+		}));
 }
 
 function updateStatus(team: TeamState, participant: string, word?: string, phrase?: string): void {
@@ -792,7 +806,14 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 		if (tool === "teammain") {
 			const rawMessage = String(args.message ?? "");
 			const details: TeamMessageDetails = { team: team.name, from, sentAt: nowText(), message: rawMessage };
-			appendTeamLog(team, { team: team.name, teammate: from, direction: "teammate->main", kind: "main_message", summary: preview(rawMessage) });
+			appendTeamLog(team, {
+				team: team.name,
+				teammate: from,
+				direction: "teammate->main",
+				kind: "main_message",
+				summary: preview(rawMessage),
+				details: { from, to: "main", message: rawMessage },
+			});
 			team.ownerPi.sendMessage(
 				{ customType: teamMessageType, content: `[${team.name}/${from}] ${rawMessage}`, display: true, details },
 				{ deliverAs: "steer", triggerTurn: true },
@@ -836,6 +857,13 @@ export default function (pi: ExtensionAPI) {
 	const owner = Symbol("pi-simple-team-owner");
 	const sessionTeammateRoster: string[] = [];
 	pi.registerMessageRenderer(teamMessageType, (message, _options, theme) => renderTeamMessage(message, theme, getMarkdownTheme(), sessionTeammateRoster));
+
+	pi.registerCommand("team", {
+		description: "Open a read-only team overview",
+		handler: async (_args, context) => {
+			await openTeamOverview(context, () => ownedTeamSnapshots(owner));
+		},
+	});
 
 	pi.on("session_shutdown", async () => {
 		for (const team of [...teams.values()]) {

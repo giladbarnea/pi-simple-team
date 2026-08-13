@@ -11,6 +11,7 @@ import { Value } from "typebox/value";
 import { bundledAiToAiSkillInstruction, bundledAiToAiSkillPath } from "../bundled-skill.ts";
 import { registerChildTools } from "../child-tools.ts";
 import teamExtension from "../index.ts";
+import type { TeamLogEntry } from "../teamlog.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -126,6 +127,7 @@ class ExtensionHost {
 				if (event === "session_shutdown") this.shutdownHandlers.push(handler);
 				if (event === "session_start") handler({ reason: "startup" }, this.context);
 			},
+			registerCommand: () => undefined,
 			registerMessageRenderer: () => undefined,
 			registerTool: (tool: RegisteredTool) => this.tools.set(tool.name, tool),
 			sendMessage: (message: RecordedMessage) => {
@@ -287,6 +289,28 @@ describe("bundled ai-to-ai skill guidance", () => {
 });
 
 describe("team ownership across in-process AgentSessions", () => {
+	test("retains the full outgoing message in the team log", async () => {
+		const fakePi = installFakePi();
+		const host = new ExtensionHost();
+		const team = "full-message-team";
+		const message = `${"Long message body. ".repeat(20)}FINAL_MARKER`;
+
+		try {
+			await host.execute("team_spawn", {
+				team,
+				teamPrompt: "Full message test.",
+				teammates: [{ name: "reviewer", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+			});
+			await host.execute("teamsend", { team, to: ["reviewer"], message });
+			const log = await host.execute<{ entries: TeamLogEntry[] }>("teamlog", { team });
+			const send = log.entries.find((entry) => entry.kind === "send");
+			assert.equal(send?.details?.message, message);
+		} finally {
+			await host.shutdown();
+			fakePi.restore();
+		}
+	});
+
 	test("the session roster keeps teammate colors consistent across tool renderers", async () => {
 		const fakePi = installFakePi();
 		const host = new ExtensionHost();
@@ -409,6 +433,9 @@ describe("team ownership across in-process AgentSessions", () => {
 				{ firstOwner: ["callback-owner-a"], secondOwner: ["callback-owner-b"] },
 				"Expected each teammate callback to use the Pi API belonging to its team's owning AgentSession.",
 			);
+			const firstLog = await firstOwner.execute<{ entries: TeamLogEntry[] }>("teamlog", { team: "callback-owner-a" });
+			const received = firstLog.entries.find((entry) => entry.kind === "main_message");
+			assert.equal(received?.details?.message, "callback ownership test", "Expected the team log to retain the full incoming message.");
 		} finally {
 			await shutdownHosts(firstOwner, secondOwner);
 			fakePi.restore();
