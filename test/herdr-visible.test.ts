@@ -299,6 +299,7 @@ async function startVisibleChildForTest(failingVisibleEvents: number): Promise<{
 		teammateName: "reviewer",
 		visible: true,
 		participants: ["main", "reviewer"],
+		canOverseeOwnTeams: false,
 		interruptWaitTimeoutMilliseconds: 250,
 	};
 	const handlers = new Map<string, ChildHandler>();

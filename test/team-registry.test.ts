@@ -90,6 +90,7 @@ type FakePiInvocation = {
 	args: string[];
 	sessionId: string;
 	sessionFile: string;
+	canOverseeOwnTeams: boolean;
 };
 
 type FakePiTurn = {
@@ -121,14 +122,20 @@ if (!requestedSessionFile && (member === "persisted" || sequence > 1)) {
 }
 fs.appendFileSync(
 	path.join(root, "invocations.jsonl"),
-	JSON.stringify({ member, args: process.argv.slice(2), sessionId, sessionFile }) + "\n",
+	JSON.stringify({
+		member,
+		args: process.argv.slice(2),
+		sessionId,
+		sessionFile,
+		canOverseeOwnTeams: process.env.PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS === "1",
+	}) + "\n",
 );
-if (member === "slow-stop") {
+if (member === "slow-stop" || member === "recursive-slow-stop") {
 	process.on("SIGTERM", () => {
 		setTimeout(() => {
 			fs.appendFileSync(path.join(root, "exits.jsonl"), JSON.stringify({ member }) + "\n");
 			process.exit(0);
-		}, 150);
+		}, member === "recursive-slow-stop" ? 1_500 : 150);
 	});
 }
 
@@ -139,6 +146,7 @@ const extensionApi = {
 	on: (event, handler) => {
 		if (event === "before_agent_start") beforeAgentStartHandlers.push(handler);
 	},
+	registerCommand: () => undefined,
 	registerMessageRenderer: () => undefined,
 	registerTool: () => undefined,
 };
@@ -303,13 +311,21 @@ test("team_spawn returns each durable Pi session identity", async () => {
 		const result = await host.execute("team_spawn", {
 			team: "identity-team",
 			teamPrompt: "Expose durable session identities.",
-			teammates: [{ name: "persisted", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+			teammates: [{ name: "persisted", prompt: "Wait.", model: "fake/fake-model", thinking: "low", canOverseeOwnTeams: true }],
 		});
 		const invocation = readFakePiInvocations(temporaryDirectory)[0];
 		assert.deepEqual(
 			result.details?.sessions,
 			{ persisted: { sessionId: invocation?.sessionId, sessionFile: invocation?.sessionFile } },
 			`Expected team_spawn to return the reported Pi session identity. Got: ${JSON.stringify(result.details)}`,
+		);
+		const listed = await host.execute("team_list", {});
+		const listedTeam = (listed.details?.teams as JsonRecord[] | undefined)?.find((team) => team.id === "origin-main-session-id-identity-team");
+		const listedMember = (listedTeam?.members as JsonRecord[] | undefined)?.find((member) => member.name === "persisted");
+		assert.equal(
+			listedMember?.canOverseeOwnTeams,
+			true,
+			`Expected the durable attachment to retain recursive-team oversight. Got: ${JSON.stringify(listed.details)}`,
 		);
 	} finally {
 		await host?.shutdown();
@@ -399,6 +415,68 @@ test("canonical team IDs distinguish live teams with the same display name", asy
 	}
 });
 
+test("an overseeing teammate can discover and resume only teams it created", async () => {
+	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-recursive-scope-test-"));
+	const agentDirectory = path.join(temporaryDirectory, "agent");
+	const projectDirectory = path.join(temporaryDirectory, "project");
+	fs.mkdirSync(agentDirectory);
+	fs.mkdirSync(projectDirectory);
+	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const hosts: ExtensionHost[] = [];
+
+	try {
+		const { default: teamExtension } = await import("../index.ts");
+		for (const [sessionId, teamName] of [["top-main-session", "parent-team"], ["sibling-session", "sibling-team"]] as const) {
+			const host = new ExtensionHost(teamExtension, makeContext(sessionId, projectDirectory));
+			hosts.push(host);
+			await host.start();
+			await host.execute("team_spawn", { team: teamName, teamPrompt: "Foreign scope.", teammates: [] });
+			await host.shutdown();
+			hosts.pop();
+		}
+
+		const childEnvironment = {
+			PI_SIMPLE_TEAM_CHILD: "1",
+			PI_SIMPLE_TEAM_VISIBLE_CHILD: "0",
+			PI_SIMPLE_TEAM_CALLBACK_URL: "http://127.0.0.1:1/callback",
+			PI_SIMPLE_TEAM_CALLBACK_TOKEN: "unused",
+			PI_SIMPLE_TEAM_TEAM: "top-main-session-parent-team",
+			PI_SIMPLE_TEAM_TEAM_NAME: "parent-team",
+			PI_SIMPLE_TEAM_MEMBER: "lead",
+			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["lead"]),
+			PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS: "1",
+		};
+		const previousChildEnvironment = Object.fromEntries(Object.keys(childEnvironment).map((name) => [name, process.env[name]]));
+		Object.assign(process.env, childEnvironment);
+		const overseer = new ExtensionHost(teamExtension, makeContext("lead-session", projectDirectory));
+		hosts.push(overseer);
+		await overseer.start();
+		for (const [name, value] of Object.entries(previousChildEnvironment)) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+
+		await overseer.execute("team_spawn", { team: "owned-team", teamPrompt: "Owned scope.", teammates: [] });
+		const listed = await overseer.execute("team_list", {});
+		assert.deepEqual(
+			(listed.details?.teams as JsonRecord[] | undefined)?.map((team) => team.id),
+			["lead-session-owned-team"],
+			`Expected the overseeing teammate to discover only its own teams. Got: ${JSON.stringify(listed.details)}`,
+		);
+		await assert.rejects(
+			() => overseer.execute("team_resume", { team: "top-main-session-parent-team" }),
+			/Unknown current-project team/,
+			"Expected the overseeing teammate to reject its dormant parent team as outside its management scope.",
+		);
+	} finally {
+		for (const host of hosts.reverse()) await host.shutdown();
+		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+	}
+});
+
 test("team_shutdown waits for every RPC runtime before releasing ownership", async () => {
 	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-shutdown-wait-test-"));
 	const agentDirectory = path.join(temporaryDirectory, "agent");
@@ -425,6 +503,57 @@ test("team_shutdown waits for every RPC runtime before releasing ownership", asy
 	} finally {
 		await host?.shutdown();
 		await new Promise((resolve) => setTimeout(resolve, 200));
+		restoreFakePi();
+		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+	}
+});
+
+test("team_shutdown gives an overseeing teammate time to stop its own teams", async () => {
+	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-recursive-shutdown-test-"));
+	const agentDirectory = path.join(temporaryDirectory, "agent");
+	const projectDirectory = path.join(temporaryDirectory, "project");
+	fs.mkdirSync(agentDirectory);
+	fs.mkdirSync(projectDirectory);
+	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreFakePi = installFakePi(temporaryDirectory);
+	let host: ExtensionHost | undefined;
+
+	try {
+		const { default: teamExtension } = await import("../index.ts");
+		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
+		await host.start();
+		await host.execute("team_spawn", {
+			team: "recursive-shutdown-team",
+			teamPrompt: "Allow descendant shutdown.",
+			teammates: [{
+				name: "recursive-slow-stop",
+				prompt: "Stop descendants before exiting.",
+				model: "fake/fake-model",
+				thinking: "low",
+				canOverseeOwnTeams: true,
+			}],
+		});
+		await host.execute("team_shutdown", { team: "recursive-shutdown-team" });
+		const exitsPath = path.join(temporaryDirectory, "exits.jsonl");
+		assert.equal(
+			fs.existsSync(exitsPath),
+			true,
+			"Expected the overseeing teammate to finish recursive cleanup before team_shutdown returned.",
+		);
+		const exits = fs.readFileSync(exitsPath, "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as JsonRecord);
+		assert.equal(
+			exits.some((exit) => exit.member === "recursive-slow-stop"),
+			true,
+			"Expected team_shutdown to wait for an overseeing teammate's recursive cleanup before force-killing it.",
+		);
+	} finally {
+		await host?.shutdown();
 		restoreFakePi();
 		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
@@ -649,7 +778,7 @@ test("a later same-project session resumes selected and all stopped teammates wi
 			team: teamName,
 			teamPrompt: "Resume public-interface test.",
 			teammates: [
-				{ name: "persisted", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+				{ name: "persisted", prompt: "Wait.", model: "fake/fake-model", thinking: "low", canOverseeOwnTeams: true },
 				{ name: "untouched", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
 			],
 		});
@@ -693,6 +822,11 @@ test("a later same-project session resumes selected and all stopped teammates wi
 			persistedResumeInvocation?.args.includes("--model"),
 			false,
 			`Expected persisted session state to choose its restored model. Got: ${JSON.stringify(persistedResumeInvocation)}`,
+		);
+		assert.equal(
+			persistedResumeInvocation?.canOverseeOwnTeams,
+			true,
+			`Expected resume to restore recursive-team oversight. Got: ${JSON.stringify(persistedResumeInvocation)}`,
 		);
 
 		const competingHost = new ExtensionHost(teamExtension, makeContext("competing-main-session-id", projectDirectory));

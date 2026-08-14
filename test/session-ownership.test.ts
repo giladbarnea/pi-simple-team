@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -43,6 +44,186 @@ type RegisteredTool = {
 		context: unknown,
 	) => Promise<ToolResult>;
 };
+
+describe("teammate creation schemas", () => {
+	test("accept opt-in team oversight and default it to false", async () => {
+		const host = new ExtensionHost();
+		const spawnSchema = host.tools.get("team_spawn")?.parameters;
+		const addSchema = host.tools.get("team_add")?.parameters;
+		assert.ok(spawnSchema, "Expected the extension to register the team_spawn input schema.");
+		assert.ok(addSchema, "Expected the extension to register the team_add input schema.");
+
+		for (const [toolName, schema] of [["team_spawn", spawnSchema], ["team_add", addSchema]] as const) {
+			const teammateSchema = schema.properties.teammates.items;
+			const capabilitySchema = teammateSchema.properties.canOverseeOwnTeams;
+			assert.equal(
+				capabilitySchema?.default,
+				false,
+				`Expected ${toolName} to default canOverseeOwnTeams to false.`,
+			);
+			assert.equal(
+				Value.Check(teammateSchema, { name: "lead", prompt: "Lead.", model: "fake/fake-model", canOverseeOwnTeams: true }),
+				true,
+				`Expected ${toolName} to accept canOverseeOwnTeams=true.`,
+			);
+			assert.equal(
+				Value.Check(teammateSchema, { name: "lead", prompt: "Lead.", model: "fake/fake-model", canOverseeOwnTeams: "yes" }),
+				false,
+				`Expected ${toolName} to reject non-boolean canOverseeOwnTeams values.`,
+			);
+		}
+
+		await host.shutdown();
+	});
+});
+
+describe("recursive team oversight", () => {
+	test("an opted-in teammate receives parent-team tools and manager tools", async () => {
+		const environment = {
+			PI_SIMPLE_TEAM_CHILD: "1",
+			PI_SIMPLE_TEAM_VISIBLE_CHILD: "0",
+			PI_SIMPLE_TEAM_CALLBACK_URL: "http://127.0.0.1:1/callback",
+			PI_SIMPLE_TEAM_CALLBACK_TOKEN: "unused",
+			PI_SIMPLE_TEAM_TEAM: "parent-team-id",
+			PI_SIMPLE_TEAM_TEAM_NAME: "parent-team",
+			PI_SIMPLE_TEAM_MEMBER: "lead",
+			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["lead", "peer"]),
+			PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS: "1",
+		};
+		const previousEnvironment = Object.fromEntries(
+			Object.keys(environment).map((name) => [name, process.env[name]]),
+		);
+		Object.assign(process.env, environment);
+
+		let host: ExtensionHost | undefined;
+		try {
+			host = new ExtensionHost();
+			assert.deepEqual(
+				[...host.tools.keys()].sort(),
+				[
+					"report_context_window",
+					"team_add",
+					"team_list",
+					"team_resume",
+					"team_shutdown",
+					"team_spawn",
+					"teamlog",
+					"teammain",
+					"teamsend",
+					"teamstatus",
+				].sort(),
+				"Expected an opted-in teammate to remain a parent-team member and gain the complete manager tool set.",
+			);
+		} finally {
+			for (const [name, value] of Object.entries(previousEnvironment)) {
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			}
+			await host?.shutdown();
+		}
+	});
+
+	test("an overseeing teammate keeps its communication tools connected to its parent team", async () => {
+		const receivedBodies: JsonRecord[] = [];
+		const server = http.createServer((request, response) => {
+			void (async () => {
+				const chunks: Buffer[] = [];
+				for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+				const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as JsonRecord;
+				receivedBodies.push(body);
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(JSON.stringify(body.tool === "teamstatus"
+					? { team: "parent-team", status: {} }
+					: { accepted: true, team: "parent-team", from: "lead", to: ["peer"] }));
+			})();
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address();
+		assert.ok(address && typeof address !== "string", "Expected the parent-team callback server to listen on a TCP port.");
+
+		const environment = {
+			PI_SIMPLE_TEAM_CHILD: "1",
+			PI_SIMPLE_TEAM_VISIBLE_CHILD: "0",
+			PI_SIMPLE_TEAM_CALLBACK_URL: `http://127.0.0.1:${address.port}/callback`,
+			PI_SIMPLE_TEAM_CALLBACK_TOKEN: "parent-token",
+			PI_SIMPLE_TEAM_TEAM: "parent-team-id",
+			PI_SIMPLE_TEAM_TEAM_NAME: "parent-team",
+			PI_SIMPLE_TEAM_MEMBER: "lead",
+			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["lead", "peer"]),
+			PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS: "1",
+		};
+		const previousEnvironment = Object.fromEntries(Object.keys(environment).map((name) => [name, process.env[name]]));
+		Object.assign(process.env, environment);
+		let host: ExtensionHost | undefined;
+
+		try {
+			host = new ExtensionHost();
+			await host.execute("teamsend", { to: ["peer"], message: "Update the parent team." });
+			await host.execute("teamstatus", { gerund: "coordinating", phrase: "Managing a child team." });
+			assert.deepEqual(
+				receivedBodies,
+				[
+					{
+						token: "parent-token",
+						team: "parent-team-id",
+						from: "lead",
+						tool: "teamsend",
+						args: { to: ["peer"], message: "Update the parent team." },
+					},
+					{
+						token: "parent-token",
+						team: "parent-team-id",
+						from: "lead",
+						tool: "teamstatus",
+						args: { gerund: "coordinating", phrase: "Managing a child team." },
+					},
+				],
+				"Expected communication tools without a team selector to use the parent-team callback.",
+			);
+		} finally {
+			for (const [name, value] of Object.entries(previousEnvironment)) {
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			}
+			await host?.shutdown();
+			await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+		}
+	});
+
+	test("spawned teammates receive explicit capability values", async () => {
+		const fakePi = installFakePi();
+		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-capability-test-"));
+		const logPath = path.join(directory, "capabilities.log");
+		const previousLogPath = process.env.PI_SIMPLE_TEAM_TEST_CAPABILITY_LOG;
+		process.env.PI_SIMPLE_TEAM_TEST_CAPABILITY_LOG = logPath;
+		const receipt = messageReceipt(2);
+		const host = new ExtensionHost(receipt.record);
+
+		try {
+			await host.execute("team_spawn", {
+				team: "recursive-capability-team",
+				teamPrompt: "Capability propagation test.",
+				teammates: [
+					{ name: "lead", prompt: "Lead.", model: "fake/fake-model", canOverseeOwnTeams: true },
+					{ name: "worker", prompt: "Work.", model: "fake/fake-model" },
+				],
+			});
+			await receipt.wait();
+
+			assert.deepEqual(
+				fs.readFileSync(logPath, "utf8").trim().split("\n").sort(),
+				["lead=1", "worker=0"],
+				"Expected each child runtime to receive its explicit recursive-team capability.",
+			);
+		} finally {
+			await host.shutdown();
+			fakePi.restore();
+			fs.rmSync(directory, { recursive: true, force: true });
+			if (previousLogPath === undefined) delete process.env.PI_SIMPLE_TEAM_TEST_CAPABILITY_LOG;
+			else process.env.PI_SIMPLE_TEAM_TEST_CAPABILITY_LOG = previousLogPath;
+		}
+	});
+});
 
 describe("teamlog input schema", () => {
 	test("accepts only a non-empty kind list containing non-empty strings", async () => {
@@ -204,11 +385,19 @@ function messageReceipt(expectedCount: number): { record: () => void; wait: () =
 }
 
 const fakePiScript = String.raw`#!/usr/bin/env node
+const fs = require("node:fs");
 const http = require("node:http");
 
 if (process.argv[2] === "--list-models") {
 	process.stdout.write("provider  model  context  max-out  thinking  images\nfake  fake-model  1K  1K  yes  no\n");
 	process.exit(0);
+}
+
+if (process.env.PI_SIMPLE_TEAM_TEST_CAPABILITY_LOG) {
+	fs.appendFileSync(
+		process.env.PI_SIMPLE_TEAM_TEST_CAPABILITY_LOG,
+		process.env.PI_SIMPLE_TEAM_MEMBER + "=" + String(process.env.PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS) + "\n",
+	);
 }
 
 setTimeout(() => {
@@ -444,6 +633,42 @@ describe("team ownership across in-process AgentSessions", () => {
 });
 
 describe("context-window reports", () => {
+	test("an overseeing teammate reports itself when no descendant targets are given", async () => {
+		const environment = {
+			PI_SIMPLE_TEAM_CHILD: "1",
+			PI_SIMPLE_TEAM_VISIBLE_CHILD: "0",
+			PI_SIMPLE_TEAM_CALLBACK_URL: "http://127.0.0.1:1/callback",
+			PI_SIMPLE_TEAM_CALLBACK_TOKEN: "unused",
+			PI_SIMPLE_TEAM_TEAM: "parent-team-id",
+			PI_SIMPLE_TEAM_TEAM_NAME: "parent-team",
+			PI_SIMPLE_TEAM_MEMBER: "lead",
+			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["lead"]),
+			PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS: "1",
+		};
+		const previousEnvironment = Object.fromEntries(Object.keys(environment).map((name) => [name, process.env[name]]));
+		Object.assign(process.env, environment);
+		let host: ExtensionHost | undefined;
+
+		try {
+			host = new ExtensionHost();
+			const context = {
+				getContextUsage: () => ({ tokens: 87_000, contextWindow: 272_000, percent: 31.985 }),
+			} as ExtensionContext;
+			const result = await host.executeResult("report_context_window", {}, context);
+			assert.equal(
+				result.content[0]?.text,
+				"You have used 87k tokens out of 272k available (32%).",
+				"Expected an overseeing teammate to retain its no-argument self report.",
+			);
+		} finally {
+			for (const [name, value] of Object.entries(previousEnvironment)) {
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			}
+			await host?.shutdown();
+		}
+	});
+
 	test("a teammate reports its own context window with no arguments", async () => {
 		const tools = new Map<string, RegisteredTool>();
 		const api = {
@@ -458,6 +683,7 @@ describe("context-window reports", () => {
 			teammateName: "product-head",
 			visible: false,
 			participants: ["product-head"],
+			canOverseeOwnTeams: false,
 		});
 		const tool = tools.get("report_context_window");
 		assert.ok(tool, "Expected teammates to register report_context_window.");

@@ -11,7 +11,7 @@ import { bundledAiToAiSkillInstruction } from "./bundled-skill.ts";
 import { formatContextWindowReport, requireKnownContextUsage, type KnownContextUsage } from "./context-window.ts";
 import { formatScopedModelGuidance, validateTeammateModels, type ModelReference } from "./model-preflight.ts";
 import { composeSystemPrompt } from "./system-prompt.ts";
-import { readChildRuntimeConfig, registerChildTools } from "./child-tools.ts";
+import { callParent, readChildRuntimeConfig, registerChildTools } from "./child-tools.ts";
 import {
 	canonicalProjectDirectory,
 	claimTeamLease,
@@ -61,6 +61,7 @@ interface TeammateSpec {
 	model: string;
 	thinking?: ThinkingLevel;
 	inheritContext?: boolean;
+	canOverseeOwnTeams?: boolean;
 }
 
 type TeammateTransport = "rpc" | "herdr";
@@ -71,6 +72,7 @@ interface TeammateState {
 	model: string;
 	thinking: ThinkingLevel;
 	inheritContext: boolean;
+	canOverseeOwnTeams: boolean;
 	transport: TeammateTransport;
 	sessionId?: string;
 	sessionFile?: string;
@@ -111,6 +113,8 @@ const teamLiteExtensionPath = fileURLToPath(import.meta.url);
 const thinkingLevels = ["low", "medium", "high", "xhigh", "max"] as const;
 const defaultThinkingLevel: ThinkingLevel = "xhigh";
 const visibleDeliveryTimeoutMilliseconds = 30_000;
+const defaultRpcShutdownGraceMilliseconds = 1_000;
+const recursiveRpcShutdownGraceMilliseconds = 30_000;
 const teamMessageType = "pi-simple-team";
 const teams = new Map<string, TeamState>();
 const callbackToken = crypto.randomBytes(24).toString("hex");
@@ -528,6 +532,7 @@ function createTeammateState(team: TeamState, teammateSpec: TeammateSpec): Teamm
 		model: teammateSpec.model,
 		thinking,
 		inheritContext: Boolean(teammateSpec.inheritContext),
+		canOverseeOwnTeams: Boolean(teammateSpec.canOverseeOwnTeams),
 		transport: team.showOnHerdrPanes ? "herdr" : "rpc",
 		sessionMaterialized: false,
 		visibleReady,
@@ -552,6 +557,7 @@ function childEnvironmentOverrides(team: TeamState, teammate: TeammateState, par
 		PI_SIMPLE_TEAM_TEAM_NAME: team.name,
 		PI_SIMPLE_TEAM_MEMBER: teammate.name,
 		PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(participants),
+		PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS: teammate.canOverseeOwnTeams ? "1" : "0",
 	};
 }
 
@@ -589,7 +595,7 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 		"--no-themes",
 		...modelArgs,
 		"--system-prompt",
-		composeSystemPrompt(team.name, team.teamPrompt, teammate.name, teammate.prompt, participants),
+		composeSystemPrompt(team.name, team.teamPrompt, teammate.name, teammate.prompt, participants, teammate.canOverseeOwnTeams),
 	];
 	const proc = childProcess.spawn("pi", args, {
 		cwd: team.projectDirectory ?? process.cwd(),
@@ -649,7 +655,7 @@ async function attachVisibleTeammate(
 	herdrTabId: string,
 	options: RpcStartOptions,
 ): Promise<void> {
-	const systemPrompt = composeSystemPrompt(team.name, team.teamPrompt, teammate.name, teammate.prompt, participants);
+	const systemPrompt = composeSystemPrompt(team.name, team.teamPrompt, teammate.name, teammate.prompt, participants, teammate.canOverseeOwnTeams);
 	const environment = childEnvironmentOverrides(team, teammate, participants, true);
 	const sessionArgs = options.sessionFile
 		? ["--session", options.sessionFile]
@@ -718,6 +724,7 @@ function manifestMemberFromTeammate(teammate: TeammateState): TeamManifestMember
 		model: teammate.model,
 		thinking: teammate.thinking,
 		inheritContext: teammate.inheritContext,
+		canOverseeOwnTeams: teammate.canOverseeOwnTeams,
 		transport: teammate.transport,
 		live: teammate.alive,
 		sessionId: teammate.sessionId,
@@ -766,7 +773,10 @@ async function stopRpcTeammate(teammate: TeammateState): Promise<void> {
 		};
 		processToStop.once("exit", resolveExit);
 		processToStop.kill("SIGTERM");
-		forceKillTimeout = setTimeout(() => processToStop.kill("SIGKILL"), 1_000);
+		const graceMilliseconds = teammate.canOverseeOwnTeams
+			? recursiveRpcShutdownGraceMilliseconds
+			: defaultRpcShutdownGraceMilliseconds;
+		forceKillTimeout = setTimeout(() => processToStop.kill("SIGKILL"), graceMilliseconds);
 		forceKillTimeout.unref();
 	});
 	teammate.process = undefined;
@@ -997,6 +1007,7 @@ function teammateSchema(modelGuidance: string) {
 		model: Type.String({ description: `Canonical provider/model id for this teammate. ${modelGuidance}` }),
 		thinking: Type.Optional(StringEnum(thinkingLevels, { description: "Thinking level for this teammate. Defaults to xhigh.", default: defaultThinkingLevel })),
 		inheritContext: Type.Optional(Type.Boolean({ description: "Start from a fork of main's persisted session. The fork is taken during asynchronous child startup. Defaults to false.", default: false })),
+		canOverseeOwnTeams: Type.Optional(Type.Boolean({ description: "Allow this teammate to create and manage teams of its own. Defaults to false.", default: false })),
 	});
 }
 
@@ -1024,6 +1035,7 @@ function restoreTeamState(owner: symbol, ownerPi: ExtensionAPI, manifest: TeamMa
 			model: member.model,
 			thinking: member.thinking as ThinkingLevel,
 			inheritContext: member.inheritContext,
+			canOverseeOwnTeams: Boolean(member.canOverseeOwnTeams),
 		});
 		teammate.transport = "rpc";
 		teammate.sessionId = member.sessionId;
@@ -1058,11 +1070,11 @@ export default function (pi: ExtensionAPI) {
 	const childRuntimeConfig = readChildRuntimeConfig();
 	if (childRuntimeConfig) {
 		registerChildTools(pi, childRuntimeConfig);
-		return;
+		if (!childRuntimeConfig.canOverseeOwnTeams) return;
 	}
 
 	const owner = Symbol("pi-simple-team-owner");
-	const sessionTeammateRoster: string[] = [];
+	const sessionTeammateRoster = childRuntimeConfig?.participants ?? [];
 	pi.registerMessageRenderer(teamMessageType, (message, _options, theme) => renderTeamMessage(message, theme, getMarkdownTheme(), sessionTeammateRoster));
 
 	pi.registerCommand("team", {
@@ -1202,13 +1214,19 @@ export default function (pi: ExtensionAPI) {
 		defineTool({
 			name: "team_list",
 			label: "Team List",
-			description: "List active and dormant teams for the current project.",
+			description: childRuntimeConfig
+				? "List active and dormant teams created by this overseeing teammate."
+				: "List active and dormant teams for the current project.",
 			promptSnippet: "List teams for the current project",
 			parameters: Type.Object({}),
 			async execute(_toolCallId, _params, _signal, _onUpdate, context) {
 				const projectDirectory = context.sessionManager?.getCwd?.() ?? context.cwd;
 				if (!projectDirectory) throw new Error("team_list requires a project directory");
-				const manifests = listTeamManifests(projectDirectory);
+				const managerSessionId = childRuntimeConfig ? context.sessionManager?.getSessionId?.() : undefined;
+				if (childRuntimeConfig && !managerSessionId) throw new Error("team_list requires a persistent overseeing teammate session");
+				const manifests = listTeamManifests(projectDirectory).filter(
+					(manifest) => !managerSessionId || manifest.originMainSessionId === managerSessionId,
+				);
 				return toolResult({
 					teams: manifests.map((manifest) => {
 						const liveTeam = teams.get(manifest.id);
@@ -1221,6 +1239,7 @@ export default function (pi: ExtensionAPI) {
 							members: manifest.members.map((member) => ({
 								name: member.name,
 								live: liveTeam?.members.get(member.name)?.alive ?? member.live,
+								canOverseeOwnTeams: Boolean(member.canOverseeOwnTeams),
 								sessionId: member.sessionId,
 								sessionFile: member.sessionFile,
 							})),
@@ -1239,7 +1258,9 @@ export default function (pi: ExtensionAPI) {
 		defineTool({
 			name: "team_resume",
 			label: "Team Resume",
-			description: "Resume all stopped teammates in a dormant current-project team, or only selected stopped teammates.",
+			description: childRuntimeConfig
+				? "Resume all or selected stopped members of a dormant team created by this overseeing teammate."
+				: "Resume all stopped teammates in a dormant current-project team, or only selected stopped teammates.",
 			promptSnippet: "Resume all or selected stopped teammates",
 			parameters: Type.Object({
 				team: Type.String({ description: "Persistent team ID" }),
@@ -1249,7 +1270,11 @@ export default function (pi: ExtensionAPI) {
 			async execute(_toolCallId, params, _signal, _onUpdate, context) {
 				const rawProjectDirectory = context.sessionManager?.getCwd?.() ?? context.cwd;
 				if (!rawProjectDirectory) throw new Error("team_resume requires a project directory");
-				const manifest = listTeamManifests(rawProjectDirectory).find((candidate) => candidate.id === params.team);
+				const managerSessionId = childRuntimeConfig ? context.sessionManager?.getSessionId?.() : undefined;
+				if (childRuntimeConfig && !managerSessionId) throw new Error("team_resume requires a persistent overseeing teammate session");
+				const manifest = listTeamManifests(rawProjectDirectory).find(
+					(candidate) => candidate.id === params.team && (!managerSessionId || candidate.originMainSessionId === managerSessionId),
+				);
 				if (!manifest) throw new Error(`Unknown current-project team: ${params.team}`);
 				const requestedNames = params.teammates?.map(compactName) ?? manifest.members.map((member) => member.name);
 				const duplicateNames = requestedNames.filter((name, index) => requestedNames.indexOf(name) !== index);
@@ -1408,18 +1433,27 @@ export default function (pi: ExtensionAPI) {
 		defineTool({
 			name: "teamsend",
 			label: "Team Send",
-			description: "Send a message from main to teammate(s). Fire-and-forget; does not wait for replies. Teammates will send you messages as they deem appropriate by way of push.",
+			description: childRuntimeConfig
+				? "Send to parent-team peers when team is omitted, or to teammates in an owned team when team is set. Fire-and-forget; does not wait for replies."
+				: "Send a message from main to teammate(s). Fire-and-forget; does not wait for replies. Teammates will send you messages as they deem appropriate by way of push.",
 			promptSnippet: "Send a message from main to teammate(s)",
 			renderShell: "self",
 			renderCall: (args, theme, context) => renderTeamToolCall("teamsend", args, theme, context, sessionTeammateRoster),
 			renderResult: (result, options, theme, context) => renderTeamToolResult("teamsend", result, options, theme, context, getMarkdownTheme(), sessionTeammateRoster),
 			parameters: Type.Object({
-				team: Type.Optional(Type.String({ description: "Team name; optional only when exactly one team exists" })),
+				team: Type.Optional(Type.String({ description: childRuntimeConfig ? "Owned team name. Omit to use the parent team." : "Team name; optional only when exactly one team exists" })),
 				to: Type.Array(Type.String(), { description: "Recipient teammate names" }),
 				message: Type.String({ description: "Message to send" }),
 				interrupt: Type.Optional(Type.Boolean({ description: "Abort busy recipients before delivery" })),
 			}),
-			async execute(_toolCallId, params) {
+			async execute(_toolCallId, params, signal) {
+				if (childRuntimeConfig && !params.team) {
+					return toolResult(await callParent(childRuntimeConfig, "teamsend", {
+						to: params.to,
+						message: params.message,
+						...(params.interrupt === undefined ? {} : { interrupt: params.interrupt }),
+					}, signal));
+				}
 				const team = resolveTeam(owner, params.team);
 				const recipients = resolveRecipients(team, params.to);
 				const interrupt = Boolean(params.interrupt);
@@ -1433,18 +1467,26 @@ export default function (pi: ExtensionAPI) {
 		defineTool({
 			name: "teamstatus",
 			label: "Team Status",
-			description: "Set main's status for a team and/or read team statuses.",
+			description: childRuntimeConfig
+				? "Set or read parent-team status when team is omitted. Set or read an owned team's status when team is set."
+				: "Set main's status for a team and/or read team statuses.",
 			promptSnippet: "Set/read team status maps",
 			renderShell: "self",
 			renderCall: (args, theme, context) => renderTeamToolCall("teamstatus", args, theme, context, sessionTeammateRoster),
 			renderResult: (result, options, theme, context) => renderTeamToolResult("teamstatus", result, options, theme, context, undefined, sessionTeammateRoster),
 			parameters: Type.Object({
-				team: Type.Optional(Type.String({ description: "Team name; optional for listing all statuses or when exactly one team exists" })),
+				team: Type.Optional(Type.String({ description: childRuntimeConfig ? "Owned team name. Omit to use the parent team." : "Team name; optional for listing all statuses or when exactly one team exists" })),
 				// TODO: make gerund and phrase optionality a XOR.
 				gerund: Type.Optional(Type.String({ description: "Set one-word gerund main status" })),
 				phrase: Type.Optional(Type.String({ description: "Short main status verb-oriented phrase." })),
 			}),
-			async execute(_toolCallId, params) {
+			async execute(_toolCallId, params, signal) {
+				if (childRuntimeConfig && !params.team) {
+					return toolResult(await callParent(childRuntimeConfig, "teamstatus", {
+						...(params.gerund === undefined ? {} : { gerund: params.gerund }),
+						...(params.phrase === undefined ? {} : { phrase: params.phrase }),
+					}, signal));
+				}
 				if (!params.team && params.gerund === undefined && params.phrase === undefined) {
 					return toolResult({ teams: allStatuses(owner) });
 				}
@@ -1460,12 +1502,20 @@ export default function (pi: ExtensionAPI) {
 		defineTool({
 			name: "report_context_window",
 			label: "Report Context Window",
-			description: "Report context-window use for selected teammates and main. Main's report is always last.",
+			description: childRuntimeConfig
+				? "Report your own context-window use when targets is omitted. When targets is present, report selected teammates in owned teams and yourself last."
+				: "Report context-window use for selected teammates and main. Main's report is always last.",
 			promptSnippet: "Report context-window use for selected teammates and main",
 			parameters: Type.Object({
-				targets: Type.Array(Type.String({ minLength: 1 }), { description: "Teammate names. Use an empty list to report only main." }),
+				targets: childRuntimeConfig
+					? Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Owned-team teammate names. Omit to report only yourself." }))
+					: Type.Array(Type.String({ minLength: 1 }), { description: "Teammate names. Use an empty list to report only main." }),
 			}),
 			async execute(_toolCallId, params, signal, _onUpdate, context) {
+				if (params.targets === undefined) {
+					const text = formatContextWindowReport("You have", requireKnownContextUsage(context.getContextUsage()));
+					return { content: [{ type: "text" as const, text }], details: {} };
+				}
 				const teammates = resolveContextTargets(owner, params.targets);
 				const reports = await Promise.all(
 					teammates.map(async (teammate) => formatContextWindowReport(`Teammate ${teammate.name} has`, await getTeammateContextUsage(teammate, signal))),

@@ -199,6 +199,14 @@ A missing file that once held session history causes resume to fail. Persisted s
 
 `team_add` creates new RPC teammates only for a running team owned by the current main session.
 
+Teammates cannot manage teams by default. Set `canOverseeOwnTeams: true` when creating a teammate to give it the main agent's team-management tools.
+
+An overseeing teammate stays a member of its parent team. It can create, inspect, message, resume, grow, and stop only teams created by its own Pi session. It cannot manage its parent team or teams owned by sibling sessions.
+
+For an overseeing teammate, `teamsend` and `teamstatus` use the parent team when `team` is omitted. Set `team` to operate on one of its own teams. `report_context_window` reports itself when `targets` is omitted and inspects its own teammates when `targets` is set.
+
+The capability persists with the teammate attachment and returns after resume. RPC shutdown gives an overseeing teammate time to stop its own teams.
+
 **One Pi session can have only one live runtime.** Pi does not lock session files against concurrent writers.
 
 
@@ -222,6 +230,8 @@ Kept minimal:
 |                | With team      | `teamsend`                                                       |
 |                | On team        | `teamstatus`, `teamlog`                                          |
 |                | On everyone    | `report_context_window`                                          |
+| **Overseeing teammate** | On own teams | Same tools as the main agent                            |
+|                | With parent team | `teamsend`, `teamstatus`, `teammain`                           |
 | **Teammates**  | With team      | `teamsend`                                                       |
 |                | With main      | `teammain`                                                       |
 |                | On self        | `report_context_window`                                          |

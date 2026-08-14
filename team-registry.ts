@@ -10,6 +10,7 @@ export interface TeamManifestMember {
 	model: string;
 	thinking: string;
 	inheritContext: boolean;
+	canOverseeOwnTeams?: boolean;
 	transport: "rpc" | "herdr";
 	live: boolean;
 	sessionId: string;
@@ -78,6 +79,7 @@ function isManifestMember(value: unknown): value is TeamManifestMember {
 		typeof member.model === "string" &&
 		typeof member.thinking === "string" &&
 		typeof member.inheritContext === "boolean" &&
+		(member.canOverseeOwnTeams === undefined || typeof member.canOverseeOwnTeams === "boolean") &&
 		(member.transport === "rpc" || member.transport === "herdr") &&
 		typeof member.live === "boolean" &&
 		typeof member.sessionId === "string" &&

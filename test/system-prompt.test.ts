@@ -43,6 +43,22 @@ describe("composeSystemPrompt proactive handoff instruction (review issue 3)", (
 	});
 });
 
+test("explains recursive-team tools and their ownership boundary to an overseeing teammate", () => {
+	const text = composeSystemPrompt(
+		"demo-team",
+		"Team goal.",
+		"Lead",
+		"Lead role.",
+		["Lead", "Reviewer"],
+		true,
+	);
+
+	expect(text).toContain("create and manage teams of your own");
+	expect(text).toContain("cannot manage this parent team or teams owned by other sessions");
+	expect(text).toContain("omit `team` to operate on this parent team");
+	expect(text).toContain("Set `team` to operate on a team you own");
+});
+
 test("does not claim that the current main observed work before a resume", () => {
 	const text = prompt();
 	expect(text).not.toContain("since the team was created");

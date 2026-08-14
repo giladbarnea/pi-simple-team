@@ -12,7 +12,8 @@ A teammate is first a durable Pi session. A team attachment and an optional live
 Team attachment
 └─ Member
    ├─ Pi session identity and JSONL file
-   ├─ Team prompt, teammate prompt, and roster
+   ├─ Team prompt, teammate prompt, roster, and recursive-team capability
+   ├─ Optional teams owned by this member's Pi session
    └─ Optional RPC process or Herdr pane
 ```
 
@@ -34,7 +35,7 @@ A team ID has this form:
 {origin-main-session-id}-{team-name}
 ```
 
-The manifest stores the team ID, display name, canonical project directory, prompts, transport settings, and member session identities. It also stores lifecycle timestamps and whether each session file has ever materialized.
+The manifest stores the team ID, display name, canonical project directory, prompts, transport settings, member session identities, and each member's `canOverseeOwnTeams` capability. It also stores lifecycle timestamps and whether each session file has ever materialized.
 
 `team_list` reads only manifests whose canonical project directory matches the current project. Symlinked paths resolve to the same project.
 
@@ -60,7 +61,9 @@ The lease protects extension-managed runtimes. Users must still avoid opening a 
 
 RPC is the default transport. `showOnHerdrPanes` starts teammates in visible Herdr panes instead.
 
-RPC teammates start with `pi --mode rpc`. Children disable discovered extensions and load only the explicit child side of `pi-simple-team`.
+RPC teammates start with `pi --mode rpc`. Children disable discovered extensions and load only the explicit `pi-simple-team` extension path.
+
+A normal child registers only parent-team member tools. A child with `canOverseeOwnTeams: true` also registers manager tools in the same runtime.
 
 Each RPC child receives a `get_state` readiness query. A visible child reports the same identity during callback registration.
 
@@ -101,6 +104,20 @@ Pi assigns an idle child a session ID and session file path before it creates th
 If the file exists, resume uses it. If the file once materialized but is now missing, resume fails instead of replacing conversation history.
 
 If the teammate never produced an assistant response, its provisional file does not exist. Resume starts a new empty session and replaces the provisional identity.
+
+## Recursive management stays session-scoped
+
+An overseeing teammate has two roles in one Pi session. It remains a member of its parent team and acts as main for teams it creates.
+
+The existing private owner symbol confines all live operations to teams created through that extension runtime. This covers sends, statuses, context reports, logs, additions, and shutdowns.
+
+Durable discovery needs an extra boundary because the registry is project-wide. In an overseeing teammate, `team_list` and `team_resume` filter manifests by `originMainSessionId` equal to that teammate's Pi session ID. The teammate therefore cannot discover or resume its parent team, sibling teams, or teams owned by unrelated sessions.
+
+Three tool names serve both roles. `teamsend` and `teamstatus` use the parent callback when `team` is omitted and require `team` for an owned team. `report_context_window` reports the overseeing teammate when `targets` is omitted and inspects only live teammates behind its private owner symbol when `targets` is set.
+
+The capability is part of the durable member attachment and returns on resume. Old manifests without the field load it as `false`.
+
+When a parent stops an overseeing RPC teammate, it gives that session a longer grace period. This lets the teammate's `session_shutdown` handler stop descendant teams and release their leases before exit.
 
 ## Runtime communication remains parent coordinated
 

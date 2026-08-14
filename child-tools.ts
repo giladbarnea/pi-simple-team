@@ -18,6 +18,7 @@ export interface ChildRuntimeConfig {
 	teammateName: string;
 	visible: boolean;
 	participants: string[];
+	canOverseeOwnTeams: boolean;
 	interruptWaitTimeoutMilliseconds?: number;
 }
 
@@ -46,6 +47,7 @@ function readRequiredChildRuntimeConfig(): ChildRuntimeConfig {
 		teammateName: requiredEnvironmentVariable("PI_SIMPLE_TEAM_MEMBER"),
 		visible: process.env.PI_SIMPLE_TEAM_VISIBLE_CHILD === "1",
 		participants: readParticipants(),
+		canOverseeOwnTeams: process.env.PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS === "1",
 	};
 }
 
@@ -54,7 +56,7 @@ export function readChildRuntimeConfig(): ChildRuntimeConfig | undefined {
 	return readRequiredChildRuntimeConfig();
 }
 
-async function callParent(config: ChildRuntimeConfig, tool: string, args: JsonRecord, signal?: AbortSignal): Promise<JsonRecord> {
+export async function callParent(config: ChildRuntimeConfig, tool: string, args: JsonRecord, signal?: AbortSignal): Promise<JsonRecord> {
 	const response = await fetch(config.callbackUrl, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
