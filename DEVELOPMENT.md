@@ -21,6 +21,17 @@ Basic sanity flow — use it as a skeleton for testing the behavior you want.
    3.b. Tell it to spawn a team of two <cheap&competent model>, with the parameters you want to test. Tell it to use the various team tools, talk with its teammates, tell the teammates to do the same (use team tools, talk among, talk back). Both main and team should do no-op filesystem CRUDs and bash runs. Just for a little while — we only want to press each button once to know that things work fine.
    3.c. You watch that tmux for errors or crashes.
 
+### Recursive team flow
+
+1. Spawn a team with one normal teammate and one teammate with `canOverseeOwnTeams: true`.
+2. Verify the normal teammate has only parent-team member tools.
+3. Ask the overseeing teammate to create a child team with at least one live teammate.
+4. Verify it can send messages, read statuses and logs, inspect context use, add a teammate, and stop its child team.
+5. Create a dormant parent or sibling team in the same project.
+6. Verify the overseeing teammate cannot list, resume, message, inspect, add to, or stop that foreign team.
+7. Stop the parent team while the child team runs. Verify the child process exits, its manifest becomes dormant, and its lease becomes unclaimed.
+8. Resume the overseeing teammate. Verify `canOverseeOwnTeams` and access to its own dormant teams return.
+
 ### `/team` dashboard flow
 
 1. Run `/team` before any team exists. Verify the 90% overlay shows the empty state and closes with Esc.

@@ -1,5 +1,5 @@
 ---
-updated: 2026-08-13
+updated: 2026-08-14
 status: working
 ---
 
@@ -7,7 +7,9 @@ status: working
 
 `pi-simple-team` treats each teammate as a normal Pi session with a durable team attachment. A child RPC process or Herdr pane supplies its temporary live runtime.
 
-The social model stays flat. Teammates get communication, status, and context-window tools. Main gets team lifecycle, communication, status, log, and context-window tools.
+The social model stays flat inside each team. Normal teammates get communication, status, and context-window tools. Main gets team lifecycle, communication, status, log, and context-window tools.
+
+A teammate with `canOverseeOwnTeams: true` keeps its parent-team tools and also gets the main tool set. It acts as main only for teams created by its own Pi session.
 
 There is no inbox, polling loop, explicit done primitive, or message broker. The only extra IPC is an authenticated localhost callback server.
 
@@ -33,11 +35,25 @@ The process-local `teamlog` is not durable. The extension persists no separate p
 
 `team_add` creates new RPC sessions only for a running team owned by the current main session. It does not attach existing Pi sessions.
 
-Child Pi processes use `--no-extensions` and explicitly load the child side of `pi-simple-team`. This prevents unrelated discovered extensions from conflicting or recursively exposing parent tools.
+Child Pi processes use `--no-extensions` and explicitly load `pi-simple-team`. This prevents unrelated discovered extensions from conflicting with the team runtime.
+
+A normal child stops registration after the parent-team tools. An overseeing child continues through manager registration in the same extension runtime.
 
 Teammate sessions remain in Pi's normal session storage for their project directory. The extension stores their reported IDs and absolute file paths without moving them.
 
 Teammate model names should use explicit provider/model IDs. Fuzzy model strings can resolve differently in child processes than intended.
+
+## Recursive team ownership
+
+Live management uses the extension runtime's private owner symbol. An overseeing teammate therefore cannot send to, inspect, add to, log, or stop teams owned by its parent or a sibling runtime.
+
+The manifest registry is project-wide, so durable discovery adds a second boundary. In an overseeing runtime, `team_list` and `team_resume` accept only manifests whose `originMainSessionId` matches the overseeing teammate's Pi session ID.
+
+The three overlapping tools keep both roles available. `teamsend` and `teamstatus` use the parent callback when `team` is omitted and an owned team when `team` is set. `report_context_window` reports the overseeing session when `targets` is omitted and owned teammates when targets are present.
+
+The capability travels through the child environment and persists on `TeamManifestMember`. Old manifests default it to `false`.
+
+RPC shutdown does not force-kill an overseeing teammate. The parent waits for process exit, which occurs after the overseeing session stops descendant teams, marks their manifests dormant, and releases their leases.
 
 ## Rendering
 

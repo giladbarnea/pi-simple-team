@@ -15,7 +15,9 @@
 
 **No roles. No org chart. No mailboxes. No routing rules.**
 
-`pi-simple-team` spawns a flat team of Pi agents that can all talk to each other, like the responsible adults they are, **and then stays out of the way.**
+`pi-simple-team` spawns a small team of Pi agents that can all talk to each other, like the responsible adults they are, **and then stays out of the way.**
+
+Each team stays flat. When the work needs another room, an opted-in teammate can now open and manage teams of its own.
 
 </div>
 
@@ -40,6 +42,38 @@ Not scheduling a meeting.
 
 Tell your main agent:
 > Spawn a team.
+
+### Give one teammate a room of its own.
+
+Most work fits one flat team. Some work contains a second problem that needs its own people and its own coordination loop.
+
+Set `canOverseeOwnTeams: true` when you create that teammate:
+
+```json
+{
+  "name": "research-lead",
+  "prompt": "Map the product domain. Create a team for the database investigation.",
+  "model": "provider/model-id",
+  "canOverseeOwnTeams": true
+}
+```
+
+That teammate stays in the parent team and becomes main for every team it creates. It gets the same team lifecycle, messaging, status, log, and context-window tools as the original main agent.
+
+The boundary is strict. It can manage only teams created by its own Pi session. It cannot inspect or stop its parent team, sibling teams, or their teammates. The option defaults to `false`.
+
+```mermaid
+flowchart LR
+    main["main"] --> A["Team A"]
+    main --> B["Team B"]
+    main --> C["Team C"]
+    A --> A1["A1 · canOverseeOwnTeams"]
+    A1 --> A1a["A1 team 1"]
+    A1 --> A1b["A1 team 2"]
+    A1 --> A1c["A1 team 3"]
+```
+
+A room can open another room. It does not get the keys to the whole building.
 
 ### Watch a live team with `/team`.
 
@@ -67,19 +101,19 @@ Main agent:
 
 You:
 > **Team goal:**
-> 1. map out all customer–product money streams in the database.
+> 1. Map all customer–product money streams in the database.
 > 2. Feed this knowledge into the harness.
-> 3. Then prove the data analysis agent passes the new evals.
+> 3. Prove the data analysis agent passes the new evals.
 > 
 > **Note:**
 > - #1 and #3 are _loops._ Call them `1-map` and `3-eval`.
-> - `1-map` and `3-eval` each gets a teamate.
+> - `1-map` and `3-eval` each gets a teammate with `canOverseeOwnTeams: true`.
 > - Each teammate spawns _its own team_ to loop on its task.
 
 <br>
 
 <center>
-<b>Because</b> it does nothing specially, <code>pi-simple-team</code> can construct any topography you wish it to.
+<b>Because</b> it does nothing special, <code>pi-simple-team</code> can construct any team graph you need.
 </center>
 <br>
 That prompt gives you this graph:
@@ -124,7 +158,7 @@ when stuck. `"]
 
 Tokens, intelligence and time are never wasted on busy-polling for messages.
 
-Instead, `pi-simple-team` pushes messages to the receipients.
+Instead, `pi-simple-team` pushes messages to the recipients.
 
 This is both efficient and effective:
 
@@ -147,7 +181,7 @@ Teammates publish a one-liner:
 
 > <span style="color:grey">reviewer      </span> Reading implementation, will finalize review in a few minutes.
 
-Your main agent calls `teamstatus` and understands exactly what's going on. Main doesn't ask and clutter the teammates' context.
+Your main agent calls `teamstatus` and understands exactly what is going on. Main does not ask teammates for updates or clutter their context.
 
 ### 🌡️ Context window self-awareness
 
@@ -199,13 +233,11 @@ A missing file that once held session history causes resume to fail. Persisted s
 
 `team_add` creates new RPC teammates only for a running team owned by the current main session.
 
-Teammates cannot manage teams by default. Set `canOverseeOwnTeams: true` when creating a teammate to give it the main agent's team-management tools.
-
-An overseeing teammate stays a member of its parent team. It can create, inspect, message, resume, grow, and stop only teams created by its own Pi session. It cannot manage its parent team or teams owned by sibling sessions.
+The `canOverseeOwnTeams` capability persists with the teammate attachment and returns after resume.
 
 For an overseeing teammate, `teamsend` and `teamstatus` use the parent team when `team` is omitted. Set `team` to operate on one of its own teams. `report_context_window` reports itself when `targets` is omitted and inspects its own teammates when `targets` is set.
 
-The capability persists with the teammate attachment and returns after resume. RPC shutdown waits while an overseeing teammate stops its own teams.
+RPC shutdown waits while an overseeing teammate stops its own teams.
 
 **One Pi session can have only one live runtime.** Pi does not lock session files against concurrent writers.
 
@@ -224,18 +256,18 @@ pi install npm:@giladbarnea/pi-simple-team
 Kept minimal:
 
 
-| Role           | For            | Tools                                                            |
-| -------------- | -------------- | ---------------------------------------------------------------- |
+| Role | For | Tools |
+| --- | --- | --- |
 | **Main agent** | Team lifecycle | `team_spawn`, `team_list`, `team_resume`, `team_add`, `team_shutdown` |
-|                | With team      | `teamsend`                                                       |
-|                | On team        | `teamstatus`, `teamlog`                                          |
-|                | On everyone    | `report_context_window`                                          |
-| **Overseeing teammate** | On own teams | Same tools as the main agent                            |
-|                | With parent team | `teamsend`, `teamstatus`, `teammain`                           |
-| **Teammates**  | With team      | `teamsend`                                                       |
-|                | With main      | `teammain`                                                       |
-|                | On self        | `report_context_window`                                          |
-| **Everyone**   | For everyone   | `teamstatus`                                                     |
+| | With team | `teamsend` |
+| | On team | `teamstatus`, `teamlog` |
+| | On everyone | `report_context_window` |
+| **Overseeing teammate** | On own teams | Same tools as the main agent |
+| | With parent team | `teamsend`, `teamstatus`, `teammain` |
+| **Teammates** | With team | `teamsend` |
+| | With main | `teammain` |
+| | On self | `report_context_window` |
+| **Everyone** | For everyone | `teamstatus` |
 
 
 ---
@@ -256,4 +288,5 @@ Kept minimal:
 
 - [x] Resume all or selected teammates from a dormant team.
 - [x] Add new teammates after a team has spawned.
+- [x] Let opted-in teammates create and manage teams of their own.
 - [ ] Main forces `/compact` on select teammate.

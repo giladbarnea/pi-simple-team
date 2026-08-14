@@ -1,5 +1,5 @@
 ---
-updated: 2026-08-13
+updated: 2026-08-14
 status: current
 audience: AI agents and maintainers
 ---
@@ -108,6 +108,19 @@ If the teammate never produced an assistant response, its provisional file does 
 ## Recursive management stays session-scoped
 
 An overseeing teammate has two roles in one Pi session. It remains a member of its parent team and acts as main for teams it creates.
+
+```text
+main session ownership
+├─ Team A
+│  └─ A1, an overseeing teammate
+├─ Team B
+└─ Team C
+
+A1 session ownership
+├─ Team A1.1
+├─ Team A1.2
+└─ Team A1.3
+```
 
 The existing private owner symbol confines all live operations to teams created through that extension runtime. This covers sends, statuses, context reports, logs, additions, and shutdowns.
 
