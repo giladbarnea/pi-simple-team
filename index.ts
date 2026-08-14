@@ -114,7 +114,6 @@ const thinkingLevels = ["low", "medium", "high", "xhigh", "max"] as const;
 const defaultThinkingLevel: ThinkingLevel = "xhigh";
 const visibleDeliveryTimeoutMilliseconds = 30_000;
 const defaultRpcShutdownGraceMilliseconds = 1_000;
-const recursiveRpcShutdownGraceMilliseconds = 30_000;
 const teamMessageType = "pi-simple-team";
 const teams = new Map<string, TeamState>();
 const callbackToken = crypto.randomBytes(24).toString("hex");
@@ -773,11 +772,10 @@ async function stopRpcTeammate(teammate: TeammateState): Promise<void> {
 		};
 		processToStop.once("exit", resolveExit);
 		processToStop.kill("SIGTERM");
-		const graceMilliseconds = teammate.canOverseeOwnTeams
-			? recursiveRpcShutdownGraceMilliseconds
-			: defaultRpcShutdownGraceMilliseconds;
-		forceKillTimeout = setTimeout(() => processToStop.kill("SIGKILL"), graceMilliseconds);
-		forceKillTimeout.unref();
+		if (!teammate.canOverseeOwnTeams) {
+			forceKillTimeout = setTimeout(() => processToStop.kill("SIGKILL"), defaultRpcShutdownGraceMilliseconds);
+			forceKillTimeout.unref();
+		}
 	});
 	teammate.process = undefined;
 }

@@ -130,28 +130,78 @@ fs.appendFileSync(
 		canOverseeOwnTeams: process.env.PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS === "1",
 	}) + "\n",
 );
-if (member === "slow-stop" || member === "recursive-slow-stop") {
-	process.on("SIGTERM", () => {
-		setTimeout(() => {
-			fs.appendFileSync(path.join(root, "exits.jsonl"), JSON.stringify({ member }) + "\n");
-			process.exit(0);
-		}, member === "recursive-slow-stop" ? 1_500 : 150);
-	});
-}
-
 const beforeAgentStartHandlers = [];
+const sessionStartHandlers = [];
+const sessionShutdownHandlers = [];
+const registeredTools = new Map();
 const extensionArgumentIndex = process.argv.indexOf("-e");
 const extensionPath = process.argv[extensionArgumentIndex + 1];
 const extensionApi = {
 	on: (event, handler) => {
 		if (event === "before_agent_start") beforeAgentStartHandlers.push(handler);
+		if (event === "session_start") sessionStartHandlers.push(handler);
+		if (event === "session_shutdown") sessionShutdownHandlers.push(handler);
 	},
 	registerCommand: () => undefined,
 	registerMessageRenderer: () => undefined,
-	registerTool: () => undefined,
+	registerTool: (tool) => registeredTools.set(tool.name, tool),
 };
 const { default: teamExtension } = await import(extensionPath);
 teamExtension(extensionApi);
+
+const extensionContext = {
+	cwd: process.cwd(),
+	modelRegistry: { getAvailable: () => [{ provider: "fake", id: "fake-model" }] },
+	sessionManager: {
+		getCwd: () => process.cwd(),
+		getSessionFile: () => sessionFile,
+		getSessionId: () => sessionId,
+	},
+};
+for (const handler of sessionStartHandlers) {
+	await handler({ type: "session_start", reason: "startup" }, extensionContext);
+}
+if (member === "recursive-slow-stop") {
+	const spawnTool = registeredTools.get("team_spawn");
+	await spawnTool.execute(
+		"recursive-test-call",
+		{
+			team: "descendant-team",
+			teamPrompt: "Recursive shutdown descendant.",
+			teammates: [{ name: "recursive-descendant", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+		},
+		new AbortController().signal,
+		undefined,
+		extensionContext,
+	);
+}
+
+if (member === "slow-stop") {
+	process.on("SIGTERM", () => {
+		setTimeout(() => {
+			fs.appendFileSync(path.join(root, "exits.jsonl"), JSON.stringify({ member }) + "\n");
+			process.exit(0);
+		}, 150);
+	});
+}
+if (member === "recursive-descendant") {
+	process.on("SIGTERM", () => {
+		fs.appendFileSync(path.join(root, "exits.jsonl"), JSON.stringify({ member }) + "\n");
+		process.exit(0);
+	});
+}
+if (member === "recursive-slow-stop") {
+	process.on("SIGTERM", () => {
+		void (async () => {
+			for (const handler of sessionShutdownHandlers) {
+				await handler({ type: "session_shutdown", reason: "quit" }, extensionContext);
+			}
+			await new Promise((resolve) => setTimeout(resolve, 1_500));
+			fs.appendFileSync(path.join(root, "exits.jsonl"), JSON.stringify({ member }) + "\n");
+			process.exit(0);
+		})();
+	});
+}
 
 async function handleCommand(command) {
 	let systemPrompt;
@@ -547,10 +597,23 @@ test("team_shutdown gives an overseeing teammate time to stop its own teams", as
 			.trim()
 			.split("\n")
 			.map((line) => JSON.parse(line) as JsonRecord);
-		assert.equal(
-			exits.some((exit) => exit.member === "recursive-slow-stop"),
-			true,
-			"Expected team_shutdown to wait for an overseeing teammate's recursive cleanup before force-killing it.",
+		assert.deepEqual(
+			exits.map((exit) => exit.member).sort(),
+			["recursive-descendant", "recursive-slow-stop"],
+			"Expected recursive shutdown to stop the descendant before the overseeing teammate exited.",
+		);
+		const listed = await host.execute("team_list", {});
+		const descendantTeam = (listed.details?.teams as JsonRecord[] | undefined)?.find(
+			(team) => team.id === "recursive-slow-stop-1-descendant-team",
+		);
+		assert.deepEqual(
+			{
+				state: descendantTeam?.state,
+				leaseState: descendantTeam?.leaseState,
+				memberLive: (descendantTeam?.members as JsonRecord[] | undefined)?.[0]?.live,
+			},
+			{ state: "dormant", leaseState: "unclaimed", memberLive: false },
+			`Expected recursive shutdown to leave the descendant attachment dormant and unclaimed. Got: ${JSON.stringify(descendantTeam)}`,
 		);
 	} finally {
 		await host?.shutdown();

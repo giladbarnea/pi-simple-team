@@ -205,7 +205,7 @@ An overseeing teammate stays a member of its parent team. It can create, inspect
 
 For an overseeing teammate, `teamsend` and `teamstatus` use the parent team when `team` is omitted. Set `team` to operate on one of its own teams. `report_context_window` reports itself when `targets` is omitted and inspects its own teammates when `targets` is set.
 
-The capability persists with the teammate attachment and returns after resume. RPC shutdown gives an overseeing teammate time to stop its own teams.
+The capability persists with the teammate attachment and returns after resume. RPC shutdown waits while an overseeing teammate stops its own teams.
 
 **One Pi session can have only one live runtime.** Pi does not lock session files against concurrent writers.
 

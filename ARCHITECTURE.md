@@ -117,7 +117,7 @@ Three tool names serve both roles. `teamsend` and `teamstatus` use the parent ca
 
 The capability is part of the durable member attachment and returns on resume. Old manifests without the field load it as `false`.
 
-When a parent stops an overseeing RPC teammate, it gives that session a longer grace period. This lets the teammate's `session_shutdown` handler stop descendant teams and release their leases before exit.
+When a parent stops an overseeing RPC teammate, it waits for that process to exit without a force-kill deadline. Process exit confirms that the teammate's `session_shutdown` handler stopped descendant teams and released their leases.
 
 ## Runtime communication remains parent coordinated
 
