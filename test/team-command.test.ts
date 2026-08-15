@@ -339,6 +339,60 @@ describe("/team", () => {
 		}
 	});
 
+	test("opens a team that appears while the empty overlay is open", async () => {
+		const host = new TeamCommandHost();
+		let snapshots: TeamSnapshot[] = [];
+		try {
+			await host.openSnapshots(() => snapshots, (component) => {
+				assert.match(component.render(90).join("\n"), /No teams exist/);
+				snapshots = [liveSnapshot([])];
+				const text = component.render(90).join("\n");
+				assert.match(text, /Team: live-team-command-test/, "Expected the dashboard of the team that appeared after the empty state.");
+				assert.doesNotMatch(text, /No teams exist/);
+				close(component);
+			});
+		} finally {
+			await host.shutdown();
+		}
+	});
+
+	test("shows the selector when several teams appear while the empty overlay is open", async () => {
+		const host = new TeamCommandHost();
+		let snapshots: TeamSnapshot[] = [];
+		try {
+			await host.openSnapshots(() => snapshots, (component) => {
+				assert.match(component.render(90).join("\n"), /No teams exist/);
+				snapshots = [
+					{ ...liveSnapshot([]), name: "first-appeared-team" },
+					{ ...liveSnapshot([]), name: "second-appeared-team" },
+				];
+				const text = component.render(90).join("\n");
+				assert.match(text, /Select a team/, "Expected a selector once several teams appeared after the empty state.");
+				assert.match(text, /first-appeared-team/);
+				assert.match(text, /second-appeared-team/);
+				close(component);
+			});
+		} finally {
+			await host.shutdown();
+		}
+	});
+
+	test("falls back to the empty state when the viewed team vanishes", async () => {
+		const host = new TeamCommandHost();
+		let snapshots: TeamSnapshot[] = [liveSnapshot([])];
+		try {
+			await host.openSnapshots(() => snapshots, (component) => {
+				assert.match(component.render(90).join("\n"), /Team: live-team-command-test/);
+				snapshots = [];
+				const text = component.render(90).join("\n");
+				assert.match(text, /No teams exist/, "Expected the empty state after the viewed team vanished.");
+				close(component);
+			});
+		} finally {
+			await host.shutdown();
+		}
+	});
+
 	test("shows the newest fitting messages and logs chronologically without scrolling", async () => {
 		const host = new TeamCommandHost(24);
 		const messages = Array.from({ length: 6 }, (_, index) =>

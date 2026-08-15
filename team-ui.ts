@@ -141,7 +141,8 @@ function selectNewestMessageLines(groups: string[][], height: number): MessageLi
 }
 
 class TeamOverviewOverlay implements Component {
-	private readonly selector?: SelectList;
+	private selector?: SelectList;
+	private selectorTeamNames?: string;
 	private selectedTeamName?: string;
 	private refreshTimer?: ReturnType<typeof setInterval>;
 	private closed = false;
@@ -152,30 +153,32 @@ class TeamOverviewOverlay implements Component {
 		private readonly teamSource: TeamSnapshotSource,
 		private readonly done: () => void,
 	) {
-		const teams = teamSource();
-		this.selectedTeamName = teams.length === 1 ? teams[0]!.name : undefined;
-		if (teams.length > 1) {
-			const items: SelectItem[] = teams.map((team) => ({
-				value: team.name,
-				label: team.name,
-				description: `${team.roster.length} teammate${team.roster.length === 1 ? "" : "s"}`,
-			}));
-			this.selector = new SelectList(items, this.selectorHeight(teams.length), {
-				selectedPrefix: (text) => theme.fg("accent", text),
-				selectedText: (text) => theme.fg("accent", text),
-				description: (text) => theme.fg("muted", text),
-				scrollInfo: (text) => theme.fg("dim", text),
-				noMatch: (text) => theme.fg("warning", text),
-			});
-			this.selector.onSelect = (item) => {
-				this.selectedTeamName = item.value;
-				this.tui.requestRender();
-			};
-			this.selector.onCancel = this.close;
-		}
-
 		this.refreshTimer = setInterval(() => this.tui.requestRender(), LIVE_REFRESH_INTERVAL_MILLISECONDS);
 		this.refreshTimer.unref?.();
+	}
+
+	/** Teams can appear or vanish while the overlay is open, so the selector follows the current snapshot. */
+	private refreshSelector(teams: readonly TeamSnapshot[]): void {
+		const teamNames = teams.map((team) => team.name).join("\n");
+		if (this.selector && this.selectorTeamNames === teamNames) return;
+		this.selectorTeamNames = teamNames;
+		const items: SelectItem[] = teams.map((team) => ({
+			value: team.name,
+			label: team.name,
+			description: `${team.roster.length} teammate${team.roster.length === 1 ? "" : "s"}`,
+		}));
+		this.selector = new SelectList(items, this.selectorHeight(teams.length), {
+			selectedPrefix: (text) => this.theme.fg("accent", text),
+			selectedText: (text) => this.theme.fg("accent", text),
+			description: (text) => this.theme.fg("muted", text),
+			scrollInfo: (text) => this.theme.fg("dim", text),
+			noMatch: (text) => this.theme.fg("warning", text),
+		});
+		this.selector.onSelect = (item) => {
+			this.selectedTeamName = item.value;
+			this.tui.requestRender();
+		};
+		this.selector.onCancel = this.close;
 	}
 
 	handleInput(data: string): void {
@@ -190,10 +193,14 @@ class TeamOverviewOverlay implements Component {
 	render(width: number): string[] {
 		const height = Math.max(4, Math.floor(this.tui.terminal.rows * 0.9));
 		const teams = this.teamSource();
+		if (this.selectedTeamName && !teams.some((candidate) => candidate.name === this.selectedTeamName)) this.selectedTeamName = undefined;
+		if (!this.selectedTeamName && teams.length === 1) this.selectedTeamName = teams[0]!.name;
 		if (this.selectedTeamName) {
 			const team = teams.find((candidate) => candidate.name === this.selectedTeamName)!;
 			return this.dashboard(team, width, height);
 		}
+		if (teams.length > 1) this.refreshSelector(teams);
+		else this.selector = undefined;
 		const innerHeight = height - 2;
 		return this.frame(this.content(Math.max(1, width - 4), teams).slice(0, innerHeight), width, height);
 	}

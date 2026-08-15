@@ -1,8 +1,6 @@
-<!-- name needs to change, not descriptive of actual purpose -->
+# Colloquium Team
 
-# Thinktank Team
-
-Individually, each teammate is responsible for an orthogonal, parallel, read-only, think-heavy effort. The teammates would benefit from listening to the other teammates as they share their thoughts and findings in real time, exactly because each of them is doing its own thing. Sharing is fruitful for the same reason it’s fruitful for scientists to attend and listen to peers in scientific conferences: {some AI agent seeing this please insert the sentence i am looking for instead of this placeholder}.
+Individually, each teammate is responsible for an orthogonal, parallel, read-only, think-heavy effort. The teammates would benefit from listening to the other teammates as they share their thoughts and findings in real time, exactly because each of them is doing its own thing. Sharing is fruitful for the same reason it’s fruitful for scientists to attend and listen to peers in scientific conferences: a peer’s finding from an adjacent problem updates your map of the shared terrain and reframes your own problem in ways you could not have generated from inside your own lane, at no cost to your own effort. Think of it as an open studio: everyone works on their own piece while absorbing the others’.
 
 ## Shape & Work flow
 
@@ -21,4 +19,3 @@ Examples (not an exhaustive list — infer the underlying principles and general
 ## When not to use
 
 When deliverable involves writing or editing.
-

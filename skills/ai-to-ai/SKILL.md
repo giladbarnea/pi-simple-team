@@ -14,7 +14,7 @@ The flip side: if none of these payoffs apply, don't delegate. The anti-pattern 
 - **Hivemind:** teams communicating internally in real time, as each teammate does work. Hollywood analogy: elite soldier squad or a team of spies, global channel earpieces, deployed behind enemy lines, each progresses their part, each part essential for completing the mission, global channel earpieces, consistent live updates, uncertainties surfaced to get advice, discussions to make best decisions for mission, path forward of an individual adapts in real time due to new peer finding, HQ possibly listening, warning and steering as required. 
 - **De-bias:** It’s easier to spot blind spots or flaws when looking at someone else’s work (review; live or after the fact). Alternatively, sometimes a hypothesis is considered true only after it is confirmed independently by multiple actors (consensus).
 
-Read [`references/firstmate.md`](references/firstmate.md) when the user asks you to serve as their First Mate. See `./references/` for specific delegation shapes.
+Read [`references/firstmate.md`](references/firstmate.md) when the user asks you to serve as their First Mate. Read [`references/captain.md`](references/captain.md) when the user asks you to serve as Captain of a fleet of teams. See `./references/` for specific delegation shapes.
 
 ---
 
