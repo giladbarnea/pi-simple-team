@@ -17,8 +17,6 @@
 
 `pi-simple-team` spawns a small team of Pi agents that can all talk to each other, like the responsible adults they are, **and then stays out of the way.**
 
-Each team stays flat. When the work needs another room, an opted-in teammate can now open and manage teams of its own.
-
 </div>
 
 ---
@@ -26,7 +24,7 @@ Each team stays flat. When the work needs another room, an opted-in teammate can
 
 ## Why
 
-I've always done my best work in a small room with a few capable people, building something together.
+I did my best work in a small room, together with a bunch of very capable people.
 
 > <span style="color:grey">_[shouts]_</span> Has anyone figured out how to set up auth yet?
 
@@ -38,56 +36,18 @@ Not scheduling a meeting.
 
 **That's the whole design. Not a swarm, not a company. *A room.***
 
+## Install
+
+```sh
+pi install npm:@giladbarnea/pi-simple-team
+```
+
 ## Using `pi-simple-team`
 
 Tell your main agent:
 > Spawn a team.
 
-### Give one teammate a room of its own.
-
-Most work fits one flat team. Some work contains a second problem that needs its own people and its own coordination loop.
-
-Set `canOverseeOwnTeams: true` when you create that teammate:
-
-```json
-{
-  "name": "research-lead",
-  "prompt": "Map the product domain. Create a team for the database investigation.",
-  "model": "provider/model-id",
-  "canOverseeOwnTeams": true
-}
-```
-
-That teammate stays in the parent team and becomes main for every team it creates. It gets the same team lifecycle, messaging, status, log, and context-window tools as the original main agent.
-
-The boundary is strict. It can manage only teams created by its own Pi session. It cannot inspect or stop its parent team, sibling teams, or their teammates. The option defaults to `false`.
-
-```mermaid
-flowchart LR
-    main["main"] --> A["Team A"]
-    main --> B["Team B"]
-    main --> C["Team C"]
-    A --> A1["A1 · canOverseeOwnTeams"]
-    A1 --> A1a["A1 team 1"]
-    A1 --> A1b["A1 team 2"]
-    A1 --> A1c["A1 team 3"]
-```
-
-A room can open another room. It does not get the keys to the whole building.
-
-### Watch a live team with `/team`.
-
-`/team` is for you, not another agent tool. It gives you a live view of the room without turning the main agent into a status relay.
-
-The command opens a read-only overlay with recent statuses, messages, and a separate event log. With no teams, it shows an empty state. With one team, it opens that team directly. With several teams, it starts with a selector.
-
-The fixed layout keeps the latest content in view as work arrives, without scrolling or jumping around. It is an overview of the room, not a teammate drill-down or transcript.
-
-### Throw a team at something hard.
-
-The team takes the shape of the mission.
-
-**Basic example: adversarial pair**
+That's it. The team takes the shape of the mission:
 
 You:
 > Create an implementer-reviewer team to complete `PLAN.md`.
@@ -97,60 +57,16 @@ Main agent:
 
 <br>
 
-**Better example: build an agentic graph**
-
-You:
-> **Team goal:**
-> 1. Map all customer–product money streams in the database.
-> 2. Feed this knowledge into the harness.
-> 3. Prove the data analysis agent passes the new evals.
-> 
-> **Note:**
-> - #1 and #3 are _loops._ Call them `1-map` and `3-eval`.
-> - `1-map` and `3-eval` each gets a teammate with `canOverseeOwnTeams: true`.
-> - Each teammate spawns _its own team_ to loop on its task.
-
-<br>
-
-<center>
-<b>Because</b> it does nothing special, <code>pi-simple-team</code> can construct any team graph you need.
-</center>
-<br>
-That prompt gives you this graph:
-
-```mermaid
-flowchart LR
-    subgraph map["1-map: map the money streams"]
-        scout["`**Scout**
-Runs repeatedly to clear
-out the fog of war.`"] <--> advocate["`**Devil’s advocate**
-Points out what we
-still don’t know.`"]
-    end
-
-    harness["`**2: subagent dispatch**
-Feeds new understanding
-into the harness.`"]
-
-    subgraph eval["3-eval: hill-climb the evals"]
-        engineer["`**Engineer**
-Improves the harness.`"] <--> watcher["`**Performance watcher**
-Suggests a fresh approach
-when stuck. `"]
-    end
-
-    map --> harness --> eval
-```
-
-<br>
-
----
-
-<br>
-
 ![Spawning a designer–adversary team, checking its status, and sending both teammates a shared instruction](screenshots/1.png)
 
 <div align="center"><em><code>pi-simple-team</code> in the TUI.</em></div>
+
+### Watch a live team with `/team`.
+
+`/team` is for you, not another agent tool. It gives you a live view of the room without turning the main agent into a status relay.
+
+The command opens an overlay rolling recent statuses, messages, and a separate event log. 
+
 
 ## The mechanics
 
@@ -164,9 +80,9 @@ This is both efficient and effective:
 
 - ✔ No inbox to forget.
 - ✔ Context window stays lean.
-- ✔ Unlocks teams doing arbitrary workflows.
+- ✔ Unlocks arbitrary workflows.
 
-*{screenshot of Codex filling up the entire visible chat with countless* `Waiting agents to finish...`*}*
+*{ironic screenshot of Codex filling up the entire visible chat with countless* `Waiting agents to finish...`*}*
 
 ### ⚡ Messages arrive _fast_.
 
@@ -177,9 +93,9 @@ This is both efficient and effective:
 
 Teammates publish a one-liner:
 
-> <span style="color:grey">implementer  </span> Done, 89 tests green, awaiting review.
+> <span style="color:grey">implementer  </span> Done, 89 tests green, awaiting review.
 
-> <span style="color:grey">reviewer      </span> Reading implementation, will finalize review in a few minutes.
+> <span style="color:grey">reviewer      </span> Reading implementation, will finalize review in a few minutes.
 
 Your main agent calls `teamstatus` and understands exactly what is going on. Main does not ask teammates for updates or clutter their context.
 
@@ -189,21 +105,21 @@ Teammates know how much free context they have left.
 
 Main agent knows its own and everyone else's too.
 
+They will hand off work on their own when it's time to say goodbye.
+
+You can stop babysitting everyone's context window.
+
 ### 📣 Interrupts, when justified.
 
-> _Situation: Late afternoon. Team has finished a production hotfix and started to wrap up._
+> _Situation: Late afternoon. Team finished production hotfix and started wrap up. There is one problem though._
 
 - 17:32:00: Security scout spots a private SSH key not covered by `.gitignore`.
-- 17:32:01: Release teammate sets status: "Ran `git add .`, preparing commit and push."
+- 17:32:01: Release teammate sets status: _Ran `git add .`, preparing commit and push._
 - 17:32:02: Scout immediately interrupts. Key never leaves the machine. Developer keeps their job.
 
-### 📡 Live observability without a second history.
+### 📡 Live, zero-cost observability 
 
-While a team runs, `teamlog` exposes a timestamped, filterable timeline of messages, tool calls, and lifecycle events.
-
-That live timeline stays in parent-process memory and starts fresh after a resume. Pi session JSONL files are the canonical conversation history.
-
-`pi-simple-team` does not persist a separate parent-runtime log or duplicate `teamlog` data.
+Your main uses `teamlog` when it needs to understand the chain of events in high granularity: a timestamped, filterable timeline of messages, tool calls, and lifecycle events.
 
 <br>
 
@@ -219,39 +135,47 @@ That live timeline stays in parent-process memory and starts fresh after a resum
 
 ### 🧱 Teammates are durable Pi sessions.
 
-A teammate is a normal Pi session with a team attachment and an optional live runtime. The attachment adds its team prompt, roster, and communication tools.
+A teammate is a normal Pi session with a team attachment. 
 
-Each team ID is `{origin-main-session-id}-{team-name}`. `team_list` discovers active and dormant teams from the same canonical project directory.
+This means every teammate can be resurrected, moved around teams and reused everywhere, anytime.
 
-`team_shutdown` stops every live runtime and leaves the team dormant. Its manifest expires after 30 days, but expiration never deletes Pi session files.
+A teammate from one session can be added to a team in a later session.
 
-`team_resume` starts all stopped teammates by default, or only selected teammates. Resume uses RPC unless `showOnHerdrPanes` is explicitly set.
+You can even `/resume` a teammate session directly if you ever want a cozy one-on-one.
 
-Pi creates a session path before it writes the session JSONL file. A teammate without a first assistant response therefore restarts empty.
+The full lifecycle and persistence rules live in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-A missing file that once held session history causes resume to fail. Persisted sessions restore their own model and thinking state from Pi.
+## When one room is not enough
 
-`team_add` creates new RPC teammates only for a running team owned by the current main session.
+`pi-simple-team` supports teammates spawning and managing their own teams, one level down.
 
-The `canOverseeOwnTeams` capability persists with the teammate attachment and returns after resume.
+This is opt-in: when spawning a team, ask main to turn this on for one (or more) teammates.
 
-For an overseeing teammate, `teamsend` and `teamstatus` use the parent team when `team` is omitted. Set `team` to operate on one of its own teams. `report_context_window` reports itself when `targets` is omitted and inspects its own teammates when `targets` is set.
+That teammate stays in your team and becomes main for the teams it creates, with the same tools your main agent has. The boundary is strict: it manages only teams its own session created — never its parent team, sibling teams, or their teammates.
 
-RPC shutdown waits while an overseeing teammate stops its own teams.
+A room can open another room. It does not get the keys to the whole building.
 
-**One Pi session can have only one live runtime.** Pi does not lock session files against concurrent writers.
+---
 
+## Graphs engineer themselves
 
-## Install
+**Because** it does nothing special, `pi-simple-team` can construct any team graph you need:
 
-```sh
-pi install npm:@giladbarnea/pi-simple-team
-```
+You:
+> **Team goal:**
+> 1. Map all customer–product money streams in the database.
+> 2. Feed this knowledge into the harness.
+> 3. Prove the data analysis agent passes the new evals.
+> 
+> **Note:**
+> - #1 and #3 are _saturation loops._ Stop only when you can't find anything new. 
+> - Let teammates #1 and #3 create their own teams to loop until task is complete.
 
+That prompt gives you this graph:
 
+![The team graph: 1-map (Scout and Devil’s advocate) feeding subagent dispatch, feeding 3-eval (Engineer and Performance watcher)](screenshots/team-graph.png)
 
 ## Tools
-
 
 Kept minimal:
 
@@ -273,7 +197,6 @@ Kept minimal:
 ---
 
 
-
 ## Roadmap
 
 **User involvement track:**
@@ -282,6 +205,7 @@ Kept minimal:
 - [x] `/team`: live, read-only team dashboard.
 - [ ] Teammate drill-down and transcripts.
 - [ ] Joining and steering teams from slash commands.
+- [ ] Adding teammates to existing teams directly from slash commands.
 - [ ] Spawning teams directly from slash commands.
 
 **Functional:**
@@ -290,3 +214,4 @@ Kept minimal:
 - [x] Add new teammates after a team has spawned.
 - [x] Let opted-in teammates create and manage teams of their own.
 - [ ] Main forces `/compact` on select teammate.
+- [ ] Teammates auto-reminded to hand off on low context.
