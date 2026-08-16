@@ -11,9 +11,9 @@ The social model stays flat inside each team. Normal teammates get communication
 
 A teammate with `canOverseeOwnTeams: true` keeps its parent-team tools and also gets the main tool set. It acts as main only for teams created by its own Pi session.
 
-There is no inbox, polling loop, explicit done primitive, or message broker. The only extra IPC is an authenticated localhost callback server.
+There is no inbox, polling loop, explicit done primitive, or message broker. The only extra IPC is authenticated localhost HTTP: one parent callback server, plus one delivery server per child.
 
-The implementation uses child CLI processes rather than Pi SDK sessions. RPC children stay alive while idle and accept pushed prompts, steering, interrupts, and state queries.
+The implementation uses child CLI processes rather than Pi SDK sessions. Children stay alive while idle. A delivered message becomes an in-session `pi.sendMessage` (`deliverAs: "steer"`, `triggerTurn: true`), so Pi itself resolves busy/idle delivery. An interrupt delivery aborts the child's active turn in-process before the message lands.
 
 ## Durable team attachments
 
@@ -21,7 +21,7 @@ A team ID is `{origin-main-session-id}-{team-name}`. The registry stores same-pr
 
 Each active team holds an atomic lease. This lease enforces one extension-managed live runtime per teammate session.
 
-`team_spawn` and `team_add` query each RPC child with `get_state`. Visible children report their session identity when they register their callback.
+Every child reports its session identity when it registers its delivery server. Spawn, add, and resume complete only after that registration.
 
 Pi can report a session file before creating it. The file appears after the first assistant response.
 

@@ -81,7 +81,6 @@ describe("recursive team oversight", () => {
 	test("an opted-in teammate receives parent-team tools and manager tools", async () => {
 		const environment = {
 			PI_SIMPLE_TEAM_CHILD: "1",
-			PI_SIMPLE_TEAM_VISIBLE_CHILD: "0",
 			PI_SIMPLE_TEAM_CALLBACK_URL: "http://127.0.0.1:1/callback",
 			PI_SIMPLE_TEAM_CALLBACK_TOKEN: "unused",
 			PI_SIMPLE_TEAM_TEAM: "parent-team-id",
@@ -143,7 +142,6 @@ describe("recursive team oversight", () => {
 
 		const environment = {
 			PI_SIMPLE_TEAM_CHILD: "1",
-			PI_SIMPLE_TEAM_VISIBLE_CHILD: "0",
 			PI_SIMPLE_TEAM_CALLBACK_URL: `http://127.0.0.1:${address.port}/callback`,
 			PI_SIMPLE_TEAM_CALLBACK_TOKEN: "parent-token",
 			PI_SIMPLE_TEAM_TEAM: "parent-team-id",
@@ -302,11 +300,13 @@ class ExtensionHost {
 		this.context = {
 			scopedModels,
 			modelRegistry: { getAvailable: () => fakeAvailableModels },
+			shutdown: () => undefined,
 		} as unknown as ExtensionContext;
 		const api = {
 			on: (event: string, handler: ExtensionEventHandler) => {
 				if (event === "session_shutdown") this.shutdownHandlers.push(handler);
-				if (event === "session_start") handler({ reason: "startup" }, this.context);
+				// Pi reports extension event-handler errors without crashing the session; the harness mirrors that.
+				if (event === "session_start") void Promise.resolve(handler({ reason: "startup" }, this.context)).catch(() => undefined);
 			},
 			registerCommand: () => undefined,
 			registerMessageRenderer: () => undefined,
@@ -387,6 +387,7 @@ function messageReceipt(expectedCount: number): { record: () => void; wait: () =
 const fakePiScript = String.raw`#!/usr/bin/env node
 const fs = require("node:fs");
 const http = require("node:http");
+const path = require("node:path");
 
 if (process.argv[2] === "--list-models") {
 	process.stdout.write("provider  model  context  max-out  thinking  images\nfake  fake-model  1K  1K  yes  no\n");
@@ -399,6 +400,41 @@ if (process.env.PI_SIMPLE_TEAM_TEST_CAPABILITY_LOG) {
 		process.env.PI_SIMPLE_TEAM_MEMBER + "=" + String(process.env.PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS) + "\n",
 	);
 }
+
+const sessionFile = path.join(require("node:os").tmpdir(), "pi-simple-team-fake-" + process.env.PI_SIMPLE_TEAM_MEMBER + "-" + process.pid + ".jsonl");
+const sessionId = path.basename(sessionFile, ".jsonl");
+const server = http.createServer((request, response) => {
+	void (async () => {
+		const chunks = [];
+		for await (const chunk of request) chunks.push(chunk);
+		const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+		if (body.token !== process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN) {
+			response.writeHead(403);
+			response.end();
+			return;
+		}
+		if (body.tool === "report_context_window") {
+			response.end(JSON.stringify({ contextUsage: { tokens: 87_000, contextWindow: 272_000, percent: 31.985 } }));
+			return;
+		}
+		response.end(JSON.stringify({ accepted: true }));
+	})();
+});
+server.listen(0, "127.0.0.1", () => {
+	const registration = JSON.stringify({
+		token: process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN,
+		team: process.env.PI_SIMPLE_TEAM_TEAM,
+		from: process.env.PI_SIMPLE_TEAM_MEMBER,
+		tool: "register",
+		args: { url: "http://127.0.0.1:" + server.address().port + "/deliver", sessionId, sessionFile },
+	});
+	const request = http.request(process.env.PI_SIMPLE_TEAM_CALLBACK_URL, {
+		method: "POST",
+		headers: { "content-type": "application/json", "content-length": Buffer.byteLength(registration) },
+	}, (response) => response.resume());
+	request.on("error", (error) => process.stderr.write(String(error)));
+	request.end(registration);
+});
 
 setTimeout(() => {
 	const body = JSON.stringify({
@@ -636,7 +672,6 @@ describe("context-window reports", () => {
 	test("an overseeing teammate reports itself when no descendant targets are given", async () => {
 		const environment = {
 			PI_SIMPLE_TEAM_CHILD: "1",
-			PI_SIMPLE_TEAM_VISIBLE_CHILD: "0",
 			PI_SIMPLE_TEAM_CALLBACK_URL: "http://127.0.0.1:1/callback",
 			PI_SIMPLE_TEAM_CALLBACK_TOKEN: "unused",
 			PI_SIMPLE_TEAM_TEAM: "parent-team-id",
@@ -681,7 +716,6 @@ describe("context-window reports", () => {
 			callbackToken: "unused",
 			teamName: "context-team",
 			teammateName: "product-head",
-			visible: false,
 			participants: ["product-head"],
 			canOverseeOwnTeams: false,
 		});

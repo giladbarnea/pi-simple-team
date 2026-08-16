@@ -53,7 +53,8 @@ class ExtensionHost {
 
 	async start(): Promise<void> {
 		for (const handler of this.sessionStartHandlers) {
-			await handler({ type: "session_start", reason: "startup" }, this.context);
+			// Pi reports extension event-handler errors without crashing the session; the harness mirrors that.
+			await Promise.resolve(handler({ type: "session_start", reason: "startup" }, this.context)).catch(() => undefined);
 		}
 	}
 
@@ -75,6 +76,7 @@ function makeContext(sessionId: string, projectDirectory: string): ExtensionCont
 		cwd: projectDirectory,
 		hasUI: true,
 		mode: "tui",
+		shutdown: () => undefined,
 		scopedModels: [],
 		modelRegistry: { getAvailable: () => [{ provider: "fake", id: "fake-model" }] },
 		sessionManager: {
@@ -145,12 +147,26 @@ const extensionApi = {
 	registerCommand: () => undefined,
 	registerMessageRenderer: () => undefined,
 	registerTool: (tool) => registeredTools.set(tool.name, tool),
+	// Emulates Pi's turn semantics: a delivered message starts a turn after before_agent_start refreshes the system prompt.
+	sendMessage: (message) => {
+		void (async () => {
+			const systemPromptArgumentIndex = process.argv.indexOf("--system-prompt");
+			let systemPrompt = process.argv[systemPromptArgumentIndex + 1];
+			for (const handler of beforeAgentStartHandlers) {
+				const result = await handler({ prompt: message.content, images: [], systemPrompt, systemPromptOptions: {} }, {});
+				if (result && typeof result.systemPrompt === "string") systemPrompt = result.systemPrompt;
+			}
+			fs.appendFileSync(path.join(root, "turns.jsonl"), JSON.stringify({ member, message: message.content, systemPrompt }) + "\n");
+		})();
+	},
 };
 const { default: teamExtension } = await import(extensionPath);
 teamExtension(extensionApi);
 
 const extensionContext = {
 	cwd: process.cwd(),
+	shutdown: () => process.exit(1),
+	getContextUsage: () => ({ tokens: 87_000, contextWindow: 272_000, percent: 31.985 }),
 	modelRegistry: { getAvailable: () => [{ provider: "fake", id: "fake-model" }] },
 	sessionManager: {
 		getCwd: () => process.cwd(),
@@ -158,6 +174,10 @@ const extensionContext = {
 		getSessionId: () => sessionId,
 	},
 };
+if ((member === "resume-fails" && sequence > 1) || member === "add-fails") {
+	process.stderr.write("planned readiness failure");
+	process.exit(1);
+}
 for (const handler of sessionStartHandlers) {
 	await handler({ type: "session_start", reason: "startup" }, extensionContext);
 }
@@ -174,6 +194,7 @@ if (member === "recursive-slow-stop") {
 		undefined,
 		extensionContext,
 	);
+	fs.writeFileSync(path.join(root, "descendant-ready"), "1");
 }
 
 if (member === "slow-stop") {
@@ -221,15 +242,11 @@ async function handleCommand(command) {
 		);
 	}
 
-	const plannedResumeFailure = member === "resume-fails" && sequence > 1 && command.type === "get_state";
-	const plannedAddFailure = member === "add-fails" && command.type === "get_state";
-	const plannedFailure = plannedResumeFailure || plannedAddFailure;
 	const response = {
 		type: "response",
 		id: command.id,
 		command: command.type,
-		success: !plannedFailure,
-		error: plannedResumeFailure ? "planned resume failure" : plannedAddFailure ? "planned add failure" : undefined,
+		success: true,
 		data: command.type === "get_state"
 			? { isStreaming: false, sessionId, sessionFile }
 			: undefined,
@@ -488,7 +505,6 @@ test("an overseeing teammate can discover and resume only teams it created", asy
 
 		const childEnvironment = {
 			PI_SIMPLE_TEAM_CHILD: "1",
-			PI_SIMPLE_TEAM_VISIBLE_CHILD: "0",
 			PI_SIMPLE_TEAM_CALLBACK_URL: "http://127.0.0.1:1/callback",
 			PI_SIMPLE_TEAM_CALLBACK_TOKEN: "unused",
 			PI_SIMPLE_TEAM_TEAM: "top-main-session-parent-team",
@@ -586,6 +602,12 @@ test("team_shutdown gives an overseeing teammate time to stop its own teams", as
 				canOverseeOwnTeams: true,
 			}],
 		});
+		const descendantReadyPath = path.join(temporaryDirectory, "descendant-ready");
+		const readinessDeadline = Date.now() + 5_000;
+		while (!fs.existsSync(descendantReadyPath) && Date.now() < readinessDeadline) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(fs.existsSync(descendantReadyPath), true, "Expected the overseeing teammate to finish spawning its descendant team.");
 		await host.execute("team_shutdown", { team: "recursive-shutdown-team" });
 		const exitsPath = path.join(temporaryDirectory, "exits.jsonl");
 		assert.equal(
@@ -791,7 +813,7 @@ test("failed team_add waits for only its newly started processes to exit", async
 					{ name: "add-fails", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
 				],
 			}),
-			/planned add failure/i,
+			/add-fails exited/,
 			"Expected the later teammate's failed readiness handshake to reject team_add.",
 		);
 		const exitsPath = path.join(temporaryDirectory, "exits.jsonl");
@@ -986,7 +1008,7 @@ test("a failed selective resume leaves members that were already running alive",
 		await resumingHost.execute("team_resume", { team: teamId, teammates: ["persisted"] });
 		await assert.rejects(
 			() => resumingHost.execute("team_resume", { team: teamId, teammates: ["resume-fails"] }),
-			/planned resume failure/i,
+			/resume-fails exited/,
 			"Expected the selected teammate's failed readiness handshake to reject resume.",
 		);
 

@@ -4,7 +4,6 @@ import crypto from "node:crypto";
 import * as fs from "node:fs";
 import http from "node:http";
 import * as path from "node:path";
-import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { defineTool, type ContextUsage, type ExtensionAPI, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { bundledAiToAiSkillInstruction } from "./bundled-skill.ts";
@@ -40,21 +39,6 @@ interface TeamStatus {
 	updated: string;
 }
 
-interface RpcResponse extends JsonRecord {
-	type: "response";
-	id?: string;
-	command: string;
-	success: boolean;
-	error?: string;
-	data?: unknown;
-}
-
-interface PendingRequest {
-	resolve: (response: RpcResponse) => void;
-	reject: (error: Error) => void;
-	timeout: ReturnType<typeof setTimeout>;
-}
-
 interface TeammateSpec {
 	name: string;
 	prompt: string;
@@ -79,15 +63,12 @@ interface TeammateState {
 	sessionMaterialized: boolean;
 	process?: ChildProcess;
 	paneId?: string;
-	visibleUrl?: string;
-	visibleReady?: Promise<void>;
-	resolveVisibleReady?: () => void;
-	rejectVisibleReady?: (error: Error) => void;
-	busy: boolean;
+	deliveryUrl?: string;
+	ready?: Promise<void>;
+	resolveReady?: () => void;
+	rejectReady?: (error: Error) => void;
 	alive: boolean;
-	pendingRequests: Map<string, PendingRequest>;
 	deliveryQueue: Promise<void>;
-	recentEvents: JsonRecord[];
 	stderr: string;
 }
 
@@ -112,14 +93,13 @@ interface TeamState {
 const teamLiteExtensionPath = fileURLToPath(import.meta.url);
 const thinkingLevels = ["low", "medium", "high", "xhigh", "max"] as const;
 const defaultThinkingLevel: ThinkingLevel = "xhigh";
-const visibleDeliveryTimeoutMilliseconds = 30_000;
+const deliveryTimeoutMilliseconds = 30_000;
 const defaultRpcShutdownGraceMilliseconds = 1_000;
 const teamMessageType = "pi-simple-team";
 const teams = new Map<string, TeamState>();
 const callbackToken = crypto.randomBytes(24).toString("hex");
 let callbackServer: http.Server | undefined;
 let callbackUrl = "";
-let requestCounter = 0;
 
 function status(word: string, phrase: string): TeamStatus {
 	return { word, phrase, updated: nowText() };
@@ -136,10 +116,6 @@ function toolResult(payload: JsonRecord) {
 		content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
 		details: payload,
 	};
-}
-
-function sleep(milliseconds: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 interface CommandResult {
@@ -177,162 +153,16 @@ async function validateHerdrAvailability(): Promise<string> {
 	return tabId;
 }
 
-function serializeJsonLine(value: unknown): string {
-	return `${JSON.stringify(value)}\n`;
-}
-
-function attachJsonlReader(stream: NodeJS.ReadableStream, onLine: (line: string) => void): void {
-	const decoder = new StringDecoder("utf8");
-	let buffer = "";
-
-	stream.on("data", (chunk: Buffer | string) => {
-		buffer += typeof chunk === "string" ? chunk : decoder.write(chunk);
-
-		while (true) {
-			const newlineIndex = buffer.indexOf("\n");
-			if (newlineIndex === -1) return;
-
-			let line = buffer.slice(0, newlineIndex);
-			buffer = buffer.slice(newlineIndex + 1);
-			if (line.endsWith("\r")) line = line.slice(0, -1);
-			onLine(line);
-		}
-	});
-
-	stream.on("end", () => {
-		buffer += decoder.end();
-		if (buffer.length > 0) onLine(buffer.endsWith("\r") ? buffer.slice(0, -1) : buffer);
-	});
-}
-
-function pushRecentEvent(teammate: TeammateState, event: JsonRecord): void {
-	teammate.recentEvents.push(event);
-	if (teammate.recentEvents.length > 200) teammate.recentEvents.shift();
-}
-
-function rejectPendingRequests(teammate: TeammateState, error: Error): void {
-	for (const pending of teammate.pendingRequests.values()) {
-		clearTimeout(pending.timeout);
-		pending.reject(error);
-	}
-	teammate.pendingRequests.clear();
-}
-
-function handleTeammateEvent(team: TeamState, teammate: TeammateState, event: JsonRecord): void {
-	pushRecentEvent(teammate, event);
-
-	if (event.type === "agent_start") teammate.busy = true;
-	if (event.type === "agent_end") teammate.busy = false;
-
-	const logInput = normalizeChildEvent(team.name, teammate.name, event);
-	if (logInput) appendTeamLog(team, logInput);
-
-	if (event.type !== "response") return;
-	const response = event as RpcResponse;
-	const requestId = response.id;
-	if (!requestId) return;
-
-	const pending = teammate.pendingRequests.get(requestId);
-	if (!pending) return;
-
-	teammate.pendingRequests.delete(requestId);
-	clearTimeout(pending.timeout);
-	pending.resolve(response);
-}
-
-function sendRpc(teammate: TeammateState, command: JsonRecord, timeoutMilliseconds = 30_000): Promise<RpcResponse> {
-	if (teammate.transport !== "rpc" || !teammate.process || !teammate.alive || teammate.process.exitCode !== null) {
-		throw new Error(`Teammate ${teammate.name} is not alive through RPC`);
-	}
-
-	const id = `team-${++requestCounter}`;
-	const payload = { ...command, id };
-
-	return new Promise((resolve, reject) => {
-		const timeout = setTimeout(() => {
-			teammate.pendingRequests.delete(id);
-			reject(new Error(`Timed out waiting for ${String(command.type)} response from ${teammate.name}`));
-		}, timeoutMilliseconds);
-
-		teammate.pendingRequests.set(id, { resolve, reject, timeout });
-		teammate.process!.stdin?.write(serializeJsonLine(payload));
-	});
-}
-
-async function requireSuccessfulResponse(response: RpcResponse, action: string): Promise<void> {
-	if (response.success) return;
-	throw new Error(`${action} failed: ${response.error ?? "unknown RPC error"}`);
-}
-
-async function getTeammateBusy(teammate: TeammateState): Promise<boolean> {
-	if (teammate.transport === "herdr") return teammate.busy;
-
-	const response = await sendRpc(teammate, { type: "get_state" }, 10_000);
-	if (!response.success) return teammate.busy;
-	const data = response.data as { isStreaming?: boolean } | undefined;
-	teammate.busy = Boolean(data?.isStreaming);
-	return teammate.busy;
-}
-
-async function waitForIdle(teammate: TeammateState, timeoutMilliseconds = 30_000): Promise<void> {
-	const deadline = Date.now() + timeoutMilliseconds;
-
-	while (Date.now() < deadline) {
-		if (!(await getTeammateBusy(teammate))) return;
-		await sleep(100);
-	}
-
-	throw new Error(`Timed out waiting for ${teammate.name} to become idle`);
-}
-
-async function promptTeammate(team: TeamState, teammate: TeammateState, message: string): Promise<void> {
-	const response = await sendRpc(teammate, { type: "prompt", message });
-	if (response.success) {
-		appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "ack", summary: "prompt accepted" });
-		return;
-	}
-
-	const fallback = await sendRpc(teammate, { type: "prompt", message, streamingBehavior: "steer" });
-	if (fallback.success) {
-		appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "ack", summary: "steer fallback accepted" });
-	} else {
-		appendTeamLog(team, {
-			team: team.name,
-			teammate: teammate.name,
-			direction: "runtime",
-			kind: "error",
-			summary: preview(`steer fallback to ${teammate.name} failed: ${fallback.error ?? "unknown RPC error"}`),
-		});
-	}
-	await requireSuccessfulResponse(fallback, `steer fallback to ${teammate.name}`);
-}
-
-async function steerTeammate(team: TeamState, teammate: TeammateState, message: string): Promise<void> {
-	const response = await sendRpc(teammate, { type: "steer", message });
-	if (response.success) {
-		appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "ack", summary: "steer accepted" });
-		return;
-	}
-	appendTeamLog(team, {
-		team: team.name,
-		teammate: teammate.name,
-		direction: "runtime",
-		kind: "error",
-		summary: preview(`steer to ${teammate.name} rejected: ${response.error ?? "unknown RPC error"}`),
-	});
-	await promptTeammate(team, teammate, message);
-}
-
 function formatTeammateMessage(team: TeamState, from: string, message: string): string {
 	return [`[from ${from} on team ${team.name}]`, message, "", "Current team status:", JSON.stringify(formatStatus(team), null, 2)].join("\n");
 }
 
-async function deliverVisibleMessage(team: TeamState, from: string, recipient: TeammateState, message: string, formattedMessage: string, interrupt: boolean): Promise<void> {
-	if (!recipient.alive || !recipient.visibleUrl) throw new Error(`Visible teammate ${recipient.name} is not ready`);
+async function deliverMessage(team: TeamState, from: string, recipient: TeammateState, message: string, formattedMessage: string, interrupt: boolean): Promise<void> {
+	if (!recipient.alive || !recipient.deliveryUrl) throw new Error(`Teammate ${recipient.name} is not ready`);
 	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), visibleDeliveryTimeoutMilliseconds);
+	const timeout = setTimeout(() => controller.abort(), deliveryTimeoutMilliseconds);
 	try {
-		const response = await fetch(recipient.visibleUrl, {
+		const response = await fetch(recipient.deliveryUrl, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({
@@ -342,12 +172,12 @@ async function deliverVisibleMessage(team: TeamState, from: string, recipient: T
 			}),
 			signal: controller.signal,
 		});
-		if (!response.ok) throw new Error(`Visible teammate ${recipient.name} rejected delivery: ${response.status} ${await response.text()}`);
+		if (!response.ok) throw new Error(`Teammate ${recipient.name} rejected delivery: ${response.status} ${await response.text()}`);
 		const result = (await response.json()) as { accepted?: boolean };
-		if (!result.accepted) throw new Error(`Visible teammate ${recipient.name} did not accept delivery`);
-		appendTeamLog(team, { team: team.name, teammate: recipient.name, direction: "runtime", kind: "ack", summary: "visible message accepted" });
+		if (!result.accepted) throw new Error(`Teammate ${recipient.name} did not accept delivery`);
+		appendTeamLog(team, { team: team.name, teammate: recipient.name, direction: "runtime", kind: "ack", summary: "message accepted" });
 	} catch (error) {
-		if (controller.signal.aborted) throw new Error(`Timed out waiting for visible teammate ${recipient.name} delivery`);
+		if (controller.signal.aborted) throw new Error(`Timed out waiting for teammate ${recipient.name} delivery`);
 		throw error;
 	} finally {
 		clearTimeout(timeout);
@@ -364,24 +194,7 @@ async function deliverToTeammate(team: TeamState, from: string, recipient: Teamm
 		summary: preview(message),
 		details: { from, to: recipient.name, interrupt },
 	});
-	if (recipient.transport === "herdr") {
-		await deliverVisibleMessage(team, from, recipient, message, formattedMessage, interrupt);
-		return;
-	}
-
-	if (interrupt && (recipient.busy || (await getTeammateBusy(recipient)))) {
-		await requireSuccessfulResponse(await sendRpc(recipient, { type: "abort" }, 60_000), `abort ${recipient.name}`);
-		await waitForIdle(recipient);
-		await promptTeammate(team, recipient, formattedMessage);
-		return;
-	}
-
-	if (recipient.busy || (await getTeammateBusy(recipient))) {
-		await steerTeammate(team, recipient, formattedMessage);
-		return;
-	}
-
-	await promptTeammate(team, recipient, formattedMessage);
+	await deliverMessage(team, from, recipient, message, formattedMessage, interrupt);
 }
 
 function enqueueDelivery(team: TeamState, from: string, recipient: TeammateState, message: string, interrupt: boolean): void {
@@ -454,21 +267,14 @@ function resolveContextTargets(owner: symbol, targetNames: string[]): TeammateSt
 }
 
 async function getTeammateContextUsage(teammate: TeammateState, signal?: AbortSignal): Promise<KnownContextUsage> {
-	if (teammate.transport === "rpc") {
-		const response = await sendRpc(teammate, { type: "get_session_stats" });
-		await requireSuccessfulResponse(response, `read context usage from ${teammate.name}`);
-		const stats = response.data as { contextUsage?: ContextUsage };
-		return requireKnownContextUsage(stats.contextUsage);
-	}
-
-	if (!teammate.alive || !teammate.visibleUrl) throw new Error(`Visible teammate ${teammate.name} is not ready`);
-	const response = await fetch(teammate.visibleUrl, {
+	if (!teammate.alive || !teammate.deliveryUrl) throw new Error(`Teammate ${teammate.name} is not ready`);
+	const response = await fetch(teammate.deliveryUrl, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({ token: callbackToken, tool: "report_context_window", args: {} }),
 		signal,
 	});
-	if (!response.ok) throw new Error(`Visible teammate ${teammate.name} rejected context-window query: ${response.status} ${await response.text()}`);
+	if (!response.ok) throw new Error(`Teammate ${teammate.name} rejected context-window query: ${response.status} ${await response.text()}`);
 	const payload = (await response.json()) as { contextUsage?: ContextUsage };
 	return requireKnownContextUsage(payload.contextUsage);
 }
@@ -516,14 +322,12 @@ function logStatusDeclaration(team: TeamState, participant: string, word?: strin
 function createTeammateState(team: TeamState, teammateSpec: TeammateSpec): TeammateState {
 	const teammateName = compactName(teammateSpec.name);
 	const thinking = teammateSpec.thinking ?? defaultThinkingLevel;
-	let resolveVisibleReady: (() => void) | undefined;
-	let rejectVisibleReady: ((error: Error) => void) | undefined;
-	const visibleReady = team.showOnHerdrPanes
-		? new Promise<void>((resolve, reject) => {
-			resolveVisibleReady = resolve;
-			rejectVisibleReady = reject;
-		})
-		: undefined;
+	let resolveReady: (() => void) | undefined;
+	let rejectReady: ((error: Error) => void) | undefined;
+	const ready = new Promise<void>((resolve, reject) => {
+		resolveReady = resolve;
+		rejectReady = reject;
+	});
 
 	return {
 		name: teammateName,
@@ -534,22 +338,18 @@ function createTeammateState(team: TeamState, teammateSpec: TeammateSpec): Teamm
 		canOverseeOwnTeams: Boolean(teammateSpec.canOverseeOwnTeams),
 		transport: team.showOnHerdrPanes ? "herdr" : "rpc",
 		sessionMaterialized: false,
-		visibleReady,
-		resolveVisibleReady,
-		rejectVisibleReady,
-		busy: false,
+		ready,
+		resolveReady,
+		rejectReady,
 		alive: true,
-		pendingRequests: new Map(),
 		deliveryQueue: Promise.resolve(),
-		recentEvents: [],
 		stderr: "",
 	};
 }
 
-function childEnvironmentOverrides(team: TeamState, teammate: TeammateState, participants: string[], visible: boolean): Record<string, string> {
+function childEnvironmentOverrides(team: TeamState, teammate: TeammateState, participants: string[]): Record<string, string> {
 	return {
 		PI_SIMPLE_TEAM_CHILD: "1",
-		PI_SIMPLE_TEAM_VISIBLE_CHILD: visible ? "1" : "0",
 		PI_SIMPLE_TEAM_CALLBACK_URL: callbackUrl,
 		PI_SIMPLE_TEAM_CALLBACK_TOKEN: callbackToken,
 		PI_SIMPLE_TEAM_TEAM: team.id ?? team.name,
@@ -571,12 +371,12 @@ function appendSpawnLog(team: TeamState, teammate: TeammateState): void {
 	});
 }
 
-interface RpcStartOptions {
+interface ChildStartOptions {
 	sessionFile?: string;
 	restartEmpty?: boolean;
 }
 
-function attachRpcTeammate(team: TeamState, teammate: TeammateState, participants: string[], options: RpcStartOptions): void {
+function attachRpcTeammate(team: TeamState, teammate: TeammateState, participants: string[], options: ChildStartOptions): void {
 	const sessionArgs = options.sessionFile
 		? ["--session", options.sessionFile]
 		: teammate.inheritContext && !options.restartEmpty
@@ -598,21 +398,12 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 	];
 	const proc = childProcess.spawn("pi", args, {
 		cwd: team.projectDirectory ?? process.cwd(),
-		stdio: ["pipe", "pipe", "pipe"],
-		env: { ...process.env, ...childEnvironmentOverrides(team, teammate, participants, false) },
+		stdio: ["pipe", "ignore", "pipe"],
+		env: { ...process.env, ...childEnvironmentOverrides(team, teammate, participants) },
 	});
 	teammate.process = proc;
 	teammate.alive = true;
-	teammate.busy = false;
 
-	attachJsonlReader(proc.stdout!, (line) => {
-		if (!line.trim()) return;
-		try {
-			handleTeammateEvent(team, teammate, JSON.parse(line) as JsonRecord);
-		} catch {
-			teammate.stderr += `\n[unparsed stdout] ${line}`;
-		}
-	});
 	proc.stderr?.on("data", (chunk: Buffer | string) => {
 		const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
 		teammate.stderr += text;
@@ -620,24 +411,11 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 	});
 	proc.on("exit", (code, signal) => {
 		teammate.alive = false;
-		teammate.busy = false;
-		rejectPendingRequests(teammate, new Error(`${teammate.name} exited (code=${code}, signal=${signal})`));
+		teammate.rejectReady?.(new Error(`${teammate.name} exited (code=${code}, signal=${signal})`));
 		team.statuses.set(teammate.name, status("stopped", `Exited code=${code} signal=${signal}`));
 		appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "exit", summary: `exited (code=${code}, signal=${signal})`, details: { code, signal } });
 	});
 	appendSpawnLog(team, teammate);
-}
-
-async function captureRpcSessionIdentity(teammate: TeammateState): Promise<void> {
-	const response = await sendRpc(teammate, { type: "get_state" }, 10_000);
-	await requireSuccessfulResponse(response, `read session identity from ${teammate.name}`);
-	const state = response.data as { sessionId?: unknown; sessionFile?: unknown } | undefined;
-	if (typeof state?.sessionId !== "string" || typeof state.sessionFile !== "string" || !path.isAbsolute(state.sessionFile)) {
-		throw new Error(`Teammate ${teammate.name} reported an invalid session identity`);
-	}
-	teammate.sessionId = state.sessionId;
-	teammate.sessionFile = state.sessionFile;
-	teammate.sessionMaterialized = fs.existsSync(state.sessionFile);
 }
 
 function parseHerdrPaneId(stdout: string, teammateName: string): string {
@@ -647,15 +425,15 @@ function parseHerdrPaneId(stdout: string, teammateName: string): string {
 	return paneId;
 }
 
-async function attachVisibleTeammate(
+async function attachHerdrTeammate(
 	team: TeamState,
 	teammate: TeammateState,
 	participants: string[],
 	herdrTabId: string,
-	options: RpcStartOptions,
+	options: ChildStartOptions,
 ): Promise<void> {
 	const systemPrompt = composeSystemPrompt(team.name, team.teamPrompt, teammate.name, teammate.prompt, participants, teammate.canOverseeOwnTeams);
-	const environment = childEnvironmentOverrides(team, teammate, participants, true);
+	const environment = childEnvironmentOverrides(team, teammate, participants);
 	const sessionArgs = options.sessionFile
 		? ["--session", options.sessionFile]
 		: teammate.inheritContext && !options.restartEmpty
@@ -680,17 +458,20 @@ async function attachVisibleTeammate(
 	const result = await runCommand("herdr", args);
 	teammate.paneId = parseHerdrPaneId(result.stdout, teammate.name);
 	appendSpawnLog(team, teammate);
+}
 
+/** Every child registers its delivery runtime through the parent callback; startup completes only after registration. */
+async function awaitChildRegistration(teammate: TeammateState): Promise<void> {
 	let readinessTimeout: ReturnType<typeof setTimeout> | undefined;
 	try {
 		await Promise.race([
-			teammate.visibleReady!,
+			teammate.ready!,
 			new Promise<never>((_, reject) => {
-				readinessTimeout = setTimeout(() => reject(new Error(`Timed out waiting for visible teammate ${teammate.name} readiness`)), 30_000);
+				readinessTimeout = setTimeout(() => reject(new Error(`Timed out waiting for teammate ${teammate.name} to register`)), 30_000);
 			}),
 		]);
 	} catch (error) {
-		teammate.rejectVisibleReady?.(error instanceof Error ? error : new Error(String(error)));
+		teammate.rejectReady?.(error instanceof Error ? error : new Error(String(error)));
 		throw error;
 	} finally {
 		if (readinessTimeout) clearTimeout(readinessTimeout);
@@ -702,14 +483,11 @@ async function startTeammate(
 	teammate: TeammateState,
 	participants: string[],
 	herdrTabId?: string,
-	rpcOptions: RpcStartOptions = {},
+	startOptions: ChildStartOptions = {},
 ): Promise<void> {
-	if (teammate.transport === "herdr") {
-		await attachVisibleTeammate(team, teammate, participants, herdrTabId!, rpcOptions);
-		return;
-	}
-	attachRpcTeammate(team, teammate, participants, rpcOptions);
-	if (team.id) await captureRpcSessionIdentity(teammate);
+	if (teammate.transport === "herdr") await attachHerdrTeammate(team, teammate, participants, herdrTabId!, startOptions);
+	else attachRpcTeammate(team, teammate, participants, startOptions);
+	await awaitChildRegistration(teammate);
 }
 
 function manifestMemberFromTeammate(teammate: TeammateState): TeamManifestMember {
@@ -750,7 +528,7 @@ function isHerdrPaneNotFound(error: unknown): boolean {
 	return error instanceof Error && error.message.includes('"code":"pane_not_found"');
 }
 
-async function closeVisiblePane(teammate: TeammateState): Promise<void> {
+async function closeHerdrPane(teammate: TeammateState): Promise<void> {
 	if (!teammate.paneId) return;
 	try {
 		await runCommand("herdr", ["pane", "close", teammate.paneId], 10_000);
@@ -786,7 +564,7 @@ async function shutdownTeam(team: TeamState): Promise<string[]> {
 		if (teammate.transport === "herdr") {
 			teammate.alive = false;
 			try {
-				await closeVisiblePane(teammate);
+				await closeHerdrPane(teammate);
 			} catch (error) {
 				errors.push(error instanceof Error ? error.message : String(error));
 			}
@@ -861,38 +639,29 @@ function writeJson(response: http.ServerResponse, statusCode: number, payload: J
 	response.end(body);
 }
 
-function validateVisibleChildUrl(rawUrl: string, teammateName: string): string {
+function validateChildDeliveryUrl(rawUrl: string, teammateName: string): string {
 	let url: URL;
 	try {
 		url = new URL(rawUrl);
 	} catch {
-		throw new Error(`Invalid visible teammate URL for ${teammateName}`);
+		throw new Error(`Invalid delivery URL for ${teammateName}`);
 	}
 	const port = Number(url.port);
 	if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port || !Number.isInteger(port) || port < 1 || port > 65_535 || url.pathname !== "/deliver") {
-		throw new Error(`Invalid visible teammate URL for ${teammateName}`);
+		throw new Error(`Invalid delivery URL for ${teammateName}`);
 	}
 	return url.toString();
 }
 
-function handleVisibleEvent(team: TeamState, teammate: TeammateState, event: JsonRecord): void {
-	if (event.type === "visible_startup_error") {
-		const error = new Error(String(event.error ?? "Visible teammate startup failed"));
-		teammate.rejectVisibleReady?.(error);
-		throw error;
-	}
-	if (event.type === "agent_start") teammate.busy = true;
-	if (event.type === "agent_end") teammate.busy = false;
+function handleChildEvent(team: TeamState, teammate: TeammateState, event: JsonRecord): void {
 	if (event.type === "session_shutdown") {
 		teammate.alive = false;
-		teammate.busy = false;
-		teammate.visibleUrl = undefined;
+		teammate.deliveryUrl = undefined;
 		if (event.reason === "quit") {
 			team.statuses.set(teammate.name, status("stopped", "Session shut down"));
-			appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "exit", summary: "visible session shut down", details: { reason: event.reason } });
+			appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "exit", summary: "session shut down", details: { reason: event.reason } });
 		}
 	}
-	pushRecentEvent(teammate, event);
 	const logInput = normalizeChildEvent(team.name, teammate.name, event);
 	if (logInput) appendTeamLog(team, logInput);
 }
@@ -911,35 +680,34 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 		const args = (body.args ?? {}) as JsonRecord;
 		const teammate = team.members.get(from);
 
-		if (tool === "visible_register") {
-			if (!teammate || teammate.transport !== "herdr") throw new Error(`Unknown visible teammate: ${from}`);
+		if (tool === "register") {
+			if (!teammate) throw new Error(`Unknown teammate: ${from}`);
 			const url = String(args.url ?? "");
 			const sessionId = args.sessionId;
 			const sessionFile = args.sessionFile;
 			if (typeof sessionId !== "string" || typeof sessionFile !== "string" || !path.isAbsolute(sessionFile)) {
-				throw new Error(`Visible teammate ${from} reported an invalid session identity`);
+				throw new Error(`Teammate ${from} reported an invalid session identity`);
 			}
 			try {
-				teammate.visibleUrl = validateVisibleChildUrl(url, from);
+				teammate.deliveryUrl = validateChildDeliveryUrl(url, from);
 			} catch (error) {
 				const failure = error instanceof Error ? error : new Error(String(error));
-				teammate.rejectVisibleReady?.(failure);
+				teammate.rejectReady?.(failure);
 				throw failure;
 			}
 			teammate.sessionId = sessionId;
 			teammate.sessionFile = sessionFile;
 			teammate.sessionMaterialized = fs.existsSync(sessionFile);
 			teammate.alive = true;
-			teammate.busy = false;
 			team.statuses.set(teammate.name, status("idle", "Spawned"));
-			teammate.resolveVisibleReady?.();
+			teammate.resolveReady?.();
 			writeJson(response, 200, { accepted: true, team: team.name, from });
 			return;
 		}
 
-		if (tool === "visible_event") {
-			if (!teammate || teammate.transport !== "herdr") throw new Error(`Unknown visible teammate: ${from}`);
-			handleVisibleEvent(team, teammate, (args.event ?? {}) as JsonRecord);
+		if (tool === "event") {
+			if (!teammate) throw new Error(`Unknown teammate: ${from}`);
+			handleChildEvent(team, teammate, (args.event ?? {}) as JsonRecord);
 			writeJson(response, 200, { accepted: true, team: team.name, from });
 			return;
 		}
@@ -1046,11 +814,11 @@ function restoreTeamState(owner: symbol, ownerPi: ExtensionAPI, manifest: TeamMa
 	return team;
 }
 
-function prepareVisibleTeammate(teammate: TeammateState): void {
-	teammate.transport = "herdr";
-	teammate.visibleReady = new Promise<void>((resolve, reject) => {
-		teammate.resolveVisibleReady = resolve;
-		teammate.rejectVisibleReady = reject;
+function prepareTeammateStart(teammate: TeammateState, transport: TeammateTransport): void {
+	teammate.transport = transport;
+	teammate.ready = new Promise<void>((resolve, reject) => {
+		teammate.resolveReady = resolve;
+		teammate.rejectReady = reject;
 	});
 }
 
@@ -1320,8 +1088,7 @@ export default function (pi: ExtensionAPI) {
 
 				try {
 					for (const { teammate, sessionFile } of starts) {
-						if (showOnHerdrPanes) prepareVisibleTeammate(teammate);
-						else teammate.transport = "rpc";
+						prepareTeammateStart(teammate, showOnHerdrPanes ? "herdr" : "rpc");
 						await startTeammate(team, teammate, participantNames, herdrTabId, {
 							sessionFile,
 							restartEmpty: sessionFile === undefined,
@@ -1338,7 +1105,7 @@ export default function (pi: ExtensionAPI) {
 					for (const { teammate } of starts) {
 						if (teammate.transport === "herdr") {
 							teammate.alive = false;
-							await closeVisiblePane(teammate);
+							await closeHerdrPane(teammate);
 						} else {
 							await stopRpcTeammate(teammate);
 						}

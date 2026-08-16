@@ -64,35 +64,33 @@ if (args.includes("--list-models")) {
   process.stdout.write("provider  model  context  max-out  thinking  images\nfake  fake-model  1K  1K  yes  no\n");
   process.exit(0);
 }
-const logPath = process.env.FAKE_HERDR_EVENTS;
+const logPath = process.env.PI_SIMPLE_TEAM_TEST_HERDR_EVENTS;
 function record(value) { fs.appendFileSync(logPath, JSON.stringify(value) + "\n"); }
 const sessionArgumentIndex = args.indexOf("--session");
 const sessionFile = sessionArgumentIndex === -1
-  ? path.join(process.env.FAKE_HERDR_SESSIONS, process.env.PI_SIMPLE_TEAM_MEMBER + "-" + process.pid + ".jsonl")
+  ? path.join(process.env.PI_SIMPLE_TEAM_TEST_HERDR_SESSIONS, process.env.PI_SIMPLE_TEAM_MEMBER + "-" + process.pid + ".jsonl")
   : args[sessionArgumentIndex + 1];
 const sessionId = path.basename(sessionFile, ".jsonl");
-record({ type: "pi_start", args, visible: process.env.PI_SIMPLE_TEAM_VISIBLE_CHILD === "1", sessionId, sessionFile });
-if (process.env.PI_SIMPLE_TEAM_VISIBLE_CHILD !== "1") {
-  let input = "";
-  process.stdin.setEncoding("utf8");
-  process.stdin.on("data", (chunk) => {
-    input += chunk;
-    while (input.includes("\n")) {
-      const newline = input.indexOf("\n");
-      const command = JSON.parse(input.slice(0, newline));
-      input = input.slice(newline + 1);
-      process.stdout.write(JSON.stringify({
-        type: "response",
-        id: command.id,
-        command: command.type,
-        success: true,
-        data: command.type === "get_state" ? { isStreaming: false, sessionId, sessionFile } : undefined,
-      }) + "\n");
-    }
-  });
-  process.stdin.resume();
-  return;
-}
+record({ type: "pi_start", args, sessionId, sessionFile });
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  while (input.includes("\n")) {
+    const newline = input.indexOf("\n");
+    const command = JSON.parse(input.slice(0, newline));
+    input = input.slice(newline + 1);
+    record({ type: "stdin", command: command.type, member: process.env.PI_SIMPLE_TEAM_MEMBER });
+    process.stdout.write(JSON.stringify({
+      type: "response",
+      id: command.id,
+      command: command.type,
+      success: true,
+      data: command.type === "get_state" ? { isStreaming: false, sessionId, sessionFile } : undefined,
+    }) + "\n");
+  }
+});
+process.stdin.resume();
 async function parent(tool, args) {
   record({ type: "parent", tool, args });
   const response = await fetch(process.env.PI_SIMPLE_TEAM_CALLBACK_URL, {
@@ -114,17 +112,17 @@ const server = http.createServer(async (request, response) => {
     response.end(JSON.stringify({ contextUsage: { tokens: 87_000, contextWindow: 272_000, percent: 31.985 } }));
     return;
   }
-  await parent("visible_event", { event: { type: "agent_start" } });
-  await parent("visible_event", { event: { type: "tool_execution_start", toolName: "read", toolCallId: "fake-call", args: { path: "README.md" } } });
-  await parent("visible_event", { event: { type: "tool_execution_end", toolName: "read", toolCallId: "fake-call", isError: false, result: { output: "ok" } } });
-  await parent("visible_event", { event: { type: "agent_end", messages: [] } });
+  await parent("event", { event: { type: "agent_start" } });
+  await parent("event", { event: { type: "tool_execution_start", toolName: "read", toolCallId: "fake-call", args: { path: "README.md" } } });
+  await parent("event", { event: { type: "tool_execution_end", toolName: "read", toolCallId: "fake-call", isError: false, result: { output: "ok" } } });
+  await parent("event", { event: { type: "agent_end", messages: [] } });
   response.end(JSON.stringify({ accepted: true }));
 });
 server.listen(0, "127.0.0.1", async () => {
   const address = server.address();
-  const url = process.env.FAKE_VISIBLE_BAD_REGISTER ? "http://localhost:1234/deliver" : "http://127.0.0.1:" + address.port + "/deliver";
+  const url = process.env.PI_SIMPLE_TEAM_TEST_CHILD_BAD_REGISTER ? "http://localhost:1234/deliver" : "http://127.0.0.1:" + address.port + "/deliver";
   try {
-    await parent("visible_register", { url, sessionId, sessionFile });
+    await parent("register", { url, sessionId, sessionFile });
     record({ type: "ready", url });
   } catch (error) {
     record({ type: "register_error", error: String(error) });
@@ -138,18 +136,18 @@ const fakeHerdr = String.raw`#!/usr/bin/env node
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
 const args = process.argv.slice(2);
-const logPath = process.env.FAKE_HERDR_LOG;
+const logPath = process.env.PI_SIMPLE_TEAM_TEST_HERDR_LOG;
 function record(value) { fs.appendFileSync(logPath, JSON.stringify(value) + "\n"); }
 if (args[0] === "status") {
   process.stdout.write(JSON.stringify({ server: { running: true, compatible: true } }));
   process.exit(0);
 }
 if (args[0] === "agent" && args[1] === "start") {
-  const startCountPath = process.env.FAKE_HERDR_START_COUNT;
+  const startCountPath = process.env.PI_SIMPLE_TEAM_TEST_HERDR_START_COUNT;
   const startCount = Number(fs.existsSync(startCountPath) ? fs.readFileSync(startCountPath, "utf8") : "0") + 1;
   fs.writeFileSync(startCountPath, String(startCount));
   record({ type: "start", args });
-  if (Number(process.env.FAKE_HERDR_FAIL_START ?? "0") === startCount) {
+  if (Number(process.env.PI_SIMPLE_TEAM_TEST_HERDR_FAIL_START ?? "0") === startCount) {
     process.stderr.write("planned start failure"); process.exit(1);
   }
   const separator = args.indexOf("--");
@@ -165,15 +163,15 @@ if (args[0] === "agent" && args[1] === "start") {
   const paneId = "fake-pane-" + startCount;
   const child = spawn(command[0], command.slice(1), { env: environment, detached: true, stdio: "ignore" });
   child.unref();
-  fs.appendFileSync(process.env.FAKE_HERDR_CHILDREN, JSON.stringify({ paneId, pid: child.pid }) + "\n");
+  fs.appendFileSync(process.env.PI_SIMPLE_TEAM_TEST_HERDR_CHILDREN, JSON.stringify({ paneId, pid: child.pid }) + "\n");
   process.stdout.write(JSON.stringify({ id: "fake", result: { type: "agent_started", agent: { pane_id: paneId } } }));
   process.exit(0);
 }
 if (args[0] === "pane" && args[1] === "close") {
   const paneId = args[2];
   record({ type: "close", paneId });
-  const children = (fs.existsSync(process.env.FAKE_HERDR_CHILDREN) ? fs.readFileSync(process.env.FAKE_HERDR_CHILDREN, "utf8").trim().split("\n") : []);
-  if (process.env.FAKE_HERDR_PANE_NOT_FOUND === paneId) {
+  const children = (fs.existsSync(process.env.PI_SIMPLE_TEAM_TEST_HERDR_CHILDREN) ? fs.readFileSync(process.env.PI_SIMPLE_TEAM_TEST_HERDR_CHILDREN, "utf8").trim().split("\n") : []);
+  if (process.env.PI_SIMPLE_TEAM_TEST_HERDR_PANE_NOT_FOUND === paneId) {
     for (const line of children) {
       if (!line) continue;
       const child = JSON.parse(line);
@@ -207,19 +205,19 @@ function installFakeCommands(): { directory: string; logPath: string; eventsPath
 		const executable = path.join(directory, name);
 		fs.writeFileSync(executable, content, { mode: 0o755 });
 	}
-	const previous = { path: process.env.PATH, agent: process.env.PI_CODING_AGENT_DIR, tab: process.env.HERDR_TAB_ID, pane: process.env.HERDR_PANE_ID, log: process.env.FAKE_HERDR_LOG, events: process.env.FAKE_HERDR_EVENTS, sessions: process.env.FAKE_HERDR_SESSIONS, children: process.env.FAKE_HERDR_CHILDREN, count: process.env.FAKE_HERDR_START_COUNT, fail: process.env.FAKE_HERDR_FAIL_START, bad: process.env.FAKE_VISIBLE_BAD_REGISTER, notFound: process.env.FAKE_HERDR_PANE_NOT_FOUND };
+	const previous = { path: process.env.PATH, agent: process.env.PI_CODING_AGENT_DIR, tab: process.env.HERDR_TAB_ID, pane: process.env.HERDR_PANE_ID, log: process.env.PI_SIMPLE_TEAM_TEST_HERDR_LOG, events: process.env.PI_SIMPLE_TEAM_TEST_HERDR_EVENTS, sessions: process.env.PI_SIMPLE_TEAM_TEST_HERDR_SESSIONS, children: process.env.PI_SIMPLE_TEAM_TEST_HERDR_CHILDREN, count: process.env.PI_SIMPLE_TEAM_TEST_HERDR_START_COUNT, fail: process.env.PI_SIMPLE_TEAM_TEST_HERDR_FAIL_START, bad: process.env.PI_SIMPLE_TEAM_TEST_CHILD_BAD_REGISTER, notFound: process.env.PI_SIMPLE_TEAM_TEST_HERDR_PANE_NOT_FOUND };
 	process.env.PATH = `${directory}${path.delimiter}${previous.path ?? ""}`;
 	process.env.PI_CODING_AGENT_DIR = agentDirectory;
 	process.env.HERDR_TAB_ID = "fake-tab";
 	process.env.HERDR_PANE_ID = "main-pane";
-	process.env.FAKE_HERDR_LOG = logPath;
-	process.env.FAKE_HERDR_EVENTS = eventsPath;
-	process.env.FAKE_HERDR_SESSIONS = sessionsDirectory;
-	process.env.FAKE_HERDR_CHILDREN = childrenPath;
-	process.env.FAKE_HERDR_START_COUNT = startCountPath;
-	delete process.env.FAKE_HERDR_FAIL_START;
-	delete process.env.FAKE_VISIBLE_BAD_REGISTER;
-	delete process.env.FAKE_HERDR_PANE_NOT_FOUND;
+	process.env.PI_SIMPLE_TEAM_TEST_HERDR_LOG = logPath;
+	process.env.PI_SIMPLE_TEAM_TEST_HERDR_EVENTS = eventsPath;
+	process.env.PI_SIMPLE_TEAM_TEST_HERDR_SESSIONS = sessionsDirectory;
+	process.env.PI_SIMPLE_TEAM_TEST_HERDR_CHILDREN = childrenPath;
+	process.env.PI_SIMPLE_TEAM_TEST_HERDR_START_COUNT = startCountPath;
+	delete process.env.PI_SIMPLE_TEAM_TEST_HERDR_FAIL_START;
+	delete process.env.PI_SIMPLE_TEAM_TEST_CHILD_BAD_REGISTER;
+	delete process.env.PI_SIMPLE_TEAM_TEST_HERDR_PANE_NOT_FOUND;
 	return {
 		directory,
 		logPath,
@@ -229,14 +227,14 @@ function installFakeCommands(): { directory: string; logPath: string; eventsPath
 			process.env.PI_CODING_AGENT_DIR = previous.agent;
 			process.env.HERDR_TAB_ID = previous.tab;
 			process.env.HERDR_PANE_ID = previous.pane;
-			process.env.FAKE_HERDR_LOG = previous.log;
-			process.env.FAKE_HERDR_EVENTS = previous.events;
-			process.env.FAKE_HERDR_SESSIONS = previous.sessions;
-			process.env.FAKE_HERDR_CHILDREN = previous.children;
-			process.env.FAKE_HERDR_START_COUNT = previous.count;
-			process.env.FAKE_HERDR_FAIL_START = previous.fail;
-			process.env.FAKE_VISIBLE_BAD_REGISTER = previous.bad;
-			process.env.FAKE_HERDR_PANE_NOT_FOUND = previous.notFound;
+			process.env.PI_SIMPLE_TEAM_TEST_HERDR_LOG = previous.log;
+			process.env.PI_SIMPLE_TEAM_TEST_HERDR_EVENTS = previous.events;
+			process.env.PI_SIMPLE_TEAM_TEST_HERDR_SESSIONS = previous.sessions;
+			process.env.PI_SIMPLE_TEAM_TEST_HERDR_CHILDREN = previous.children;
+			process.env.PI_SIMPLE_TEAM_TEST_HERDR_START_COUNT = previous.count;
+			process.env.PI_SIMPLE_TEAM_TEST_HERDR_FAIL_START = previous.fail;
+			process.env.PI_SIMPLE_TEAM_TEST_CHILD_BAD_REGISTER = previous.bad;
+			process.env.PI_SIMPLE_TEAM_TEST_HERDR_PANE_NOT_FOUND = previous.notFound;
 			fs.rmSync(directory, { recursive: true, force: true });
 		},
 	};
@@ -263,15 +261,15 @@ type CallbackRequest = {
 	args: JsonRecord;
 };
 
-async function startChildCallbackReceiver(failingVisibleEvents: number): Promise<{ url: string; requests: CallbackRequest[]; close: () => Promise<void> }> {
+async function startChildCallbackReceiver(failingLifecycleEvents: number): Promise<{ url: string; requests: CallbackRequest[]; close: () => Promise<void> }> {
 	const requests: CallbackRequest[] = [];
-	let remainingFailures = failingVisibleEvents;
+	let remainingFailures = failingLifecycleEvents;
 	const server = http.createServer(async (request, response) => {
 		const chunks: Buffer[] = [];
 		for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
 		const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as CallbackRequest;
 		requests.push(body);
-		if (body.tool === "visible_event" && remainingFailures > 0) {
+		if (body.tool === "event" && remainingFailures > 0) {
 			remainingFailures -= 1;
 			response.writeHead(500, { "content-type": "application/json" });
 			response.end(JSON.stringify({ error: "planned callback failure" }));
@@ -290,14 +288,13 @@ async function startChildCallbackReceiver(failingVisibleEvents: number): Promise
 	};
 }
 
-async function startVisibleChildForTest(failingVisibleEvents: number): Promise<{ handlers: Map<string, ChildHandler>; messages: JsonRecord[]; requests: CallbackRequest[]; close: () => Promise<void> }> {
-	const receiver = await startChildCallbackReceiver(failingVisibleEvents);
+async function startChildRuntimeForTest(failingLifecycleEvents: number): Promise<{ handlers: Map<string, ChildHandler>; messages: JsonRecord[]; requests: CallbackRequest[]; close: () => Promise<void> }> {
+	const receiver = await startChildCallbackReceiver(failingLifecycleEvents);
 	const config = {
 		callbackUrl: receiver.url,
 		callbackToken: "child-token",
 		teamName: "child-team",
 		teammateName: "reviewer",
-		visible: true,
 		participants: ["main", "reviewer"],
 		canOverseeOwnTeams: false,
 		interruptWaitTimeoutMilliseconds: 250,
@@ -319,7 +316,7 @@ async function startVisibleChildForTest(failingVisibleEvents: number): Promise<{
 			getSessionFile: () => "/tmp/visible-child-test-session.jsonl",
 		},
 	});
-	assert.ok(receiver.requests.some((request) => request.tool === "visible_register"));
+	assert.ok(receiver.requests.some((request) => request.tool === "register"));
 	let closed = false;
 	return {
 		handlers,
@@ -334,11 +331,148 @@ async function startVisibleChildForTest(failingVisibleEvents: number): Promise<{
 	};
 }
 
+describe("unified child runtime", () => {
+	test("a non-visible child starts the same delivery runtime and registers with the parent", async () => {
+		const child = await startChildRuntimeForTest(0);
+		try {
+			const register = child.requests.find((request) => request.tool === "register");
+			assert.ok(register, "Expected the non-visible child to register its delivery URL with the parent.");
+			assert.equal(register.args.sessionId, "visible-child-test-session-id", `Expected registration to carry the session identity. Got: ${JSON.stringify(register.args)}`);
+			assert.equal(register.args.sessionFile, "/tmp/visible-child-test-session.jsonl", `Expected registration to carry the session file. Got: ${JSON.stringify(register.args)}`);
+
+			const delivery = await fetch(String(register.args.url), {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ token: "child-token", tool: "deliver", args: { interrupt: false, formattedMessage: "hello", team: "child-team", from: "main", to: "reviewer", sentAt: "now", message: "hello" } }),
+			});
+			assert.equal(delivery.status, 200, "Expected the non-visible child to accept a parent delivery over HTTP.");
+			assert.equal(child.messages.length, 1, `Expected the delivery to become one in-session message. Got: ${JSON.stringify(child.messages)}`);
+		} finally {
+			await child.close();
+		}
+	});
+
+	test("team_spawn takes an RPC teammate's identity from registration, not a state query", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		try {
+			const spawnResult = await host.execute("team_spawn", {
+				team: "rpc-registration-team",
+				teamPrompt: "test",
+				teammates: [{ name: "scout", prompt: "wait", model: "fake/fake-model", thinking: "low" }],
+			});
+			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "ready"));
+			const piStart = lines(fake.eventsPath).find((entry) => entry.type === "pi_start");
+			assert.deepEqual(
+				spawnResult.details?.sessions,
+				{ scout: { sessionId: piStart?.sessionId, sessionFile: piStart?.sessionFile } },
+				`Expected the registration to supply the session identity. Got: ${JSON.stringify(spawnResult.details)}`,
+			);
+			assert.deepEqual(
+				lines(fake.eventsPath).filter((entry) => entry.type === "stdin"),
+				[],
+				"Expected the parent to send no stdin commands during spawn.",
+			);
+		} finally {
+			await host.shutdown();
+			fake.restore();
+		}
+	});
+
+	test("main reads an RPC teammate's context window through its delivery runtime", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		try {
+			await host.execute("team_spawn", {
+				team: "rpc-context-team",
+				teamPrompt: "test",
+				teammates: [{ name: "scout", prompt: "wait", model: "fake/fake-model", thinking: "low" }],
+			});
+			const result = await host.execute(
+				"report_context_window",
+				{ targets: ["scout"] },
+				{ getContextUsage: () => ({ tokens: 43_210, contextWindow: 200_000, percent: 21.605 }) },
+			);
+			assert.equal(
+				result.content[0]?.text,
+				"Teammate scout has used 87k tokens out of 272k available (32%).\nYou have used 43k tokens out of 200k available (22%).",
+				"Expected the RPC teammate's context report to come from its delivery runtime.",
+			);
+			assert.deepEqual(
+				lines(fake.eventsPath).filter((entry) => entry.type === "stdin"),
+				[],
+				"Expected the context query to avoid stdin RPC.",
+			);
+		} finally {
+			await host.shutdown();
+			fake.restore();
+		}
+	});
+
+	test("teamsend reaches an RPC teammate through its delivery runtime and its events flow back", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		try {
+			await host.execute("team_spawn", {
+				team: "rpc-delivery-team",
+				teamPrompt: "test",
+				teammates: [{ name: "scout", prompt: "wait", model: "fake/fake-model", thinking: "low" }],
+			});
+			await host.execute("teamsend", { team: "rpc-delivery-team", to: ["scout"], message: "check this", interrupt: false });
+			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "delivery"));
+			const delivery = lines(fake.eventsPath).find((entry) => entry.type === "delivery")!;
+			const deliveryArgs = (delivery.body as JsonRecord).args as JsonRecord;
+			assert.equal(deliveryArgs.message, "check this", `Expected the HTTP delivery to carry the message. Got: ${JSON.stringify(delivery)}`);
+			await waitFor(() => lines(fake.eventsPath).filter((entry) => entry.type === "parent" && entry.tool === "event").length === 4);
+			await new Promise((resolve) => setTimeout(resolve, 25));
+
+			const log = await host.execute("teamlog", { team: "rpc-delivery-team" });
+			assert.match(log.content[0].text, /deliver/);
+			assert.match(log.content[0].text, /agent_start/);
+			assert.match(log.content[0].text, /tool_start/);
+			assert.match(log.content[0].text, /agent_end/);
+			assert.deepEqual(
+				lines(fake.eventsPath).filter((entry) => entry.type === "stdin"),
+				[],
+				"Expected message delivery to avoid stdin RPC.",
+			);
+		} finally {
+			await host.shutdown();
+			fake.restore();
+		}
+	});
+
+	test("an interrupting send carries the interrupt flag to the RPC teammate's runtime", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		try {
+			await host.execute("team_spawn", {
+				team: "rpc-interrupt-team",
+				teamPrompt: "test",
+				teammates: [{ name: "scout", prompt: "wait", model: "fake/fake-model", thinking: "low" }],
+			});
+			await host.execute("teamsend", { team: "rpc-interrupt-team", to: ["scout"], message: "drop everything", interrupt: true });
+			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "delivery"));
+			const delivery = lines(fake.eventsPath).find((entry) => entry.type === "delivery")!;
+			const deliveryArgs = (delivery.body as JsonRecord).args as JsonRecord;
+			assert.equal(deliveryArgs.interrupt, true, `Expected the delivery to carry interrupt=true. Got: ${JSON.stringify(delivery)}`);
+			assert.deepEqual(
+				lines(fake.eventsPath).filter((entry) => entry.type === "stdin"),
+				[],
+				"Expected the interrupt to ride the delivery instead of a stdin abort.",
+			);
+		} finally {
+			await host.shutdown();
+			fake.restore();
+		}
+	});
+});
+
 describe("visible Herdr teammates", () => {
 	test("exposes its current context usage to the parent", async () => {
-		const child = await startVisibleChildForTest(0);
+		const child = await startChildRuntimeForTest(0);
 		try {
-			const register = child.requests.find((request) => request.tool === "visible_register");
+			const register = child.requests.find((request) => request.tool === "register");
 			assert.ok(register, "Expected the visible teammate to register its callback URL.");
 			const response = await fetch(String(register.args.url), {
 				method: "POST",
@@ -358,10 +492,10 @@ describe("visible Herdr teammates", () => {
 	});
 
 	test("bounds an interrupted delivery when agent_settled never arrives", async () => {
-		const child = await startVisibleChildForTest(0);
+		const child = await startChildRuntimeForTest(0);
 		try {
 			await child.handlers.get("agent_start")?.({}, { abort: () => undefined });
-			const register = child.requests.find((request) => request.tool === "visible_register");
+			const register = child.requests.find((request) => request.tool === "register");
 			assert.ok(register);
 			const response = await fetch(String(register.args.url), {
 				method: "POST",
@@ -369,17 +503,17 @@ describe("visible Herdr teammates", () => {
 				body: JSON.stringify({ token: "child-token", tool: "deliver", args: { interrupt: true, formattedMessage: "message", team: "child-team", from: "main", to: "reviewer", sentAt: "now", message: "message" } }),
 			});
 			assert.equal(response.status, 500);
-			assert.match(await response.text(), /Timed out waiting for visible child to settle after interrupt/);
+			assert.match(await response.text(), /Timed out waiting for the child to settle after interrupt/);
 		} finally {
 			await child.close();
 		}
 	});
 
 	test("resolves an interrupted delivery when session shutdown replaces agent_settled", async () => {
-		const child = await startVisibleChildForTest(0);
+		const child = await startChildRuntimeForTest(0);
 		try {
 			await child.handlers.get("agent_start")?.({}, { abort: () => undefined });
-			const register = child.requests.find((request) => request.tool === "visible_register");
+			const register = child.requests.find((request) => request.tool === "register");
 			assert.ok(register);
 			const delivery = fetch(String(register.args.url), {
 				method: "POST",
@@ -395,13 +529,13 @@ describe("visible Herdr teammates", () => {
 	});
 
 	test("retries lifecycle callbacks without reordering events", async () => {
-		const child = await startVisibleChildForTest(2);
+		const child = await startChildRuntimeForTest(2);
 		try {
 			await child.handlers.get("agent_start")?.({}, { abort: () => undefined });
 			await child.handlers.get("agent_end")?.({ messages: [] });
-			await waitFor(() => child.requests.filter((request) => request.tool === "visible_event").length === 4);
+			await waitFor(() => child.requests.filter((request) => request.tool === "event").length === 4);
 			assert.deepEqual(
-				child.requests.filter((request) => request.tool === "visible_event").map((request) => ((request.args.event as JsonRecord).type)),
+				child.requests.filter((request) => request.tool === "event").map((request) => ((request.args.event as JsonRecord).type)),
 				["agent_start", "agent_start", "agent_start", "agent_end"],
 			);
 		} finally {
@@ -410,11 +544,11 @@ describe("visible Herdr teammates", () => {
 	});
 
 	test("fails a later delivery after the final lifecycle callback failure", async () => {
-		const child = await startVisibleChildForTest(3);
+		const child = await startChildRuntimeForTest(3);
 		try {
 			await child.handlers.get("agent_start")?.({}, { abort: () => undefined });
-			await waitFor(() => child.requests.filter((request) => request.tool === "visible_event").length === 3);
-			const register = child.requests.find((request) => request.tool === "visible_register");
+			await waitFor(() => child.requests.filter((request) => request.tool === "event").length === 3);
+			const register = child.requests.find((request) => request.tool === "register");
 			assert.ok(register);
 			const response = await fetch(String(register.args.url), {
 				method: "POST",
@@ -422,7 +556,7 @@ describe("visible Herdr teammates", () => {
 				body: JSON.stringify({ token: "child-token", tool: "deliver", args: { interrupt: false, formattedMessage: "message", team: "child-team", from: "main", to: "reviewer", sentAt: "now", message: "message" } }),
 			});
 			assert.equal(response.status, 500);
-			assert.match(await response.text(), /Visible lifecycle callback failed: team runtime rejected visible_event/);
+			assert.match(await response.text(), /Lifecycle callback failed: team runtime rejected event/);
 		} finally {
 			await child.close();
 		}
@@ -560,8 +694,6 @@ describe("visible Herdr teammates", () => {
 			resumingHost = new ExtensionHost();
 			const resumeResult = await resumingHost.execute("team_resume", { team: teamId });
 			assert.deepEqual(resumeResult.details?.resumed, ["reviewer"], `Expected the visible member to remain resumable. Got: ${JSON.stringify(resumeResult.details)}`);
-			const piStarts = lines(fake.eventsPath).filter((entry) => entry.type === "pi_start");
-			assert.equal(piStarts.at(-1)?.visible, false, `Expected default resume to use RPC. Got: ${JSON.stringify(piStarts)}`);
 			assert.equal(lines(fake.logPath).filter((entry) => entry.type === "start").length, 1, "Expected default resume not to open another Herdr pane.");
 		} finally {
 			await resumingHost?.shutdown();
@@ -622,7 +754,6 @@ describe("visible Herdr teammates", () => {
 			assert.equal(startArgs.includes("--model"), true);
 			assert.equal(startArgs.includes("--thinking"), true);
 			assert.equal(startArgs.includes("--system-prompt"), true);
-			assert.ok(startArgs.includes("PI_SIMPLE_TEAM_VISIBLE_CHILD=1"));
 			assert.equal(startArgs.some((argument) => argument.startsWith("PATH=")), false);
 			assert.equal(startArgs.includes("HERDR_PANE_ID=main-pane"), false);
 
@@ -630,7 +761,7 @@ describe("visible Herdr teammates", () => {
 			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "parent" && (entry.args as JsonRecord)?.event && ((entry.args as JsonRecord).event as JsonRecord).type === "agent_end"));
 			await new Promise((resolve) => setTimeout(resolve, 25));
 			const forwardedEvents = lines(fake.eventsPath)
-				.filter((entry) => entry.type === "parent" && entry.tool === "visible_event")
+				.filter((entry) => entry.type === "parent" && entry.tool === "event")
 				.map((entry) => ((entry.args as JsonRecord).event as JsonRecord).type);
 			assert.deepEqual(forwardedEvents, ["agent_start", "tool_execution_start", "tool_execution_end", "agent_end"]);
 			const log = await host.execute("teamlog", { team: "visible-team" });
@@ -657,7 +788,7 @@ describe("visible Herdr teammates", () => {
 				showOnHerdrPanes: true,
 				teammates: [{ name: "reviewer", prompt: "wait", model: "fake/fake-model", thinking: "low" }],
 			});
-			process.env.FAKE_HERDR_PANE_NOT_FOUND = "fake-pane-1";
+			process.env.PI_SIMPLE_TEAM_TEST_HERDR_PANE_NOT_FOUND = "fake-pane-1";
 
 			await host.execute("team_shutdown", { team: "externally-closed-team" });
 			assert.deepEqual(lines(fake.logPath).filter((entry) => entry.type === "close"), [{ type: "close", paneId: "fake-pane-1" }]);
@@ -669,7 +800,7 @@ describe("visible Herdr teammates", () => {
 
 	test("closes a pane when visible-child readiness fails", async () => {
 		const fake = installFakeCommands();
-		process.env.FAKE_VISIBLE_BAD_REGISTER = "1";
+		process.env.PI_SIMPLE_TEAM_TEST_CHILD_BAD_REGISTER = "1";
 		const host = new ExtensionHost();
 		try {
 			await assert.rejects(() => host.execute("team_spawn", {
@@ -677,7 +808,7 @@ describe("visible Herdr teammates", () => {
 				teamPrompt: "test",
 				showOnHerdrPanes: true,
 				teammates: [{ name: "broken", prompt: "wait", model: "fake/fake-model", thinking: "low" }],
-			}), /Invalid visible teammate URL/);
+			}), /Invalid delivery URL/);
 			assert.deepEqual(lines(fake.logPath).filter((entry) => entry.type === "close"), [{ type: "close", paneId: "fake-pane-1" }]);
 		} finally {
 			await host.shutdown();
@@ -687,7 +818,7 @@ describe("visible Herdr teammates", () => {
 
 	test("rolls back already-created panes after a later Herdr start fails", async () => {
 		const fake = installFakeCommands();
-		process.env.FAKE_HERDR_FAIL_START = "2";
+		process.env.PI_SIMPLE_TEAM_TEST_HERDR_FAIL_START = "2";
 		const host = new ExtensionHost();
 		try {
 			await assert.rejects(() => host.execute("team_spawn", {

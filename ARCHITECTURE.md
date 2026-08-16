@@ -65,7 +65,7 @@ RPC teammates start with `pi --mode rpc`. Children disable discovered extensions
 
 A normal child registers only parent-team member tools. A child with `canOverseeOwnTeams: true` also registers manager tools in the same runtime.
 
-Each RPC child receives a `get_state` readiness query. A visible child reports the same identity during callback registration.
+Every child runs the same runtime regardless of transport: it starts a local delivery server, then registers that server and its session identity through the parent callback. Startup completes only after registration.
 
 The parent records every teammate session ID and absolute session file path before it writes the active manifest. The tool result returns these identities.
 
@@ -136,9 +136,11 @@ When a parent stops an overseeing RPC teammate, it waits for that process to exi
 
 The parent extension runtime owns live team state, status maps, delivery queues, and the process-local event log.
 
-Child tools call an authenticated localhost callback server. The callback supplies messaging, statuses, current roster data, and visible-child lifecycle events.
+All parent-child IPC is authenticated localhost HTTP. Child tools and lifecycle events call the parent callback server. The parent sends messages and context-window queries to each child's registered delivery server.
 
-Teammate messages are pushed into recipient sessions. Idle teammates wake immediately, while busy teammates receive queued delivery after their current work settles.
+The transport decides only how a child process starts and stops: `pi --mode rpc` plus SIGTERM, or a Herdr pane plus pane close. Message delivery, events, and queries are identical across transports.
+
+Teammate messages are pushed into recipient sessions. Idle teammates wake immediately, while busy teammates receive queued delivery after their current work settles. The child handles interrupt deliveries itself: it aborts its active turn, waits to settle, then takes the message.
 
 ## The `/team` dashboard reads owner-bound live snapshots
 

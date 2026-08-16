@@ -7,8 +7,8 @@ import { renderTeamMessage } from "./render.ts";
 type JsonRecord = Record<string, unknown>;
 
 const teamMessageType = "pi-simple-team";
-const defaultVisibleInterruptWaitTimeoutMilliseconds = 25_000;
-const visibleLifecycleRetryAttempts = 3;
+const defaultInterruptWaitTimeoutMilliseconds = 25_000;
+const lifecycleCallbackRetryAttempts = 3;
 
 export interface ChildRuntimeConfig {
 	callbackUrl: string;
@@ -16,7 +16,6 @@ export interface ChildRuntimeConfig {
 	teamId?: string;
 	teamName: string;
 	teammateName: string;
-	visible: boolean;
 	participants: string[];
 	canOverseeOwnTeams: boolean;
 	interruptWaitTimeoutMilliseconds?: number;
@@ -45,7 +44,6 @@ function readRequiredChildRuntimeConfig(): ChildRuntimeConfig {
 		teamId,
 		teamName: process.env.PI_SIMPLE_TEAM_TEAM_NAME ?? teamId,
 		teammateName: requiredEnvironmentVariable("PI_SIMPLE_TEAM_MEMBER"),
-		visible: process.env.PI_SIMPLE_TEAM_VISIBLE_CHILD === "1",
 		participants: readParticipants(),
 		canOverseeOwnTeams: process.env.PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS === "1",
 	};
@@ -99,7 +97,7 @@ async function readJsonBody(request: http.IncomingMessage): Promise<JsonRecord> 
 	return JSON.parse(Buffer.concat(chunks).toString("utf8")) as JsonRecord;
 }
 
-interface VisibleDelivery {
+interface ChildDelivery {
 	team: string;
 	from: string;
 	to: string;
@@ -109,7 +107,8 @@ interface VisibleDelivery {
 	interrupt: boolean;
 }
 
-function startVisibleChild(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
+/** The one live runtime every child gets: a delivery server, parent registration, and lifecycle callbacks. */
+function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 	let server: http.Server | undefined;
 	let activeContext: ExtensionContext | undefined;
 	let idle = true;
@@ -120,12 +119,12 @@ function startVisibleChild(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 	const notifyParent = (event: JsonRecord): Promise<void> => {
 		lifecycleQueue = lifecycleQueue.then(async () => {
 			if (lifecycleError) return;
-			for (let attempt = 1; attempt <= visibleLifecycleRetryAttempts; attempt += 1) {
+			for (let attempt = 1; attempt <= lifecycleCallbackRetryAttempts; attempt += 1) {
 				try {
-					await callParent(config, "visible_event", { event });
+					await callParent(config, "event", { event });
 					return;
 				} catch (error) {
-					if (attempt === visibleLifecycleRetryAttempts) lifecycleError = error instanceof Error ? error : new Error(String(error));
+					if (attempt === lifecycleCallbackRetryAttempts) lifecycleError = error instanceof Error ? error : new Error(String(error));
 				}
 			}
 		});
@@ -138,8 +137,8 @@ function startVisibleChild(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 			let resolveIdle: () => void;
 			const timeout = setTimeout(() => {
 				idleWaiters = idleWaiters.filter((waiter) => waiter !== resolveIdle);
-				reject(new Error("Timed out waiting for visible child to settle after interrupt"));
-			}, config.interruptWaitTimeoutMilliseconds ?? defaultVisibleInterruptWaitTimeoutMilliseconds);
+				reject(new Error("Timed out waiting for the child to settle after interrupt"));
+			}, config.interruptWaitTimeoutMilliseconds ?? defaultInterruptWaitTimeoutMilliseconds);
 			resolveIdle = (): void => {
 				clearTimeout(timeout);
 				resolve();
@@ -194,8 +193,8 @@ function startVisibleChild(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 						return;
 					}
 
-					const delivery = body.args as unknown as VisibleDelivery;
-					if (lifecycleError) throw new Error(`Visible lifecycle callback failed: ${lifecycleError.message}`);
+					const delivery = body.args as unknown as ChildDelivery;
+					if (lifecycleError) throw new Error(`Lifecycle callback failed: ${lifecycleError.message}`);
 					if (delivery.interrupt && activeContext) {
 						activeContext.abort();
 						await waitForIdle();
@@ -228,10 +227,10 @@ function startVisibleChild(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 			server!.listen(0, "127.0.0.1", () => resolve());
 		});
 		const address = server.address();
-		if (!address || typeof address === "string") throw new Error("Visible teammate server did not get a port");
+		if (!address || typeof address === "string") throw new Error("Child delivery server did not get a port");
 
 		try {
-			await callParent(config, "visible_register", {
+			await callParent(config, "register", {
 				url: `http://127.0.0.1:${address.port}/deliver`,
 				sessionId: context.sessionManager.getSessionId(),
 				sessionFile: context.sessionManager.getSessionFile(),
@@ -276,7 +275,7 @@ export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig)
 			),
 		};
 	});
-	if (config.visible) startVisibleChild(pi, config);
+	startChildRuntime(pi, config);
 
 	pi.registerTool(
 		defineTool({
