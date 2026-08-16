@@ -30,7 +30,7 @@ The admiral sets fleet-wide policy in one line ("all first mates on model X at t
 
 ## Commissioning a first mate
 
-1. Tell it to load `ai-to-ai`, the files it references, and `firstmate.md`; inform him about the chain-of-command, and that you are its captain: direction, approvals, and escalations flow between it and you.
+1. Tell it to load `ai-to-ai`, the files it references, and `firstmate.md`; inform it about the chain-of-command, and that you are its captain: direction, approvals, and escalations flow between it and you.
 2. Give it the fleet's why, the slice that is its ship's mission, and the bottom-line added value the fleet needs back from it. Do not prescribe the how — the over-fitting warnings in `ai-to-ai` apply equally all the way down, including to first mates.
 
 ## How a captain communicates with the admiral
@@ -51,6 +51,11 @@ Terse steering is normal admiral behavior — "pass that down", a bare link, "ye
 
 ## Keep the fleet afloat
 
-Your own context window should stay lean — but you are the fleet's memory, so watch it anyway. The "Keep the ship afloat" instruction in firstmate.md — including the handoff-skill instruction for delegates heading toward their cap — is each first mate's duty on its own ship. You hold the same duty one level up: the first mates are your delegates. Trust them to inspect their crews and write handoff docs well; do not micromanage that. Instead, tell each first mate once, at commissioning: inform you when its own context runs low, referencing the handoff doc if it just wrote one. Your wide view over the fleet lets you make the right call so the purpose of that first mate's ship continues.
+Your own context window is important. The "Keep the ship afloat" instruction in firstmate.md — including the handoff-skill instruction for delegates heading toward their cap — is each first mate's duty on its own ship. You hold the same duty one level up: the first mates are your delegates. Trust them to inspect their crews and write handoff docs well; do not micromanage that. Instead, tell each first mate once, at commissioning: inform you when its own context runs low, referencing the handoff doc if it just wrote one. Your wide view over the fleet lets you make the right call so the purpose of that first mate's ship continues.
 
-Any memory you persist covers only your unique scope: the in-between of ships and the link to the admiral. Reference other docs; do not repeat their contents.
+**Easy ways to squeeze more out of your context window:**
+- Do not send mini-summarizations after every team exchange. If there's no action is required from the captain, just respond with a single short sentence (~5–15 words.) 
+- Use fluffless language when sending messages to teammates. Be clear but do no padding.
+
+**When writing a handoff doc:**
+Any memory you persist should cover only your unique scope: the in-between of ships and the link to the admiral. Reference other docs; do not repeat their contents.

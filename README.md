@@ -55,17 +55,45 @@ You:
 Main agent:
 > Pair created. They'll loop through it together. They'll let me know when they're done.
 
+<p align="center">
+  <img
+    src="screenshots/abstract-tool-output-preview.png"
+    width="640"
+    alt="A team appears, receives direction, and starts working"
+  >
+</p>
+
+<div align="center"><em>Spawn, direct, and follow a team from the normal Pi conversation.</em></div>
+
 <br>
 
-![Spawning a designer–adversary team, checking its status, and sending both teammates a shared instruction](screenshots/1.png)
+<details>
+<summary><strong>See real tool outputs</strong></summary>
 
-<div align="center"><em><code>pi-simple-team</code> in the TUI.</em></div>
+<br>
+
+<p align="center">
+  <a href="screenshots/1.png"><img src="screenshots/1.png" width="48%" alt="Pi tool outputs for spawning a team, sending instructions, and checking status"></a>
+  <a href="screenshots/2.png"><img src="screenshots/2.png" width="48%" alt="Pi tool outputs for team status and the timestamped event log"></a>
+</p>
+<p align="center">
+  <a href="screenshots/team-status-multiple.png"><img src="screenshots/team-status-multiple.png" width="48%" alt="Status outputs for several parallel teams"></a>
+  <a href="screenshots/team-log-multiple.png"><img src="screenshots/team-log-multiple.png" width="48%" alt="Event log outputs for two parallel teams"></a>
+</p>
+
+</details>
 
 ### Watch a live team with `/team`.
 
 `/team` is for you, not another agent tool. It gives you a live view of the room without turning the main agent into a status relay.
 
-The command opens an overlay rolling recent statuses, messages, and a separate event log. 
+The command opens an overlay rolling recent statuses, messages, and a separate event log.
+
+<a href="screenshots/team-view.png">
+  <img src="screenshots/team-view.png" width="100%" alt="The live team dashboard showing statuses, messages, and recent events">
+</a>
+
+<div align="center"><em>The live, read-only <code>/team</code> dashboard.</em></div>
 
 
 ## The mechanics
@@ -120,11 +148,6 @@ You can stop babysitting everyone's context window.
 ### 📡 Live, zero-cost observability 
 
 Your main uses `teamlog` when it needs to understand the chain of events in high granularity: a timestamped, filterable timeline of messages, tool calls, and lifecycle events.
-
-<br>
-
-![A live team status map above its timestamped event log](screenshots/2.png)
-<div align="center"><em>Visual representation of the team log.</em></div>
 
 ### 🪟 Herdr Mode
 
