@@ -55,13 +55,7 @@ You:
 Main agent:
 > Pair created. They'll loop through it together. They'll let me know when they're done.
 
-<p align="center">
-  <img
-    src="screenshots/abstract-tool-output-preview.png"
-    width="640"
-    alt="A team appears, receives direction, and starts working"
-  >
-</p>
+[![A team appears, receives direction, and starts working](screenshots/abstract-tool-output-preview-640.png)](screenshots/abstract-tool-output-preview.png)
 
 <div align="center"><em>Spawn, direct, and follow a team from the normal Pi conversation.</em></div>
 
