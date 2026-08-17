@@ -75,6 +75,7 @@ interface TeammateState {
 interface TeamState {
 	owner: symbol;
 	ownerPi: ExtensionAPI;
+	parentPiExecutable: string;
 	id?: string;
 	name: string;
 	projectDirectory?: string;
@@ -396,7 +397,7 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 		"--system-prompt",
 		composeSystemPrompt(team.name, team.teamPrompt, teammate.name, teammate.prompt, participants, teammate.canOverseeOwnTeams),
 	];
-	const proc = childProcess.spawn("pi", args, {
+	const proc = childProcess.spawn(team.parentPiExecutable, args, {
 		cwd: team.projectDirectory ?? process.cwd(),
 		stdio: ["pipe", "ignore", "pipe"],
 		env: { ...process.env, ...childEnvironmentOverrides(team, teammate, participants) },
@@ -446,7 +447,7 @@ async function attachHerdrTeammate(
 	}
 	args.push(
 		"--",
-		"pi",
+		team.parentPiExecutable,
 		...sessionArgs,
 		"--no-extensions",
 		"-e",
@@ -777,10 +778,11 @@ function teammateSchema(modelGuidance: string) {
 	});
 }
 
-function restoreTeamState(owner: symbol, ownerPi: ExtensionAPI, manifest: TeamManifest, lease: TeamLease): TeamState {
+function restoreTeamState(owner: symbol, ownerPi: ExtensionAPI, parentPiExecutable: string, manifest: TeamManifest, lease: TeamLease): TeamState {
 	const team: TeamState = {
 		owner,
 		ownerPi,
+		parentPiExecutable,
 		id: manifest.id,
 		name: manifest.name,
 		projectDirectory: manifest.projectDirectory,
@@ -839,6 +841,8 @@ export default function (pi: ExtensionAPI) {
 		if (!childRuntimeConfig.canOverseeOwnTeams) return;
 	}
 
+	const parentPiExecutable = process.argv[1];
+	if (!parentPiExecutable) throw new Error("pi-simple-team could not locate the parent Pi executable");
 	const owner = Symbol("pi-simple-team-owner");
 	const sessionTeammateRoster = childRuntimeConfig?.participants ?? [];
 	pi.registerMessageRenderer(teamMessageType, (message, _options, theme) => renderTeamMessage(message, theme, getMarkdownTheme(), sessionTeammateRoster));
@@ -912,6 +916,7 @@ export default function (pi: ExtensionAPI) {
 					const team: TeamState = {
 						owner,
 						ownerPi: pi,
+						parentPiExecutable,
 						id: teamId,
 						name: teamName,
 						projectDirectory,
@@ -1063,7 +1068,7 @@ export default function (pi: ExtensionAPI) {
 					const lease = claimTeamLease(manifest.id, mainSessionId);
 					try {
 						await ensureCallbackServer();
-						team = restoreTeamState(owner, pi, manifest, lease);
+						team = restoreTeamState(owner, pi, parentPiExecutable, manifest, lease);
 						teams.set(team.id!, team);
 					} catch (error) {
 						releaseTeamLease(lease);

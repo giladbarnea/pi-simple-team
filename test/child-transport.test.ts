@@ -71,7 +71,7 @@ const sessionFile = sessionArgumentIndex === -1
   ? path.join(process.env.PI_SIMPLE_TEAM_TEST_HERDR_SESSIONS, process.env.PI_SIMPLE_TEAM_MEMBER + "-" + process.pid + ".jsonl")
   : args[sessionArgumentIndex + 1];
 const sessionId = path.basename(sessionFile, ".jsonl");
-record({ type: "pi_start", args, sessionId, sessionFile });
+record({ type: "pi_start", executable: process.argv[1], args, sessionId, sessionFile });
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -130,6 +130,12 @@ server.listen(0, "127.0.0.1", async () => {
   }
 });
 process.on("SIGTERM", () => { server.close(() => process.exit(0)); });
+`;
+
+const pathPiScript = String.raw`#!/usr/bin/env node
+const fs = require("node:fs");
+fs.appendFileSync(process.env.PI_SIMPLE_TEAM_TEST_HERDR_EVENTS, JSON.stringify({ type: "path_pi_start" }) + "\n");
+process.exit(1);
 `;
 
 const fakeHerdr = String.raw`#!/usr/bin/env node
@@ -191,7 +197,7 @@ if (args[0] === "pane" && args[1] === "close") {
 process.stderr.write("unexpected fake Herdr command: " + args.join(" ")); process.exit(1);
 `;
 
-function installFakeCommands(): { directory: string; logPath: string; eventsPath: string; restore: () => void } {
+function installFakeCommands(): { directory: string; logPath: string; eventsPath: string; parentPiExecutable: string; restore: () => void } {
 	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-herdr-test-"));
 	const logPath = path.join(directory, "herdr.log");
 	const eventsPath = path.join(directory, "events.log");
@@ -199,13 +205,15 @@ function installFakeCommands(): { directory: string; logPath: string; eventsPath
 	const startCountPath = path.join(directory, "start-count");
 	const sessionsDirectory = path.join(directory, "sessions");
 	const agentDirectory = path.join(directory, "agent");
+	const parentPiExecutable = path.join(directory, "parent-pi");
 	fs.mkdirSync(sessionsDirectory);
 	fs.mkdirSync(agentDirectory);
-	for (const [name, content] of [["pi", fakePi], ["herdr", fakeHerdr]] as const) {
+	for (const [name, content] of [["parent-pi", fakePi], ["pi", pathPiScript], ["herdr", fakeHerdr]] as const) {
 		const executable = path.join(directory, name);
 		fs.writeFileSync(executable, content, { mode: 0o755 });
 	}
-	const previous = { path: process.env.PATH, agent: process.env.PI_CODING_AGENT_DIR, tab: process.env.HERDR_TAB_ID, pane: process.env.HERDR_PANE_ID, log: process.env.PI_SIMPLE_TEAM_TEST_HERDR_LOG, events: process.env.PI_SIMPLE_TEAM_TEST_HERDR_EVENTS, sessions: process.env.PI_SIMPLE_TEAM_TEST_HERDR_SESSIONS, children: process.env.PI_SIMPLE_TEAM_TEST_HERDR_CHILDREN, count: process.env.PI_SIMPLE_TEAM_TEST_HERDR_START_COUNT, fail: process.env.PI_SIMPLE_TEAM_TEST_HERDR_FAIL_START, bad: process.env.PI_SIMPLE_TEAM_TEST_CHILD_BAD_REGISTER, notFound: process.env.PI_SIMPLE_TEAM_TEST_HERDR_PANE_NOT_FOUND };
+	const previous = { executable: process.argv[1]!, path: process.env.PATH, agent: process.env.PI_CODING_AGENT_DIR, tab: process.env.HERDR_TAB_ID, pane: process.env.HERDR_PANE_ID, log: process.env.PI_SIMPLE_TEAM_TEST_HERDR_LOG, events: process.env.PI_SIMPLE_TEAM_TEST_HERDR_EVENTS, sessions: process.env.PI_SIMPLE_TEAM_TEST_HERDR_SESSIONS, children: process.env.PI_SIMPLE_TEAM_TEST_HERDR_CHILDREN, count: process.env.PI_SIMPLE_TEAM_TEST_HERDR_START_COUNT, fail: process.env.PI_SIMPLE_TEAM_TEST_HERDR_FAIL_START, bad: process.env.PI_SIMPLE_TEAM_TEST_CHILD_BAD_REGISTER, notFound: process.env.PI_SIMPLE_TEAM_TEST_HERDR_PANE_NOT_FOUND };
+	process.argv[1] = parentPiExecutable;
 	process.env.PATH = `${directory}${path.delimiter}${previous.path ?? ""}`;
 	process.env.PI_CODING_AGENT_DIR = agentDirectory;
 	process.env.HERDR_TAB_ID = "fake-tab";
@@ -222,7 +230,9 @@ function installFakeCommands(): { directory: string; logPath: string; eventsPath
 		directory,
 		logPath,
 		eventsPath,
+		parentPiExecutable,
 		restore: () => {
+			process.argv[1] = previous.executable;
 			process.env.PATH = previous.path;
 			process.env.PI_CODING_AGENT_DIR = previous.agent;
 			process.env.HERDR_TAB_ID = previous.tab;
@@ -349,6 +359,24 @@ describe("unified child runtime", () => {
 			assert.equal(child.messages.length, 1, `Expected the delivery to become one in-session message. Got: ${JSON.stringify(child.messages)}`);
 		} finally {
 			await child.close();
+		}
+	});
+
+	test("RPC teammates use the parent Pi executable instead of PATH", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		try {
+			await host.execute("team_spawn", {
+				team: "rpc-parent-pi-team",
+				teamPrompt: "test",
+				teammates: [{ name: "scout", prompt: "wait", model: "fake/fake-model", thinking: "low" }],
+			});
+			const piStart = lines(fake.eventsPath).find((entry) => entry.type === "pi_start");
+			assert.equal(piStart?.executable, fake.parentPiExecutable, "Expected the RPC teammate to use the parent Pi executable.");
+			assert.equal(lines(fake.eventsPath).some((entry) => entry.type === "path_pi_start"), false, "Expected the RPC teammate to ignore the Pi executable from PATH.");
+		} finally {
+			await host.shutdown();
+			fake.restore();
 		}
 	});
 
@@ -598,6 +626,26 @@ describe("visible Herdr teammates", () => {
 		}
 	});
 
+	test("Herdr teammates use the parent Pi executable instead of PATH", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		try {
+			await host.execute("team_spawn", {
+				team: "visible-parent-pi-team",
+				teamPrompt: "test",
+				showOnHerdrPanes: true,
+				teammates: [{ name: "scout", prompt: "wait", model: "fake/fake-model", thinking: "low" }],
+			});
+			const start = lines(fake.logPath).find((entry) => entry.type === "start");
+			const startArgs = start?.args as string[];
+			assert.equal(startArgs[startArgs.indexOf("--") + 1], fake.parentPiExecutable, "Expected Herdr to receive the parent Pi executable.");
+			assert.equal(lines(fake.eventsPath).some((entry) => entry.type === "path_pi_start"), false, "Expected the Herdr teammate to ignore the Pi executable from PATH.");
+		} finally {
+			await host.shutdown();
+			fake.restore();
+		}
+	});
+
 	test("passes the main session fork only to inheriting visible teammates", async () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();
@@ -617,7 +665,7 @@ describe("visible Herdr teammates", () => {
 				const args = starts[index]!.args as string[];
 				return args.slice(args.indexOf("--") + 1);
 			};
-			assert.deepEqual(commandFor(0).slice(0, 5), ["pi", "--fork", fakeMainSessionFile, "--no-extensions", "-e"]);
+			assert.deepEqual(commandFor(0).slice(0, 5), [fake.parentPiExecutable, "--fork", fakeMainSessionFile, "--no-extensions", "-e"]);
 			assert.equal(commandFor(1).includes("--fork"), false);
 		} finally {
 			await host.shutdown();

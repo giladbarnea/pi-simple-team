@@ -275,12 +275,16 @@ function installFakePi(root: string): () => void {
 	const executableDirectory = path.join(root, "bin");
 	fs.mkdirSync(executableDirectory);
 	fs.mkdirSync(path.join(root, "sessions"));
-	fs.writeFileSync(path.join(executableDirectory, "pi"), fakePiScript, { mode: 0o755 });
+	const executable = path.join(executableDirectory, "pi");
+	fs.writeFileSync(executable, fakePiScript, { mode: 0o755 });
+	const previousExecutable = process.argv[1]!;
 	const previousPath = process.env.PATH;
 	const previousTestRoot = process.env.PI_SIMPLE_TEAM_TEST_ROOT;
+	process.argv[1] = executable;
 	process.env.PATH = `${executableDirectory}${path.delimiter}${previousPath ?? ""}`;
 	process.env.PI_SIMPLE_TEAM_TEST_ROOT = root;
 	return () => {
+		process.argv[1] = previousExecutable;
 		process.env.PATH = previousPath;
 		if (previousTestRoot === undefined) delete process.env.PI_SIMPLE_TEAM_TEST_ROOT;
 		else process.env.PI_SIMPLE_TEAM_TEST_ROOT = previousTestRoot;
