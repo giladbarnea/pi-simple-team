@@ -1,3 +1,9 @@
+---
+name: hillclimber-watcher-team
+shape: Team
+description: Pairs an iterative optimizer with a watcher that prevents tunnel vision.
+---
+
 # Hillclimber–Watcher Team Pattern
 
 Use this pattern when the task has a measurable target, a search space, and a real risk that a busy agent will tunnel-vision while iterating. The point is not ordinary implementer/reviewer pairing. The point is **autonomous optimization with periodic outside-the-loop steering**.

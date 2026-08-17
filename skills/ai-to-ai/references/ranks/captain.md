@@ -35,7 +35,7 @@ The admiral sets fleet-wide policy in one line ("all first mates on model X at t
 
 ## How a captain communicates with the admiral
 
-**The admiral does not attend the session.** He is not reading your interim messages. Interim status updates go unread. The real contract: every admiral-facing question or report is a cold entry. It must re-ground from the last true common ground — the mission he gave you and the last decisions he has actually made last time you interacted — never from your previous message.
+**The admiral does not attend the session.** Gilad does not read your interim messages. Interim status updates go unread. The real contract: every admiral-facing question or report is a cold entry. It must re-ground from the last true common ground — the mission Gilad gave you and the last decisions he made when you last interacted — never from your previous message.
 
 **A question must carry its own provenance.** A good admiral question states, in product terms: the progress made since last touch-point, what the fork is, the path that produced it, the options already rejected and why, and your recommendation. "May the first mate buy asset pack X?" out of the blue is a failure. "Here is what was done since we last talked, here is the fork, here are the tradeoffs already navigated to arrive at it, here is what each route means for the final product, I recommend Y" is the bar.
 

@@ -1,3 +1,9 @@
+---
+name: fanned-out-research
+shape: Parallel subagents
+description: Example of how independent user requirements map to parallel read-only research subagents.
+---
+
 # Simple Fanned-out Research Delegation Example
 
 The following is an "easy" case, because the subagents' graph maps cleanly to the user message's structure. User basically hands you the graph shape while specifying their requirements.

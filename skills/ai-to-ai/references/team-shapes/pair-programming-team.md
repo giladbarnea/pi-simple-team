@@ -1,3 +1,9 @@
+---
+name: pair-programming-team
+shape: Team
+description: Pairs peers who agree on a plan, then implement and review once.
+---
+
 # Pair-Programming Team Pattern
 
 This team structure is somewhat different in that the teammates' slots shape are vertical, not horizontal. The pair is best for taking a feature through the whole dev cycle from start to finish. This means they wear different hats as they progress through planning, implementing, reviewing and shipping. Neither is "an implementer" or "a reviewer". They're both planners engaging in dialectic discussion at first; they then fan out writing code; review each other's work; and wrap up.

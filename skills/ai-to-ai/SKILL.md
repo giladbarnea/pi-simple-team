@@ -1,6 +1,6 @@
 ---
 name: ai-to-ai
-description: Best practices for getting a step-function leap in performance from other AI agents when instructing or communicating with them. Note that Markdown docs are AI agents’ bread-and-butter, not only humans’. Load `ai-to-ai` before spawning a sub-agent, creating a team of agents, talking to a teammate agent, or writing documentation. Trigger words are “dispatch an agent”, “spawn a team”, “talk with <another ai>”, etc.
+description: Best practices for getting a step-function leap in performance from other AI agents when instructing or communicating with them. Markdown docs are AI agents’ bread-and-butter, not only humans’. Load `ai-to-ai` before spawning a sub-agent, creating a team, talking to a teammate agent, or writing documentation. Trigger words include “dispatch an agent”, “spawn a team”, and “talk with another AI”.
 ---
 
 ## Why delegate at all? Rationale
@@ -18,8 +18,6 @@ The flip side: if none of these payoffs apply, don't delegate. The anti-pattern 
 - **Dirty work**: main agent needs the side effect of some process, not the process itself. Searches, summaries, reviews, implementation of a well-defined spec. Moreoever, a few of these can potentially be fanned-out in parallel.
 - **Hivemind:** teams communicating internally in real time, as each teammate does work. Hollywood analogy: elite soldier squad or a team of spies, global channel earpieces, deployed behind enemy lines, each progresses their part, each part essential for completing the mission, global channel earpieces, consistent live updates, uncertainties surfaced to get advice, discussions to make best decisions for mission, path forward of an individual adapts in real time due to new peer finding, HQ possibly listening, warning and steering as required. 
 - **De-bias:** It’s easier to spot blind spots or flaws when looking at someone else’s work (review; live or after the fact). Related: sometimes a hypothesis is considered true only after it is confirmed independently by multiple actors (consensus).
-
-Read [`references/firstmate.md`](references/firstmate.md) when the user asks you to serve as their First Mate. Read [`references/captain.md`](references/captain.md) when the user asks you to serve as Captain of a fleet of teams. `./references/` contains additional resources for specific delegation use-cases and shapes.
 
 ---
 
@@ -77,6 +75,11 @@ The framework behind this section: [`theory-of-mind.md`](../../references/theory
 
 ## Next required reading
 
+This is a tiny state machine. Read only the references that apply based on the user’s instructions and your intent.
+
 If you are delegating work to AI’s, read [`references/subagents-vs-teams.md`](references/subagents-vs-teams.md).
-If you are a teammate, read [`references/teammate.md`](references/teammate.md).
+If you are a teammate, read [`references/ranks/teammate.md`](references/ranks/teammate.md).
 It’s possible that you are both.
+If the user asks you to serve as their first mate, read [`references/ranks/firstmate.md`](references/ranks/firstmate.md). Conversely, if the user asks you to serve as Captain of a fleet of teams, read [`references/ranks/captain.md`](references/ranks/captain.md) to understand your role AND `references/ranks/firstmate.md` to understand your direct delegates’ reality and how to best support them.
+
+`./references/` contains additional resources for specific delegation use-cases and shapes. Don’t take them as gospel. They are incomplete and evolving. Think of them as examples to generalize from.

@@ -27,6 +27,7 @@ function projectSettingsPath(cwd: string): string {
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("vstack.pi.project-trust");
+const glyphStyleByDirectory = new Map<string, GlyphStyle>();
 
 interface ProjectTrustRegistry {
 	projectSettings?: Map<string, boolean>;
@@ -52,6 +53,7 @@ export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () =>
 	const registry = projectTrustRegistry();
 	if (!registry.projectSettings) registry.projectSettings = new Map();
 	registry.projectSettings.set(projectSettingsPath(ctx.cwd), trusted);
+	glyphStyleByDirectory.clear();
 }
 
 function projectSettingsTrusted(settingsPath: string): boolean {
@@ -85,12 +87,16 @@ function asGlyphStyle(value: unknown): GlyphStyle | undefined {
 	return value === "unicode" || value === "ascii" ? value : undefined;
 }
 
-export function glyphStyle(cwd?: string): GlyphStyle {
+export function glyphStyle(cwd = process.cwd()): GlyphStyle {
+	const directory = resolve(cwd);
+	const cached = glyphStyleByDirectory.get(directory);
+	if (cached) return cached;
 	const globalOverride = readPackageConfig(GLOBAL_CONFIG_ID, cwd).globalGlyphStyleOverride;
 	const forced = asGlyphStyle(globalOverride);
-	if (forced) return forced;
-	const local = readPackageConfig(LOCAL_CONFIG_ID, cwd);
-	return asGlyphStyle(local.glyphStyle) ?? asGlyphStyle(local.treeStyle) ?? "unicode";
+	const local = forced ? {} : readPackageConfig(LOCAL_CONFIG_ID, cwd);
+	const style = forced ?? asGlyphStyle(local.glyphStyle) ?? asGlyphStyle(local.treeStyle) ?? "unicode";
+	glyphStyleByDirectory.set(directory, style);
+	return style;
 }
 
 export const GLYPHS = {

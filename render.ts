@@ -565,6 +565,8 @@ class TeamSendView {
 	private barWidth: number;
 	private expanded: boolean;
 	private theme: ThemeLike;
+	private cachedWidth?: number;
+	private cachedLines?: string[];
 
 	constructor(headerStr: string, messageText: string, barStr: string, mdTheme: MarkdownTheme, expanded: boolean, theme: ThemeLike) {
 		this.headerStr = headerStr;
@@ -577,21 +579,30 @@ class TeamSendView {
 
 	invalidate(): void {
 		this.md.invalidate();
+		this.cachedWidth = undefined;
+		this.cachedLines = undefined;
 	}
 
 	render(width: number): string[] {
+		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
 		const header = clipToWidth(this.headerStr, width);
 		const bodyWidth = Math.max(1, width - this.barWidth);
 		const bodyLines = this.md.render(bodyWidth);
 		const barred = bodyLines.map((line) => clipToWidth(`${this.barStr}${line}`, width));
-		if (this.expanded) return [header, ...barred];
+		if (this.expanded) {
+			this.cachedLines = [header, ...barred];
+			this.cachedWidth = width;
+			return this.cachedLines;
+		}
 		const shown = barred.slice(0, SEND_PREVIEW_LINES);
 		const hidden = barred.length - SEND_PREVIEW_LINES;
 		if (hidden > 0) {
 			const g = glyphs();
 			shown.push(clipToWidth(`${this.barStr}${this.theme.fg("dim", `${g.ellipsis} ${hidden} more line${hidden === 1 ? "" : "s"}${g.dot}ctrl+o to expand`)}`, width));
 		}
-		return [header, ...shown];
+		this.cachedLines = [header, ...shown];
+		this.cachedWidth = width;
+		return this.cachedLines;
 	}
 }
 
@@ -600,6 +611,8 @@ class TeamMessageView {
 	private headerLine: string;
 	private barStr: string;
 	private barWidth: number;
+	private cachedWidth?: number;
+	private cachedLines?: string[];
 
 	constructor(headerLine: string, messageText: string, barStr: string, mdTheme: MarkdownTheme) {
 		this.headerLine = headerLine;
@@ -610,12 +623,17 @@ class TeamMessageView {
 
 	invalidate(): void {
 		this.md.invalidate();
+		this.cachedWidth = undefined;
+		this.cachedLines = undefined;
 	}
 
 	render(width: number): string[] {
+		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
 		const bodyWidth = Math.max(1, width - this.barWidth);
 		const bodyLines = this.md.render(bodyWidth);
-		return [clipToWidth(this.headerLine, width), ...bodyLines.map((line) => clipToWidth(`${this.barStr}${line}`, width))];
+		this.cachedLines = [clipToWidth(this.headerLine, width), ...bodyLines.map((line) => clipToWidth(`${this.barStr}${line}`, width))];
+		this.cachedWidth = width;
+		return this.cachedLines;
 	}
 }
 

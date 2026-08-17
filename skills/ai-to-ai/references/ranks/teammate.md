@@ -1,3 +1,8 @@
+---
+name: teammate
+description: Requires frequent status updates and early escalation of scope or context risks.
+---
+
 ## Teammate {i need a word here that isn't "instructions"}
 
 **Set your own status frequently.**
