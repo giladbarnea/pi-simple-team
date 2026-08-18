@@ -1,7 +1,6 @@
 ---
 name: tech-lead
 description: Owns deep technical expertise while retaining architecture and tradeoff decisions.
-type: role
 goes_well_with: head-of-product
 ---
 

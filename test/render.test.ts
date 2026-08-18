@@ -14,8 +14,11 @@ import {
 	renderTeamToolCall,
 	renderTeamToolResult,
 	statusWordToken,
+	teamAddLines,
+	teamListLines,
 	teamLogLines,
 	teamMessageLines,
+	teamResumeLines,
 	teamSendLines,
 	teamShutdownLines,
 	teamLineText,
@@ -23,7 +26,7 @@ import {
 	teamStatusLines,
 	type ThemeLike,
 } from "../render.ts";
-import { timeOfDay, type TeamLogEntry } from "../teamlog.ts";
+import { monthDay, nowText, timeOfDay, type TeamLogEntry } from "../teamlog.ts";
 
 initTheme("dark");
 
@@ -161,6 +164,111 @@ describe("teamSpawnLines", () => {
 		const lines = teamSpawnLines(taggingTheme, "demo-team", teammates, ["implementer", "reviewer"]);
 		expect(lines[1]).toContain("«mdCode:implementer");
 		expect(lines[2]).toContain("«customMessageLabel:reviewer");
+	});
+});
+
+describe("teamAddLines", () => {
+	test("summarizes growth and lists each added teammate like Team Spawn", () => {
+		const lines = teamAddLines(identityTheme, "demo-team", [
+			{ name: "security-scout", model: "anthropic/claude-sonnet-5", thinking: "high" },
+			{ name: "release", model: "anthropic/claude-sonnet-5" },
+		], 5);
+		expect(lines[0]).toContain("Team Add demo-team");
+		expect(lines[0]).toContain("2 added");
+		expect(lines[0]).toContain("5 members");
+		expect(lines[1]).toContain("anthropic/claude-sonnet-5");
+		expect(lines[1]).toContain("high");
+		expect(lines[2]).toContain(g.tree.last.trim());
+	});
+
+	test("colors added teammate names from the session roster", () => {
+		const lines = teamAddLines(taggingTheme, "demo-team", [{ name: "scout", model: "model-a" }], 3, ["scout"]);
+		expect(lines[1]).toContain("«mdCode:scout");
+	});
+});
+
+describe("teamResumeLines", () => {
+	test("distinguishes restored history from empty restarts", () => {
+		const lines = teamResumeLines(identityTheme, "demo-team", [
+			{ name: "scout", restored: true },
+			{ name: "reviewer", restored: false },
+		], 3);
+		expect(lines[0]).toContain("Team Resume demo-team");
+		expect(lines[0]).toContain("2 of 3 resumed");
+		expect(lines[1]).toContain("resumed");
+		expect(lines[1]).toContain("history restored");
+		expect(lines[2]).toContain("restarted");
+		expect(lines[2]).toContain("empty session");
+	});
+
+	test("a full resume drops the of-count", () => {
+		const lines = teamResumeLines(identityTheme, "demo-team", [{ name: "scout", restored: true }], 1);
+		expect(lines[0]).toContain("1 resumed");
+		expect(lines[0]).not.toContain(" of ");
+	});
+
+	test("shows a muted row when nothing was stopped", () => {
+		const lines = teamResumeLines(identityTheme, "demo-team", [], 2);
+		expect(lines[0]).toContain("0 of 2 resumed");
+		expect(lines[1]).toContain("no stopped teammates");
+	});
+});
+
+describe("teamListLines", () => {
+	const teams = [
+		{
+			name: "shared-room",
+			state: "active",
+			leaseState: "claimed",
+			members: [
+				{ name: "scout", live: true, canOverseeOwnTeams: false },
+				{ name: "reviewer", live: false, canOverseeOwnTeams: true },
+			],
+			updatedAt: "2026-08-12T14:14:04.000Z",
+		},
+		{
+			name: "profitability-branch",
+			state: "dormant",
+			leaseState: "stale",
+			members: [{ name: "branch-a", live: false, canOverseeOwnTeams: false }],
+			updatedAt: "2026-08-12T15:02:00.000Z",
+			expiresAt: "2026-09-11T15:02:00.000Z",
+		},
+	];
+
+	test("renders one row per team with state, roster, and a right-aligned timestamp", () => {
+		const lines = teamListLines(identityTheme, teams).map(teamLineText);
+		expect(lines).toHaveLength(3);
+		expect(lines[0]).toContain("Team List");
+		expect(lines[0]).toContain("2 teams");
+		expect(lines[0]).toContain("1 active");
+		expect(lines[1]).toContain("shared-room");
+		expect(lines[1]).toEndWith(`updated ${nowText(new Date(teams[0]!.updatedAt))}`);
+		expect(lines[2]).toContain(g.tree.last.trim());
+		expect(lines[2]).toEndWith(`expires ${monthDay(Date.parse(teams[1]!.expiresAt!))}`);
+	});
+
+	test("colors the state word, flags a stale lease, and marks overseers", () => {
+		const lines = teamListLines(taggingTheme, teams, ["scout", "reviewer"]).map(teamLineText);
+		expect(lines[1]).toContain("«success:active");
+		expect(lines[1]).toContain("«mdCode:scout»");
+		expect(lines[1]).toContain("«customMessageLabel:reviewer»");
+		expect(lines[1]).toContain(`«dim:${g.diamond}»`);
+		expect(lines[2]).toContain("«muted:dormant");
+		expect(lines[2]).toContain("«error:stale lease»");
+	});
+
+	test("dims stopped members only in active teams", () => {
+		const lines = teamListLines(identityTheme, teams).map(teamLineText);
+		expect(lines[1]).toContain("\u001b[2mreviewer\u001b[22m");
+		expect(lines[2]).not.toContain("\u001b[2m");
+	});
+
+	test("shows an empty state when no teams exist", () => {
+		const lines = teamListLines(identityTheme, []).map(teamLineText);
+		expect(lines[0]).toContain("0 teams");
+		expect(lines[0]).not.toContain("active");
+		expect(lines[1]).toContain("no teams");
 	});
 });
 
@@ -526,6 +634,33 @@ describe("renderTeamToolResult", () => {
 		expect(plainRows[0]!.indexOf("August")).toBe(plainRows[1]!.indexOf("August"));
 		expect(plainRows[0]).toContain(g.ellipsis);
 		expect(plainRows[0]).not.toContain("no non-English prose remains");
+	});
+
+	test("translates Team Resume result details into restored and restarted rows", () => {
+		const component = renderTeamToolResult(
+			"team_resume",
+			{
+				details: {
+					team: "demo-team",
+					teammates: ["scout", "reviewer", "release"],
+					resumed: ["scout", "reviewer"],
+					restartedEmpty: ["reviewer"],
+				},
+			},
+			{ expanded: false },
+			taggingTheme,
+			{ args: { team: "session-id-demo-team" } },
+			undefined,
+			["scout", "reviewer"],
+		);
+		const lines = component.render(200);
+		expect(lines[0]).toContain("2 of 3 resumed");
+		expect(lines[1]).toContain("«mdCode:scout");
+		expect(lines[1]).toContain("«success:resumed");
+		expect(lines[1]).toContain("history restored");
+		expect(lines[2]).toContain("«customMessageLabel:reviewer»");
+		expect(lines[2]).toContain("«warning:restarted");
+		expect(lines[2]).toContain("empty session");
 	});
 
 	test("keeps a teammate color consistent across Team Status and Team Log", () => {

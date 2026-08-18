@@ -4,7 +4,7 @@ import { padVisible, stableRenderWidth, visibleLength } from "./render-support/a
 import { glyphs } from "./render-support/glyphs.ts";
 import { stackPrefix, toolLabel, treeConnector, treeGlyph, treeStem } from "./render-support/theme.ts";
 import { commandExit, plural, renderPendingCall, textContent } from "./render-support/text.ts";
-import { timeOfDay, type TeamLogEntry } from "./teamlog.ts";
+import { monthDay, nowText, timeOfDay, type TeamLogEntry } from "./teamlog.ts";
 
 export interface ThemeLike {
 	bold(text: string): string;
@@ -12,7 +12,7 @@ export interface ThemeLike {
 }
 
 interface ToolRenderContextLike {
-	args?: Record<string, unknown>;
+	args?: object;
 	cwd?: string;
 	executionStarted?: boolean;
 	invalidate?: () => void;
@@ -21,7 +21,7 @@ interface ToolRenderContextLike {
 	toolCallId?: string;
 }
 
-export type TeamToolName = "team_spawn" | "teamsend" | "teamstatus" | "teamlog" | "team_shutdown";
+export type TeamToolName = "team_spawn" | "team_list" | "team_resume" | "team_add" | "teamsend" | "teamstatus" | "teamlog" | "team_shutdown";
 
 export interface TeamStatusView {
 	word: string;
@@ -153,8 +153,11 @@ const STATUS_WORD_TOKENS: Record<string, string> = {
 	running: "success",
 	working: "success",
 	blocked: "warning",
+	restarted: "warning",
+	resumed: "success",
 	waiting: "warning",
 	available: "muted",
+	dormant: "muted",
 	idle: "muted",
 	spawned: "muted",
 	done: "dim",
@@ -209,13 +212,89 @@ interface TeammateSpecView {
 	thinking?: string;
 }
 
-export function teamSpawnLines(theme: ThemeLike, team: string, teammates: TeammateSpecView[], roster: string[] = []): string[] {
-	const header = headerLine(theme, "Team Spawn", theme.fg("accent", team), [theme.fg("muted", plural(teammates.length, "teammate"))]);
+function teammateSpecRows(theme: ThemeLike, teammates: TeammateSpecView[], roster: string[]): string[] {
 	const nameWidth = Math.max(...teammates.map((teammate) => teammate.name.length));
-	const rows = teammates.map((teammate, index) => {
+	return teammates.map((teammate, index) => {
 		const branch = index === teammates.length - 1 ? "└" : "├";
 		const spec = statLine(theme, [theme.fg("muted", teammate.model), theme.fg("dim", teammate.thinking ?? "")]);
 		return `${treeConnector(theme, branch)}${theme.fg(actorHueToken(teammate.name, roster), padVisible(teammate.name, nameWidth))}  ${spec}`;
+	});
+}
+
+export function teamSpawnLines(theme: ThemeLike, team: string, teammates: TeammateSpecView[], roster: string[] = []): string[] {
+	const header = headerLine(theme, "Team Spawn", theme.fg("accent", team), [theme.fg("muted", plural(teammates.length, "teammate"))]);
+	return [header, ...teammateSpecRows(theme, teammates, roster)];
+}
+
+export function teamAddLines(theme: ThemeLike, team: string, teammates: TeammateSpecView[], memberCount: number, roster: string[] = []): string[] {
+	const header = headerLine(theme, "Team Add", theme.fg("accent", team), [
+		theme.fg("muted", `${teammates.length} added`),
+		theme.fg("muted", plural(memberCount, "member")),
+	]);
+	return [header, ...teammateSpecRows(theme, teammates, roster)];
+}
+
+export interface ResumedMemberView {
+	name: string;
+	restored: boolean;
+}
+
+export function teamResumeLines(theme: ThemeLike, team: string, resumed: ResumedMemberView[], teammateCount: number, roster: string[] = []): string[] {
+	const countText = resumed.length === teammateCount ? `${resumed.length} resumed` : `${resumed.length} of ${teammateCount} resumed`;
+	const header = headerLine(theme, "Team Resume", theme.fg("accent", team), [theme.fg("muted", countText)]);
+	if (resumed.length === 0) return [header, `${treeConnector(theme, "└")}${theme.fg("muted", "no stopped teammates")}`];
+	const nameWidth = Math.max(...resumed.map((member) => member.name.length));
+	const wordWidth = Math.max(...resumed.map((member) => (member.restored ? "resumed" : "restarted").length));
+	const rows = resumed.map((member, index) => {
+		const branch = index === resumed.length - 1 ? "└" : "├";
+		const word = member.restored ? "resumed" : "restarted";
+		const note = member.restored ? "history restored" : "empty session";
+		return `${treeConnector(theme, branch)}${theme.fg(actorHueToken(member.name, roster), padVisible(member.name, nameWidth))}  ${theme.fg(statusWordToken(word), padVisible(word, wordWidth))}  ${theme.fg("muted", note)}`;
+	});
+	return [header, ...rows];
+}
+
+export interface TeamListMemberView {
+	name: string;
+	live: boolean;
+	canOverseeOwnTeams: boolean;
+}
+
+export interface TeamListTeamView {
+	name: string;
+	state: string;
+	leaseState: string;
+	members: TeamListMemberView[];
+	updatedAt: string;
+	expiresAt?: string;
+}
+
+function teamListMemberName(theme: ThemeLike, teamView: TeamListTeamView, member: TeamListMemberView, roster: string[]): string {
+	let name = theme.fg(actorHueToken(member.name, roster), member.name);
+	if (teamView.state === "active" && !member.live) name = `${DIM_SGR_OPEN}${name}${DIM_SGR_CLOSE}`;
+	if (member.canOverseeOwnTeams) name += theme.fg("dim", glyphs().diamond);
+	return name;
+}
+
+function teamListTimestamp(teamView: TeamListTeamView): string {
+	if (teamView.state === "dormant" && teamView.expiresAt) return `expires ${monthDay(Date.parse(teamView.expiresAt))}`;
+	return `updated ${nowText(new Date(teamView.updatedAt))}`;
+}
+
+export function teamListLines(theme: ThemeLike, teamViews: TeamListTeamView[], roster: string[] = []): TeamLine[] {
+	const activeCount = teamViews.filter((teamView) => teamView.state === "active").length;
+	const stats = [theme.fg("muted", plural(teamViews.length, "team"))];
+	if (activeCount > 0) stats.push(theme.fg("success", `${activeCount} active`));
+	const header = headerLine(theme, "Team List", "", stats);
+	if (teamViews.length === 0) return [header, `${treeConnector(theme, "└")}${theme.fg("muted", "no teams")}`];
+	const nameWidth = Math.max(...teamViews.map((teamView) => teamView.name.length));
+	const stateWidth = Math.max(...teamViews.map((teamView) => teamView.state.length));
+	const rows: TeamLine[] = teamViews.map((teamView, index) => {
+		const branch = index === teamViews.length - 1 ? "└" : "├";
+		const rosterText = teamView.members.map((member) => teamListMemberName(theme, teamView, member, roster)).join(theme.fg("muted", glyphs().dot));
+		const staleLease = teamView.leaseState === "stale" ? `${dimDot(theme)}${theme.fg("error", "stale lease")}` : "";
+		const left = `${treeConnector(theme, branch)}${theme.fg("accent", padVisible(teamView.name, nameWidth))}  ${theme.fg(statusWordToken(teamView.state), padVisible(teamView.state, stateWidth))}  ${rosterText}${staleLease}`;
+		return { left, right: theme.fg("dim", teamListTimestamp(teamView)) };
 	});
 	return [header, ...rows];
 }
@@ -646,6 +725,18 @@ function callBodyFor(tool: TeamToolName, theme: ThemeLike, args: Record<string, 
 		const teammates = (args.teammates ?? []) as unknown[];
 		return callBody(theme, "Team Spawn", accentTeam(theme, args.team), [theme.fg("muted", plural(teammates.length, "teammate"))]);
 	}
+	if (tool === "team_list") {
+		return callBody(theme, "Team List", "");
+	}
+	if (tool === "team_resume") {
+		const requested = args.teammates as string[] | undefined;
+		const scope = requested?.length ? plural(requested.length, "teammate") : "all stopped";
+		return callBody(theme, "Team Resume", accentTeam(theme, args.team), [theme.fg("muted", scope)]);
+	}
+	if (tool === "team_add") {
+		const teammates = (args.teammates ?? []) as unknown[];
+		return callBody(theme, "Team Add", accentTeam(theme, args.team), [theme.fg("muted", plural(teammates.length, "teammate"))]);
+	}
 	if (tool === "teamsend") {
 		const message = String(args.message ?? "");
 		return callBody(theme, "Team Send", sendTarget(theme, (args.to ?? []) as string[], roster), sendStats(theme, message, Boolean(args.interrupt)));
@@ -671,6 +762,26 @@ function callBodyFor(tool: TeamToolName, theme: ThemeLike, args: Record<string, 
 function resultLinesFor(tool: TeamToolName, theme: ThemeLike, args: Record<string, unknown>, details: Record<string, unknown>, expanded: boolean, roster: string[]): TeamLine[] {
 	if (tool === "team_spawn") {
 		return teamSpawnLines(theme, String(details.team), (args.teammates ?? []) as TeammateSpecView[], roster);
+	}
+	if (tool === "team_list") {
+		const teamViews = ((details.teams ?? []) as Array<Record<string, unknown>>).map((entry) => ({
+			name: String(entry.name),
+			state: String(entry.state),
+			leaseState: String(entry.leaseState ?? ""),
+			members: (entry.members ?? []) as TeamListMemberView[],
+			updatedAt: String(entry.updatedAt),
+			expiresAt: entry.expiresAt as string | undefined,
+		}));
+		return teamListLines(theme, teamViews, roster);
+	}
+	if (tool === "team_resume") {
+		const restartedEmpty = new Set((details.restartedEmpty ?? []) as string[]);
+		const resumed = ((details.resumed ?? []) as string[]).map((name) => ({ name, restored: !restartedEmpty.has(name) }));
+		return teamResumeLines(theme, String(details.team), resumed, ((details.teammates ?? []) as string[]).length, roster);
+	}
+	if (tool === "team_add") {
+		const memberCount = Object.keys((details.status ?? {}) as Record<string, unknown>).length;
+		return teamAddLines(theme, String(details.team), (args.teammates ?? []) as TeammateSpecView[], memberCount, roster);
 	}
 	if (tool === "teamsend") {
 		return teamSendLines(theme, {
@@ -712,7 +823,7 @@ export function renderTeamToolResult(
 	markdownTheme?: MarkdownTheme,
 	roster: string[] = [],
 ): TeamSendView | TeamLines {
-	const args = context?.args ?? {};
+	const args = (context?.args ?? {}) as Record<string, unknown>;
 	if (context?.isError || result?.isError) {
 		return new TeamLines(errorLines(theme, callBodyFor(tool, theme, args, roster), textContent(result)), options.expanded ? "wrap" : "clip");
 	}

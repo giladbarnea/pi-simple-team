@@ -1,6 +1,21 @@
 # Development
 
 This is a Pi extension. Read ~/.pi/AGENTS.md to study Pi.
+Read all the root docs. Understand the developer’s request. Then dispatch a Luna (or similarly "flash"-level model) with thinking=high to retrieve a list of all the Pi docs relevant to this extension’s architecture and user’s request. 
+
+## CICD
+
+This extension is packaged (auto patch-bumped) and published on NPM automatically on push in a GitHub workflow. Publishing to NPM means it is also "published" to Pi.dev extension community (not really published — pi.dev just references the right NPM packages). 
+
+## Product design
+
+**> Everything comes down to design, user experience, empowering the user with actual productivity added value, and instilling trust as they use the extension more.** Every development, product and design decision has to be justified by that touchstone.
+
+The extension has gained mild popularity recently with a few thousand monthly downloads, so keep commits and user-facing vectors high quality. User-facing vectors, in no particular order, are (i’m basically breaking down what “product design” means to this project):
+- the packaged docs
+- TUI-rendered design. well-designed here means information hierarchy, progressive disclosure, transparency and a feeling of control, visual beauty, all while not generating cognitive load — quiet the opposite (*relieving* cognitive pressure).
+- usability and UX. no learning curve, "just works", delightful. this is driven by a combination of making the main agent responsible for doing all the team actions (happy path does not give the user any commands or buttons to do that), and the packaged ai-to-ai skill which teaches all the AI’s involved to communicate effectively, which is the only way to unleash the power of the underlying architecture and inherent advantage of a live team over, say, parallel siloed sub-agents.
+- the psychological relief of users when they realize they can let go of the petty tiny details they otherwise need to watch, manage and tweak. these details users wish they could forget about are implementation details, actual code, finding bugs manually (or the anxiety of not knowing whether there are bugs their AI agent missed and signed off the work as having "no bugs"), fixing bugs manually (or the anxiety of not trusting their AI agent to successfully fix the bugs). the things in this project that drive this psychological relief is a combination of lifting the user one level up in the delegation hierarchy + gaining the user’s trust that they actually can sit back and relax because the prompts (skills) + very nature of a real-time internally communicating team + the agent-facing tool design actually work and deliver what they promise, consistently.
 
 ## Testing
 

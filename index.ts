@@ -989,6 +989,9 @@ export default function (pi: ExtensionAPI) {
 				? "List active and dormant teams created by this overseeing teammate."
 				: "List active and dormant teams for the current project.",
 			promptSnippet: "List teams for the current project",
+			renderShell: "self",
+			renderCall: (_args, theme, context) => renderTeamToolCall("team_list", {}, theme, context, sessionTeammateRoster),
+			renderResult: (result, options, theme, context) => renderTeamToolResult("team_list", result, options, theme, context, undefined, sessionTeammateRoster),
 			parameters: Type.Object({}),
 			async execute(_toolCallId, _params, _signal, _onUpdate, context) {
 				const projectDirectory = context.sessionManager?.getCwd?.() ?? context.cwd;
@@ -1033,6 +1036,9 @@ export default function (pi: ExtensionAPI) {
 				? "Resume all or selected stopped members of a dormant team created by this overseeing teammate."
 				: "Resume all stopped teammates in a dormant current-project team, or only selected stopped teammates.",
 			promptSnippet: "Resume all or selected stopped teammates",
+			renderShell: "self",
+			renderCall: (args, theme, context) => renderTeamToolCall("team_resume", args, theme, context, sessionTeammateRoster),
+			renderResult: (result, options, theme, context) => renderTeamToolResult("team_resume", result, options, theme, context, undefined, sessionTeammateRoster),
 			parameters: Type.Object({
 				team: Type.String({ description: "Persistent team ID" }),
 				teammates: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: "Stopped teammate names. Omit to resume all stopped teammates." })),
@@ -1123,7 +1129,9 @@ export default function (pi: ExtensionAPI) {
 					accepted: true,
 					id: team.id,
 					team: team.name,
+					teammates: [...team.members.keys()],
 					resumed: starts.map(({ teammate }) => teammate.name),
+					restartedEmpty: starts.filter(({ sessionFile }) => sessionFile === undefined).map(({ teammate }) => teammate.name),
 					sessions: Object.fromEntries(
 						starts.map(({ teammate }) => [teammate.name, { sessionId: teammate.sessionId, sessionFile: teammate.sessionFile }]),
 					),
@@ -1138,6 +1146,9 @@ export default function (pi: ExtensionAPI) {
 			label: "Team Add",
 			description: "Add one or more new RPC teammates to a running team owned by this main session.",
 			promptSnippet: "Add new teammates to a running team",
+			renderShell: "self",
+			renderCall: (args, theme, context) => renderTeamToolCall("team_add", args, theme, context, sessionTeammateRoster),
+			renderResult: (result, options, theme, context) => renderTeamToolResult("team_add", result, options, theme, context, undefined, sessionTeammateRoster),
 			parameters: Type.Object({
 				team: Type.String({ description: "Persistent team ID" }),
 				teammates: Type.Array(teammateSchema(""), { minItems: 1, description: "New teammates to add" }),

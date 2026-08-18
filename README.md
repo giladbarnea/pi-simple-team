@@ -62,16 +62,14 @@ Main agent:
 <br>
 
 <details>
-<summary><strong>See real tool outputs</strong></summary>
+<summary><strong>pi-simple-team screenshots</strong></summary>
 
 <br>
 
 <p align="center">
-  <a href="screenshots/1.png"><img src="screenshots/1.png" width="48%" alt="Pi tool outputs for spawning a team, sending instructions, and checking status"></a>
-  <a href="screenshots/2.png"><img src="screenshots/2.png" width="48%" alt="Pi tool outputs for team status and the timestamped event log"></a>
-</p>
-<p align="center">
   <a href="screenshots/team-status-multiple.png"><img src="screenshots/team-status-multiple.png" width="48%" alt="Status outputs for several parallel teams"></a>
+  </p>
+  <p align="center">
   <a href="screenshots/team-log-multiple.png"><img src="screenshots/team-log-multiple.png" width="48%" alt="Event log outputs for two parallel teams"></a>
 </p>
 
@@ -104,8 +102,6 @@ This is both efficient and effective:
 - ✔ Context window stays lean.
 - ✔ Unlocks arbitrary workflows.
 
-*{ironic screenshot of Codex filling up the entire visible chat with countless* `Waiting agents to finish...`*}*
-
 ### ⚡ Messages arrive _fast_.
 
 - Sub-second, when the recipient is idle.
@@ -115,9 +111,9 @@ This is both efficient and effective:
 
 Teammates publish a one-liner:
 
-> <span style="color:grey">implementer  </span> Done, 89 tests green, awaiting review.
+> <span style="color:grey">implementer  </span> Done, 89 tests green, awaiting review.
 
-> <span style="color:grey">reviewer      </span> Reading implementation, will finalize review in a few minutes.
+> <span style="color:grey">reviewer      </span> Reading implementation, will finalize review in a few minutes.
 
 Your main agent calls `teamstatus` and understands exactly what is going on. Main does not ask teammates for updates or clutter their context.
 
@@ -127,7 +123,7 @@ Teammates know how much free context they have left.
 
 Main agent knows its own and everyone else's too.
 
-They will hand off work on their own when it's time to say goodbye.
+They will hand off work autonomously when it's time to say goodbye.
 
 You can stop babysitting everyone's context window.
 
@@ -154,27 +150,29 @@ Your main uses `teamlog` when it needs to understand the chain of events in high
 
 A teammate is a normal Pi session with a team attachment. 
 
-This means every teammate can be resurrected, moved around teams and reused everywhere, anytime.
+This means teammates survive shutdown, whole team or member by member.
 
-A teammate from one session can be added to a team in a later session.
+Have a teammate do work, exit Pi entirely, come back tomorrow in a brand-new session: main wakes that same teammate into the new conversation, everything it learned intact.
 
 You can even `/resume` a teammate session directly if you ever want a cozy one-on-one.
 
 The full lifecycle and persistence rules live in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## When one room is not enough
+## 🪾 Teams all the way down (optionally)
 
-`pi-simple-team` supports teammates spawning and managing their own teams, one level down.
+Tell main you want to give a teammate the ability to manage its own team(s).
 
-This is opt-in: when spawning a team, ask main to turn this on for one (or more) teammates.
+This is a powerful technique to create a new layer of context breathing room.
 
-That teammate stays in your team and becomes main for the teams it creates, with the same tools your main agent has. The boundary is strict: it manages only teams its own session created — never its parent team, sibling teams, or their teammates.
+That teammate will spawn, steer and observe its own team(s) without costing tokens to its siblings or parent.
 
-A room can open another room. It does not get the keys to the whole building.
+The tradeoff, like any higher-order delegation, is reduced control: you are moved one level further away from the action.
+
+This is opt-in: teammates by default can't create teams.
 
 ---
 
-## Graphs engineer themselves
+## 🧬 Graphs engineer themselves
 
 **Because** it does nothing special, `pi-simple-team` can construct any team graph you need:
 

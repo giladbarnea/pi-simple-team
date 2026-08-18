@@ -74,6 +74,10 @@ export function timeOfDay(epochMilliseconds: number): string {
 	return timeFormatter.format(new Date(epochMilliseconds));
 }
 
+export function monthDay(epochMilliseconds: number): string {
+	return dateFormatter.format(new Date(epochMilliseconds));
+}
+
 function safeStringify(value: unknown): string {
 	try {
 		return JSON.stringify(value) ?? String(value);

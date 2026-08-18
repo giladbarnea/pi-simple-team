@@ -1,6 +1,6 @@
 ---
 name: ai-to-ai
-description: Best practices for getting a step-function leap in performance from other AI agents when instructing or communicating with them. Markdown docs are AI agents’ bread-and-butter, not only humans’. Load `ai-to-ai` before spawning a sub-agent, creating a team, talking to a teammate agent, or writing documentation. Trigger words include “dispatch an agent”, “spawn a team”, and “talk with another AI”.
+description: Best practices for getting a step-function leap in performance from other AI agents when instructing or communicating with them. Markdown docs are AI agents’ bread-and-butter, not only humans’. Load `ai-to-ai` before spawning a sub-agent, creating a team, talking to a teammate agent, or writing documentation. Trigger words include “dispatch an agent”, “spawn a team”, and “talk with <another ai>”.
 ---
 
 ## Why delegate at all? Rationale
