@@ -92,7 +92,7 @@ The command opens an overlay rolling recent statuses, messages, and a separate e
 
 ### 🏋️ Woken up when needed. Works freely otherwise.
 
-Tokens, intelligence and time are never wasted on busy-polling for messages.
+**Tokens, intelligence and time are never wasted on busy-polling for messages.**
 
 Instead, `pi-simple-team` pushes messages to the recipients.
 
@@ -109,6 +109,8 @@ This is both efficient and effective:
 
 ### 🟢 Statuses everyone can see.
 
+For free, at any time. Like setting a Slack status.
+
 Teammates publish a one-liner:
 
 > <span style="color:grey">implementer  </span> Done, 89 tests green, awaiting review.
@@ -119,74 +121,81 @@ Your main agent calls `teamstatus` and understands exactly what is going on. Mai
 
 ### 🌡️ Context window self-awareness
 
+**The team manages its own context:**
+
 Teammates know how much free context they have left.
 
 Main agent knows its own and everyone else's too.
 
 They will hand off work autonomously when it's time to say goodbye.
 
-You can stop babysitting everyone's context window.
+You can stop babysitting context windows.
 
 ### 📣 Interrupts, when justified.
 
 > _Situation: Late afternoon. Team finished production hotfix and started wrap up. There is one problem though._
 
-- 17:32:00: Security scout spots a private SSH key not covered by `.gitignore`.
-- 17:32:01: Release teammate sets status: _Ran `git add .`, preparing commit and push._
-- 17:32:02: Scout immediately interrupts. Key never leaves the machine. Developer keeps their job.
+- 17:32:00: `security-guard` spots a private SSH key not covered by `.gitignore`.
+- 17:32:01: `release-owner` sets status: _Ran `git add .`, preparing commit and push._
+- 17:32:02: `security-guard` immediately interrupts `release-owner`. Key never leaves the machine. Developer keeps their job another day 👍
 
 ### 📡 Live, zero-cost observability 
 
-Your main uses `teamlog` when it needs to understand the chain of events in high granularity: a timestamped, filterable timeline of messages, tool calls, and lifecycle events.
+Your main uses `teamlog` when it needs to understand the chain of events in high granularity.
 
-### 🪟 Herdr Mode
+Provides main a timestamped, filterable, append-only record of the team’s messages, tool calls, and lifecycle events.
 
-`pi-simple-team` can give each teammate a Pi session in its own [Herdr](https://herdr.dev) pane. Just ask your main agent to do that.
+### 🌅 Herdr Support
+
+`pi-simple-team` can open a teammate direct Pi session in a dedicated [Herdr](https://herdr.dev) pane. Just ask your main agent to do that.
 
 - Live view of the room.
 - Talk directly with teammates.
 
+  I recommend starting with “Captain here”. Feels good and the surprise on their faces is priceless.
+
 ### 🧱 Teammates are durable Pi sessions.
 
-A teammate is a normal Pi session with a team attachment. 
+A teammate is just a Pi session with a team attachment.
 
-This means teammates survive shutdown, whole team or member by member.
+This means **teammates (and thus, teams) survive shutdown.**
 
-Have a teammate do work, exit Pi entirely, come back tomorrow in a brand-new session: main wakes that same teammate into the new conversation, everything it learned intact.
+Have a teammate do work, exit Pi entirely, come back tomorrow in a brand-new session, and ask main to get you that teammate by its Pi session id. Everything it learned stays intact.
 
 You can even `/resume` a teammate session directly if you ever want a cozy one-on-one.
 
-The full lifecycle and persistence rules live in [ARCHITECTURE.md](ARCHITECTURE.md).
+## 🪾 It’s teams all the way down (optionally)
 
-## 🪾 Teams all the way down (optionally)
+Tell main you want to **have a teammate manage its own team(s).**
 
-Tell main you want to give a teammate the ability to manage its own team(s).
-
-This is a powerful technique to create a new layer of context breathing room.
+This is a powerful technique to create a **separate layer of context.**
 
 That teammate will spawn, steer and observe its own team(s) without costing tokens to its siblings or parent.
 
-The tradeoff, like any higher-order delegation, is reduced control: you are moved one level further away from the action.
+The tradeoff, like any higher-order delegation, is reduced control: you are moved one level further away from the trenches.
 
 This is opt-in: teammates by default can't create teams.
+
+This technique plays even nicer if your main assumes the first mate[^1] or captain[^2] rank.
 
 ---
 
 ## 🧬 Graphs engineer themselves
 
-**Because** it does nothing special, `pi-simple-team` can construct any team graph you need:
+**Because** it does nothing special, `pi-simple-team` can **construct any agentic graph you need:**
 
-You:
+You tell main:
 > **Team goal:**
-> 1. Map all customer–product money streams in the database.
-> 2. Feed this knowledge into the harness.
-> 3. Prove the data analysis agent passes the new evals.
+> 1. Map the database for all customer ⟷ purchases money streams.
+> 2. Feed the new knowledge into the memory layer.
+> 3. Make the data analysis agent pass the new purchases evals. 
 > 
 > **Note:**
-> - #1 and #3 are _saturation loops._ Stop only when you can't find anything new. 
-> - Let teammates #1 and #3 create their own teams to loop until task is complete.
+> - #1 is a **saturation loop.** Stop only when you can't find anything new. 
+> - #3 is a **hill-climbing loop.** Stop only the evals are green.
+> - Teammates #1 and #3 create their own teams to loop until task is complete.
 
-That prompt gives you this graph:
+That prompt creates this graph:
 
 ![The team graph: 1-map (Scout and Devil’s advocate) feeding subagent dispatch, feeding 3-eval (Engineer and Performance watcher)](screenshots/team-graph.png)
 
@@ -226,7 +235,13 @@ Kept minimal:
 **Functional:**
 
 - [x] Resume all or selected teammates from a dormant team.
-- [x] Add new teammates after a team has spawned.
+- [x] Add teammates after a team has spawned.
 - [x] Let opted-in teammates create and manage teams of their own.
-- [ ] Main forces `/compact` on select teammate.
+- [x] Remove teammates from a team.
+- [ ] Main triggers `/compact` on select teammate.
 - [ ] Teammates auto-reminded to hand off on low context.
+
+---
+
+[^1]: `skills/ai-to-ai/references/ranks/firstmate.md`
+[^2]: `skills/ai-to-ai/references/ranks/captain.md`
