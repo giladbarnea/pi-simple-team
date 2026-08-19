@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import {
 	appendTeamLog,
 	filterTeamLog,
-	nowText,
+	futureTime,
 	normalizeChildEvent,
 	pageTeamLog,
 	preview,
+	relativeTime,
 	renderTeamLogPage,
 	timeOfDay,
 	type TeamLogEntry,
@@ -64,14 +65,77 @@ describe("preview", () => {
 	});
 });
 
-describe("nowText / timeOfDay", () => {
-	test("nowText formats month, day, and second-level time", () => {
-		expect(nowText(new Date(2026, 6, 8, 21, 5, 44))).toBe("July 08, 21:05:44");
-	});
-
-	test("timeOfDay formats just the second-level time from an epoch", () => {
+describe("timeOfDay", () => {
+	test("formats just the second-level time from an epoch", () => {
 		const epoch = new Date(2026, 6, 8, 9, 2, 7).getTime();
 		expect(timeOfDay(epoch)).toBe("09:02:07");
+	});
+});
+
+describe("relativeTime", () => {
+	const MINUTE = 60_000;
+	const HOUR = 60 * MINUTE;
+	const DAY = 24 * HOUR;
+	const NOW = 1_786_531_200_000;
+	const ago = (elapsed: number) => relativeTime(NOW - elapsed, NOW);
+
+	test("shows just now under one minute", () => {
+		expect(ago(0)).toBe("just now");
+		expect(ago(40_000)).toBe("just now");
+	});
+
+	test("shows whole minutes under one hour", () => {
+		expect(ago(MINUTE)).toBe("1m ago");
+		expect(ago(12 * MINUTE)).toBe("12m ago");
+		expect(ago(HOUR - 1)).toBe("59m ago");
+	});
+
+	test("shows hours with zero-padded minutes under four hours", () => {
+		expect(ago(HOUR)).toBe("1h 00m ago");
+		expect(ago(HOUR + 4 * MINUTE)).toBe("1h 04m ago");
+		expect(ago(4 * HOUR - 1)).toBe("3h 59m ago");
+	});
+
+	test("shows whole hours under one day", () => {
+		expect(ago(4 * HOUR)).toBe("4h ago");
+		expect(ago(DAY - 1)).toBe("23h ago");
+	});
+
+	test("shows one day with remainder hours under two days", () => {
+		expect(ago(DAY)).toBe("1d 0h ago");
+		expect(ago(DAY + 9 * HOUR)).toBe("1d 9h ago");
+		expect(ago(2 * DAY - 1)).toBe("1d 23h ago");
+	});
+
+	test("shows whole days under one week", () => {
+		expect(ago(2 * DAY)).toBe("2d ago");
+		expect(ago(7 * DAY - 1)).toBe("6d ago");
+	});
+
+	test("shows weeks under one month", () => {
+		expect(ago(7 * DAY)).toBe("1w ago");
+		expect(ago(29 * DAY)).toBe("4w ago");
+	});
+
+	test("shows months from thirty days on", () => {
+		expect(ago(30 * DAY)).toBe("1mo ago");
+		expect(ago(75 * DAY)).toBe("2mo ago");
+	});
+});
+
+describe("futureTime", () => {
+	const MINUTE = 60_000;
+	const HOUR = 60 * MINUTE;
+	const DAY = 24 * HOUR;
+	const NOW = 1_786_531_200_000;
+	const upcoming = (remaining: number) => futureTime(NOW + remaining, NOW);
+
+	test("scales from minutes through weeks", () => {
+		expect(upcoming(0)).toBe("in 1m");
+		expect(upcoming(30 * MINUTE)).toBe("in 30m");
+		expect(upcoming(5 * HOUR)).toBe("in 5h");
+		expect(upcoming(3 * DAY)).toBe("in 3d");
+		expect(upcoming(20 * DAY)).toBe("in 2w");
 	});
 });
 
@@ -85,11 +149,11 @@ describe("appendTeamLog", () => {
 		expect(state.log).toEqual([first, second]);
 	});
 
-	test("stamps timestamp and epochMilliseconds from the provided now", () => {
+	test("stamps an ISO timestamp and epochMilliseconds from the provided now", () => {
 		const state = makeState(1);
 		const now = new Date(2026, 6, 8, 21, 5, 44);
 		const entry = appendTeamLog(state, { team: "demo-team", kind: "spawn", summary: "spawned" }, now);
-		expect(entry.timestamp).toBe("July 08, 21:05:44");
+		expect(entry.timestamp).toBe(now.toISOString());
 		expect(entry.epochMilliseconds).toBe(now.getTime());
 	});
 

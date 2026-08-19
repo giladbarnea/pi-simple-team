@@ -2,9 +2,9 @@ import { Markdown, type MarkdownTheme, truncateToWidth, wrapTextWithAnsi } from 
 
 import { padVisible, stableRenderWidth, visibleLength } from "./render-support/ansi.ts";
 import { glyphs } from "./render-support/glyphs.ts";
-import { stackPrefix, toolLabel, treeConnector, treeGlyph, treeStem } from "./render-support/theme.ts";
+import { stackPrefix, toolLabel, treeConnector, treeStem } from "./render-support/theme.ts";
 import { commandExit, plural, renderPendingCall, textContent } from "./render-support/text.ts";
-import { monthDay, nowText, timeOfDay, type TeamLogEntry } from "./teamlog.ts";
+import { futureTime, monthDay, relativeTime, timeOfDay, type TeamLogEntry } from "./teamlog.ts";
 
 export interface ThemeLike {
 	bold(text: string): string;
@@ -45,6 +45,14 @@ interface TeamLogRenderView {
 	returned: number;
 	nextCursor?: string;
 	filters?: Record<string, unknown>;
+	nowMilliseconds?: number;
+}
+
+/** Sessions persisted before the ISO switch carry pre-formatted timestamps; those pass through raw. */
+export function relativeTimeText(timestamp: string): string {
+	if (!timestamp.includes("T")) return timestamp;
+	const parsed = Date.parse(timestamp);
+	return Number.isFinite(parsed) ? relativeTime(parsed, Date.now()) : timestamp;
 }
 
 /** A rendered line with optional wrapping or right-aligned layout metadata. */
@@ -182,7 +190,7 @@ function memberRows(theme: ThemeLike, statuses: Record<string, TeamStatusView>, 
 		const entry = statuses[name]!;
 		const branch = index === names.length - 1 ? "└" : "├";
 		const left = `${indent}${treeConnector(theme, branch)}${theme.fg(actorHueToken(name, roster), padVisible(name, nameWidth))}  ${theme.fg(statusWordToken(entry.word), padVisible(entry.word, wordWidth))}  ${entry.phrase}`;
-		const right = theme.fg("dim", entry.updated);
+		const right = theme.fg("dim", relativeTimeText(entry.updated));
 		return { left, right };
 	});
 }
@@ -277,8 +285,8 @@ function teamListMemberName(theme: ThemeLike, teamView: TeamListTeamView, member
 }
 
 function teamListTimestamp(teamView: TeamListTeamView): string {
-	if (teamView.state === "dormant" && teamView.expiresAt) return `expires ${monthDay(Date.parse(teamView.expiresAt))}`;
-	return `updated ${nowText(new Date(teamView.updatedAt))}`;
+	if (teamView.state === "dormant" && teamView.expiresAt) return `expires ${futureTime(Date.parse(teamView.expiresAt), Date.now())}`;
+	return `updated ${relativeTime(Date.parse(teamView.updatedAt), Date.now())}`;
 }
 
 export function teamListLines(theme: ThemeLike, teamViews: TeamListTeamView[], roster: string[] = []): TeamLine[] {
@@ -552,19 +560,37 @@ function renderLogDetail(theme: ThemeLike, detail: LogDetail, roster: string[]):
 	return theme.fg(detail.token, detail.text);
 }
 
-function logChrome(theme: ThemeLike, branch: "├" | "└", sequence: number, seqWidth: number, epochMilliseconds: number): string {
-	return theme.fg("borderMuted", `${treeGlyph(branch)}${padVisible(`#${sequence}`, seqWidth)} ${timeOfDay(epochMilliseconds)}`);
+const LOG_ROW_INDENT = "  ";
+
+function logChrome(theme: ThemeLike, sequence: number, seqWidth: number, epochMilliseconds: number): string {
+	return theme.fg("borderMuted", `${LOG_ROW_INDENT}${padVisible(`#${sequence}`, seqWidth)} ${timeOfDay(epochMilliseconds)}`);
 }
 
-function actionRows(theme: ThemeLike, actions: LogAction[], roster: string[], hasFooter: boolean): string[] {
+function sameLocalDay(a: number, b: number): boolean {
+	return new Date(a).toDateString() === new Date(b).toDateString();
+}
+
+function dayDividerLine(theme: ThemeLike, epochMilliseconds: number): string {
+	const rule = glyphs().line;
+	return `${LOG_ROW_INDENT}${theme.fg("borderMuted", `${rule.repeat(2)} ${monthDay(epochMilliseconds)} ${rule.repeat(30)}`)}`;
+}
+
+/** Log rows keep an absolute HH:MM:SS grammar; day dividers carry the date whenever a row is not from "today". */
+function actionRows(theme: ThemeLike, actions: LogAction[], roster: string[], nowMilliseconds: number): string[] {
 	const g = glyphs();
 	const seqWidth = Math.max(...actions.map((action) => `#${action.sequence}`.length));
 	const whoWidth = Math.max(...actions.map((action) => action.who.length));
 	const actionWidth = Math.max(...actions.map((action) => action.action.length));
 	const iconWidth = Math.max(...actions.map((action) => visibleLength(logIconGlyph(action.icon))));
+	const rows: string[] = [];
 	let previousWho: string | undefined;
-	return actions.map((action, index) => {
-		const branch = index === actions.length - 1 && !hasFooter ? "└" : "├";
+	let previousEpoch = nowMilliseconds;
+	for (const action of actions) {
+		if (!sameLocalDay(action.epochMilliseconds, previousEpoch)) {
+			rows.push(dayDividerLine(theme, action.epochMilliseconds));
+			previousWho = undefined;
+		}
+		previousEpoch = action.epochMilliseconds;
 		let whoStyled = theme.fg(actorHueToken(action.who, roster), padVisible(action.who, whoWidth));
 		if (action.who === previousWho) whoStyled = `${DIM_SGR_OPEN}${whoStyled}${DIM_SGR_CLOSE}`;
 		previousWho = action.who;
@@ -575,8 +601,9 @@ function actionRows(theme: ThemeLike, actions: LogAction[], roster: string[], ha
 			.filter((detail) => detail.style !== "text" || detail.text.length > 0)
 			.map((detail) => renderLogDetail(theme, detail, roster))
 			.join(dot);
-		return `${logChrome(theme, branch, action.sequence, seqWidth, action.epochMilliseconds)} ${whoStyled}  ${icon} ${actionName}${detailText ? `${dot}${detailText}` : ""}`;
-	});
+		rows.push(`${logChrome(theme, action.sequence, seqWidth, action.epochMilliseconds)} ${whoStyled}  ${icon} ${actionName}${detailText ? `${dot}${detailText}` : ""}`);
+	}
+	return rows;
 }
 
 function filterStats(theme: ThemeLike, filters: Record<string, unknown>, roster: string[]): string[] {
@@ -607,24 +634,17 @@ export function teamLogLines(theme: ThemeLike, view: TeamLogRenderView): string[
 		...filterStats(theme, view.filters ?? {}, view.roster ?? []),
 	];
 	const header = headerLine(theme, "Team Log", theme.fg("accent", view.team), stats);
-	if (view.entries.length === 0) return [header, `${treeConnector(theme, "└")}${theme.fg("muted", "no matching events")}`];
+	if (view.entries.length === 0) return [header, `${LOG_ROW_INDENT}${theme.fg("muted", "no matching events")}`];
 
 	const footer = view.nextCursor
-		? `${treeConnector(theme, "└")}${theme.fg("muted", `${g.ellipsis} older events${g.dot}cursor "${view.nextCursor}"`)}`
+		? `${LOG_ROW_INDENT}${theme.fg("muted", `${g.ellipsis} older events${g.dot}cursor "${view.nextCursor}"`)}`
 		: undefined;
-	const rows = actionRows(theme, actions, view.roster ?? [], Boolean(footer));
+	const rows = actionRows(theme, actions, view.roster ?? [], view.nowMilliseconds ?? Date.now());
 	return [header, ...rows, ...(footer ? [footer] : [])];
 }
 
 export function teamMessageLines(theme: ThemeLike, details: TeamMessageDetails, roster: string[] = []): TeamLine[] {
-	const g = glyphs();
-	const header = [
-		theme.fg("accent", `${g.diamond} `),
-		theme.fg(actorHueToken(details.from, roster), theme.bold(details.from)),
-		theme.fg("muted", ` ${g.arrow} ${details.to ?? "main"}`),
-		theme.fg("dim", `${g.dot}${details.team}${g.dot}${details.sentAt}`),
-	].join("");
-	return [header, ...quotedBody(theme, details.message, { lineLimit: Number.POSITIVE_INFINITY, barToken: "accent" })];
+	return [teamMessageHeader(theme, details, roster), ...quotedBody(theme, details.message, { lineLimit: Number.POSITIVE_INFINITY, barToken: "accent" })];
 }
 
 function teamMessageHeader(theme: ThemeLike, details: TeamMessageDetails, roster: string[]): string {
@@ -633,7 +653,7 @@ function teamMessageHeader(theme: ThemeLike, details: TeamMessageDetails, roster
 		theme.fg("accent", `${g.diamond} `),
 		theme.fg(actorHueToken(details.from, roster), theme.bold(details.from)),
 		theme.fg("muted", ` ${g.arrow} ${details.to ?? "main"}`),
-		theme.fg("dim", `${g.dot}${details.team}${g.dot}${details.sentAt}`),
+		theme.fg("dim", `${g.dot}${details.team}${g.dot}${relativeTimeText(details.sentAt)}`),
 	].join("");
 }
 

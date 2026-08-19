@@ -258,12 +258,12 @@ describe("/team", () => {
 		}
 	});
 
-	test("aligns status columns and right-aligns updated timestamps", async () => {
+	test("aligns status columns and right-aligns relative timestamps of different widths", async () => {
 		const host = new TeamCommandHost();
 		const snapshot = liveSnapshot([]);
 		snapshot.statuses = {
-			main: { word: "waiting", phrase: "STATUS-BEGIN-" + "x".repeat(120) + "-STATUS-END", updated: "August 12, 10:00:00" },
-			reviewer: { word: "working", phrase: "Short phrase", updated: "August 12, 10:00:01" },
+			main: { word: "waiting", phrase: "STATUS-BEGIN-" + "x".repeat(120) + "-STATUS-END", updated: new Date(Date.now() - 12.5 * 60_000).toISOString() },
+			reviewer: { word: "working", phrase: "Short phrase", updated: new Date(Date.now() - 90_000).toISOString() },
 		};
 
 		try {
@@ -276,9 +276,8 @@ describe("/team", () => {
 				assert.equal(mainRow.indexOf("main"), reviewerRow.indexOf("reviewer"));
 				assert.equal(mainRow.indexOf("waiting"), reviewerRow.indexOf("working"));
 				assert.equal(mainRow.indexOf("STATUS-BEGIN"), reviewerRow.indexOf("Short phrase"));
-				assert.equal(mainRow.indexOf("August"), reviewerRow.indexOf("August"));
-				assert.ok(mainRow.endsWith("August 12, 10:00:00││"));
-				assert.ok(reviewerRow.endsWith("August 12, 10:00:01││"));
+				assert.ok(mainRow.endsWith("12m ago││"), `Expected the wider timestamp flush right. Got: ${JSON.stringify(mainRow.slice(-14))}`);
+				assert.ok(reviewerRow.endsWith(" 1m ago││"), `Expected the narrower timestamp left-padded to align right. Got: ${JSON.stringify(reviewerRow.slice(-14))}`);
 				assert.match(mainRow, /STATUS-BEGIN.*….*STATUS-END/);
 				close(component);
 			});

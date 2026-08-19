@@ -66,16 +66,50 @@ const MAX_LIMIT = 100;
 const dateFormatter = new Intl.DateTimeFormat("en-US", { month: "long", day: "2-digit" });
 const timeFormatter = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
-export function nowText(date: Date = new Date()): string {
-	return `${dateFormatter.format(date)}, ${timeFormatter.format(date)}`;
-}
-
 export function timeOfDay(epochMilliseconds: number): string {
 	return timeFormatter.format(new Date(epochMilliseconds));
 }
 
 export function monthDay(epochMilliseconds: number): string {
 	return dateFormatter.format(new Date(epochMilliseconds));
+}
+
+const MINUTE_MILLISECONDS = 60_000;
+const HOUR_MILLISECONDS = 60 * MINUTE_MILLISECONDS;
+const DAY_MILLISECONDS = 24 * HOUR_MILLISECONDS;
+const WEEK_MILLISECONDS = 7 * DAY_MILLISECONDS;
+const MONTH_MILLISECONDS = 30 * DAY_MILLISECONDS;
+
+/** formatElapsed(12 * 60_000) === "12m"; formatElapsed(33 * 3_600_000) === "1d 9h"; formatElapsed(5 * 86_400_000) === "5d" */
+function formatElapsed(elapsedMilliseconds: number): string {
+	if (elapsedMilliseconds < HOUR_MILLISECONDS) return `${Math.max(1, Math.floor(elapsedMilliseconds / MINUTE_MILLISECONDS))}m`;
+	const hours = Math.floor(elapsedMilliseconds / HOUR_MILLISECONDS);
+	if (elapsedMilliseconds < 4 * HOUR_MILLISECONDS) {
+		const minutes = Math.floor((elapsedMilliseconds % HOUR_MILLISECONDS) / MINUTE_MILLISECONDS);
+		return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+	}
+	if (elapsedMilliseconds < DAY_MILLISECONDS) return `${hours}h`;
+	if (elapsedMilliseconds < 2 * DAY_MILLISECONDS) return `1d ${Math.floor((elapsedMilliseconds % DAY_MILLISECONDS) / HOUR_MILLISECONDS)}h`;
+	if (elapsedMilliseconds < WEEK_MILLISECONDS) return `${Math.floor(elapsedMilliseconds / DAY_MILLISECONDS)}d`;
+	if (elapsedMilliseconds < MONTH_MILLISECONDS) return `${Math.floor(elapsedMilliseconds / WEEK_MILLISECONDS)}w`;
+	return `${Math.floor(elapsedMilliseconds / MONTH_MILLISECONDS)}mo`;
+}
+
+/**
+ * Elapsed-only relative time, one grammar across all tiers.
+ * relativeTime(now - 20_000, now) === "just now"; relativeTime(now - 12 * 60_000, now) === "12m ago"; relativeTime(now - 5 * 86_400_000, now) === "5d ago"
+ */
+export function relativeTime(epochMilliseconds: number, nowMilliseconds: number): string {
+	const elapsed = Math.max(0, nowMilliseconds - epochMilliseconds);
+	if (elapsed < MINUTE_MILLISECONDS) return "just now";
+	return `${formatElapsed(elapsed)} ago`;
+}
+
+/**
+ * futureTime(now + 20 * 86_400_000, now) === "in 2w"
+ */
+export function futureTime(epochMilliseconds: number, nowMilliseconds: number): string {
+	return `in ${formatElapsed(Math.max(0, epochMilliseconds - nowMilliseconds))}`;
 }
 
 function safeStringify(value: unknown): string {
@@ -97,7 +131,7 @@ export function appendTeamLog(state: TeamLogState, input: TeamLogEntryInput, now
 	const entry: TeamLogEntry = {
 		...input,
 		sequence: state.nextLogSequence++,
-		timestamp: nowText(now),
+		timestamp: now.toISOString(),
 		epochMilliseconds: now.getTime(),
 	};
 	state.log.push(entry);

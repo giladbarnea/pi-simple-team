@@ -1,5 +1,5 @@
 ---
-updated: 2026-08-14
+updated: 2026-08-19
 status: working
 ---
 
@@ -61,6 +61,7 @@ Tool-specific TUI logic lives in `render.ts`; reusable display primitives live i
 
 - **Header stat-line**: `● <Label> <target> · stat · stat` — bullet, bold label, accent target, dim-dot-separated semantically colored stats. Errors render as `● <call> · <error>` with the error in red.
 - **Tree body**: `├─`/`└─` rows with padded columns — teammate names accent, status words colored via `statusWordToken` (working→success, waiting→warning, free-form activity words→accent), timestamps dim. `teamlog` rows add a per-kind glyph (`✓`/`✗`/`→`/`◆`/`▲`/`○`) and rebuild tool_start/tool_end summaries from entry details instead of the LLM-facing prose.
+- **Timestamps**: one grammar per column. Status `updated`, list `updated`/`expires`, message `sentAt`, and dashboard `Created` render as elapsed relative time (`just now`, `12m ago`, `1h 04m ago`, `4h ago`, `1d 9h ago`, `5d ago`, `3w ago`, `2mo ago`; future: `in 3w`) via `relativeTime`/`futureTime` in `teamlog.ts`. Storage is ISO; `relativeTimeText` converts at render time and passes pre-ISO legacy strings through raw. `teamlog` rows are the exception: absolute `HH:MM:SS`, no tree connectors, with a dim `── <Month DD> ──` divider row whenever a row's local day differs from the previous row's (or from today, for the first row).
 - **Speech = quote bar**: any message payload renders behind a `▌` bar — muted for outgoing `teamsend` previews (3 lines collapsed), accent for incoming teammate→main messages.
 - **Compression**: collapsed views clip each row at the render width; ctrl+o (expanded) switches to wrapping, and prefixed lines re-apply their quote bar to wrapped continuations (`TeamLine`).
 

@@ -3,6 +3,7 @@ import { Key, matchesKey, SelectList, sliceByColumn, truncateToWidth, visibleWid
 
 import {
 	actorHueToken,
+	relativeTimeText,
 	statusWordToken,
 	teamLineText,
 	teamLogLines,
@@ -82,13 +83,15 @@ function statusRows(theme: ThemeLike, statuses: Array<[string, TeamStatusView]>,
 	const contentWidth = Math.max(0, width - 1);
 	const nameWidth = Math.max(0, ...statuses.map(([name]) => visibleWidth(name)));
 	const wordWidth = Math.max(0, ...statuses.map(([, status]) => visibleWidth(status.word)));
-	const timestampWidth = Math.max(0, ...statuses.map(([, status]) => visibleWidth(status.updated)));
+	const updatedTexts = statuses.map(([, status]) => relativeTimeText(status.updated));
+	const timestampWidth = Math.max(0, ...updatedTexts.map((text) => visibleWidth(text)));
 	const phraseWidth = Math.max(0, contentWidth - nameWidth - wordWidth - timestampWidth - 6);
 
-	return statuses.map(([name, status]) => {
+	return statuses.map(([name, status], index) => {
 		const styledName = theme.fg(actorHueToken(name, roster), name);
 		const styledWord = theme.fg(statusWordToken(status.word), status.word);
-		const timestamp = theme.fg("dim", status.updated);
+		const updatedText = updatedTexts[index]!;
+		const timestamp = theme.fg("dim", `${" ".repeat(Math.max(0, timestampWidth - visibleWidth(updatedText)))}${updatedText}`);
 		const phrase = middleTruncateToWidth(status.phrase, phraseWidth, true);
 		return `${padVisible(styledName, nameWidth)}  ${padVisible(styledWord, wordWidth)}  ${phrase}  ${timestamp}`;
 	});
@@ -257,7 +260,7 @@ class TeamOverviewOverlay implements Component {
 
 		const transport = team.showOnHerdrPanes ? "Herdr" : "RPC";
 		const metadata = [
-			`Created ${team.created}`,
+			`Created ${relativeTimeText(team.created)}`,
 			`${team.roster.length} teammate${team.roster.length === 1 ? "" : "s"}`,
 			transport,
 			`${team.log.length} retained event${team.log.length === 1 ? "" : "s"}`,

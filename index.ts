@@ -23,7 +23,7 @@ import {
 	type TeamManifest,
 	type TeamManifestMember,
 } from "./team-registry.ts";
-import { appendTeamLog, filterTeamLog, normalizeChildEvent, nowText, pageTeamLog, preview, renderTeamLogPage, type TeamLogEntry } from "./teamlog.ts";
+import { appendTeamLog, filterTeamLog, normalizeChildEvent, pageTeamLog, preview, renderTeamLogPage, type TeamLogEntry } from "./teamlog.ts";
 import { renderTeamMessage, renderTeamToolCall, renderTeamToolResult, type TeamMessageDetails } from "./render.ts";
 import { openTeamOverview, type TeamSnapshot } from "./team-ui.ts";
 import { StringEnum } from "@earendil-works/pi-ai";
@@ -103,7 +103,7 @@ let callbackServer: http.Server | undefined;
 let callbackUrl = "";
 
 function status(word: string, phrase: string): TeamStatus {
-	return { word, phrase, updated: nowText() };
+	return { word, phrase, updated: new Date().toISOString() };
 }
 
 function compactName(name: string): string {
@@ -169,7 +169,7 @@ async function deliverMessage(team: TeamState, from: string, recipient: Teammate
 			body: JSON.stringify({
 				token: callbackToken,
 				tool: "deliver",
-				args: { team: team.name, from, to: recipient.name, sentAt: nowText(), message, formattedMessage, interrupt },
+				args: { team: team.name, from, to: recipient.name, sentAt: new Date().toISOString(), message, formattedMessage, interrupt },
 			}),
 			signal: controller.signal,
 		});
@@ -735,7 +735,7 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 
 		if (tool === "teammain") {
 			const rawMessage = String(args.message ?? "");
-			const details: TeamMessageDetails = { team: team.name, from, sentAt: nowText(), message: rawMessage };
+			const details: TeamMessageDetails = { team: team.name, from, sentAt: new Date().toISOString(), message: rawMessage };
 			appendTeamLog(team, {
 				team: team.name,
 				teammate: from,
@@ -925,7 +925,7 @@ export default function (pi: ExtensionAPI) {
 						mainSessionFile,
 						members: new Map(),
 						statuses: new Map([["main", status("available", "Main agent")]]),
-						created: nowText(),
+						created: new Date().toISOString(),
 						lease,
 						log: [],
 						nextLogSequence: 1,

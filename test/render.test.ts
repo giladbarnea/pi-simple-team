@@ -26,7 +26,7 @@ import {
 	teamStatusLines,
 	type ThemeLike,
 } from "../render.ts";
-import { monthDay, nowText, timeOfDay, type TeamLogEntry } from "../teamlog.ts";
+import { monthDay, timeOfDay, type TeamLogEntry } from "../teamlog.ts";
 
 initTheme("dark");
 
@@ -113,6 +113,15 @@ describe("teamStatusLines", () => {
 		expect(lines[1]).toContain("«mdCode:implementer");
 		expect(lines[2]).toContain("«accent:main");
 		expect(lines[3]).toContain("«customMessageLabel:reviewer");
+	});
+
+	test("renders ISO updated timestamps as relative time and passes legacy strings through", () => {
+		const lines = teamStatusLines(identityTheme, "demo-team", {
+			implementer: { word: "working", phrase: "Running gates", updated: new Date(Date.now() - 12.5 * 60_000).toISOString() },
+			main: { word: "waiting", phrase: "Standing by", updated: "July 16, 22:53:47" },
+		}).map(teamLineText);
+		expect(lines[1]).toEndWith("12m ago");
+		expect(lines[2]).toEndWith("July 16, 22:53:47");
 	});
 });
 
@@ -215,6 +224,8 @@ describe("teamResumeLines", () => {
 });
 
 describe("teamListLines", () => {
+	const MINUTE = 60_000;
+	const DAY = 86_400_000;
 	const teams = [
 		{
 			name: "shared-room",
@@ -224,28 +235,28 @@ describe("teamListLines", () => {
 				{ name: "scout", live: true, canOverseeOwnTeams: false },
 				{ name: "reviewer", live: false, canOverseeOwnTeams: true },
 			],
-			updatedAt: "2026-08-12T14:14:04.000Z",
+			updatedAt: new Date(Date.now() - 12.5 * MINUTE).toISOString(),
 		},
 		{
 			name: "profitability-branch",
 			state: "dormant",
 			leaseState: "stale",
 			members: [{ name: "branch-a", live: false, canOverseeOwnTeams: false }],
-			updatedAt: "2026-08-12T15:02:00.000Z",
-			expiresAt: "2026-09-11T15:02:00.000Z",
+			updatedAt: new Date(Date.now() - 6.5 * DAY).toISOString(),
+			expiresAt: new Date(Date.now() + 20.5 * DAY).toISOString(),
 		},
 	];
 
-	test("renders one row per team with state, roster, and a right-aligned timestamp", () => {
+	test("renders one row per team with relative updated and future expires timestamps", () => {
 		const lines = teamListLines(identityTheme, teams).map(teamLineText);
 		expect(lines).toHaveLength(3);
 		expect(lines[0]).toContain("Team List");
 		expect(lines[0]).toContain("2 teams");
 		expect(lines[0]).toContain("1 active");
 		expect(lines[1]).toContain("shared-room");
-		expect(lines[1]).toEndWith(`updated ${nowText(new Date(teams[0]!.updatedAt))}`);
+		expect(lines[1]).toEndWith("updated 12m ago");
 		expect(lines[2]).toContain(g.tree.last.trim());
-		expect(lines[2]).toEndWith(`expires ${monthDay(Date.parse(teams[1]!.expiresAt!))}`);
+		expect(lines[2]).toEndWith("expires in 2w");
 	});
 
 	test("colors the state word, flags a stale lease, and marks overseers", () => {
@@ -353,6 +364,7 @@ describe("teamLogLines", () => {
 			entries,
 			totalMatched: entries.length,
 			returned: entries.length,
+			nowMilliseconds: T,
 			...overrides,
 		};
 	}
@@ -528,6 +540,42 @@ describe("teamLogLines", () => {
 		expect(lines).toHaveLength(2);
 		expect(lines[1]).toContain("no matching events");
 	});
+
+	test("log rows carry no tree connectors", () => {
+		const lines = teamLogLines(identityTheme, logView(toolPair(false, "total 0")));
+		expect(lines[1]).not.toContain(g.tree.mid.trim());
+		expect(lines[1]).not.toContain(g.tree.last.trim());
+		expect(lines[1]).toStartWith("  #10");
+	});
+
+	test("opens with a day divider when the first entry is not from today", () => {
+		const DAY = 86_400_000;
+		const entries = [logEntry({ sequence: 10, kind: "status", teammate: "reviewer", epochMilliseconds: T - DAY, details: { word: "working", phrase: "" } })];
+		const lines = teamLogLines(identityTheme, logView(entries));
+		expect(lines).toHaveLength(3);
+		expect(lines[1]).toContain(monthDay(T - DAY));
+		expect(lines[2]).toContain("#10");
+	});
+
+	test("inserts a day divider between rows when the local day changes", () => {
+		const DAY = 86_400_000;
+		const entries = [
+			logEntry({ sequence: 10, kind: "status", teammate: "reviewer", epochMilliseconds: T - 2 * DAY, details: { word: "working", phrase: "" } }),
+			logEntry({ sequence: 11, kind: "status", teammate: "reviewer", epochMilliseconds: T, details: { word: "done", phrase: "" } }),
+		];
+		const lines = teamLogLines(identityTheme, logView(entries));
+		expect(lines).toHaveLength(5);
+		expect(lines[1]).toContain(monthDay(T - 2 * DAY));
+		expect(lines[2]).toContain("#10");
+		expect(lines[3]).toContain(monthDay(T));
+		expect(lines[4]).toContain("#11");
+	});
+
+	test("a same-day log renders no day divider", () => {
+		const lines = teamLogLines(identityTheme, logView(toolPair(false, "total 0")));
+		expect(lines).toHaveLength(2);
+		expect(lines.join("\n")).not.toContain(monthDay(T));
+	});
 });
 
 describe("teamMessageLines", () => {
@@ -548,7 +596,15 @@ describe("teamMessageLines", () => {
 		expect(lines[3]).toContain("Waiting for the final gate.");
 	});
 
-
+	test("renders an ISO sentAt as relative time", () => {
+		const lines = teamMessageLines(identityTheme, {
+			team: "demo-team",
+			from: "reviewer",
+			sentAt: new Date(Date.now() - 5.5 * 60_000).toISOString(),
+			message: "hi",
+		}).map(teamLineText);
+		expect(lines[0]).toContain("5m ago");
+	});
 });
 
 describe("renderTeamMessage", () => {
