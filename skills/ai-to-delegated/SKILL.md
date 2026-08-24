@@ -1,6 +1,6 @@
 ---
-name: ai-to-ai
-description: Best practices for getting a step-function leap in performance from other AI agents when instructing or communicating with them. Markdown docs are AI agents’ bread-and-butter, not only humans’. Load `ai-to-ai` before spawning a sub-agent, creating a team, talking to a teammate agent, or writing documentation. Trigger words include “dispatch an agent”, “spawn a team”, and “talk with <another ai>”.
+name: ai-to-delegated
+description: Best practices for getting a step-function leap in performance from other AI agents when instructing or communicating with them. Markdown docs are AI agents’ bread-and-butter, not only humans’. Load `ai-to-delegated` before spawning a sub-agent, creating a team, talking to a teammate agent, or writing documentation. Trigger words include “dispatch an agent”, “spawn a team”, and “talk with <another ai>”.
 ---
 
 ## Why delegate at all? Rationale
@@ -18,6 +18,33 @@ The flip side: if none of these payoffs apply, don't delegate. The anti-pattern 
 - **Dirty work**: main agent needs the side effect of some process, not the process itself. Searches, summaries, reviews, implementation of a well-defined spec. Moreoever, a few of these can potentially be fanned-out in parallel.
 - **Hivemind:** teams communicating internally in real time, as each teammate does work. Hollywood analogy: elite soldier squad or a team of spies, global channel earpieces, deployed behind enemy lines, each progresses their part, each part essential for completing the mission, global channel earpieces, consistent live updates, uncertainties surfaced to get advice, discussions to make best decisions for mission, path forward of an individual adapts in real time due to new peer finding, HQ possibly listening, warning and steering as required. 
 - **De-bias:** It’s easier to spot blind spots or flaws when looking at someone else’s work (review; live or after the fact). Related: sometimes a hypothesis is considered true only after it is confirmed independently by multiple actors (consensus).
+
+---
+
+## Leader conduct: a delegate’s scope is not yours
+
+Your fingers are delegation buttons. Do not row, raise sails, or scout ahead yourself unless your leader instructs you to do so. Delegate the operational work to your delegates.
+
+Whatever you delegated is not yours until it returns. While a delegate works, do not do its work, do not re-read the files it is writing “just to make sure everything is okay,” and do not run its code and tests yourself to “make sure they really work.” Trust it, exactly as your leader trusts you. Answer escalations, steer on exception, then step back out. This applies per delegated scope, however small the delegation.
+
+### Delegation parameters
+
+Decision matrix:
+
+1. **Delegation shape:** subagent or team?
+2. **Concurrency:** subagents: parallel subagents or a single subagent? Team: how many teammates?
+3. **Context:** inherit this session's context or start fresh?
+4. **Model:** which model?
+5. **Thinking:** which thinking level? Either high, xhigh or max.
+
+You may suggest a delegation shape, but your leader must approve it before you dispatch anyone (see `ai-to-leader`).
+
+### Keep the ship afloat
+
+Check how much context window you and your delegates have left opportunistically. You must not hit your context limit. If you delegate a lot from the get go, this shouldn’t be a concern — hands-on, token-heavy work will be done by your delegates anyway.
+
+<!-- note: remove the following instruction after pi-simple-agents auto wakes up main when teammates are running out -->
+If a delegate is heading towards capping out with no good chance of completing its work, tell it that its window is about to run out soon, then ask it to load the handoff skill and write down what its successor would need to know to be able to resume its work effectively.
 
 ---
 
@@ -75,11 +102,10 @@ The framework behind this section: [`theory-of-mind.md`](references/theory-of-mi
 
 ## Next required reading
 
-This is a tiny state machine. Read only the references that apply based on the user’s instructions and your intent.
+This is a tiny state machine. Classify yourself first with [`roles.md`](references/roles.md), then read only what applies.
 
-If you are delegating work to AI’s, read [`references/subagents-vs-teams.md`](references/subagents-vs-teams.md).
-If you are a teammate, read [`references/ranks/teammate.md`](references/ranks/teammate.md).
-It’s possible that you are both.
-If the user asks you to serve as their first mate, read [`references/ranks/firstmate.md`](references/ranks/firstmate.md). Conversely, if the user asks you to serve as Captain of a fleet of teams, read [`references/ranks/captain.md`](references/ranks/captain.md) to understand your role AND `references/ranks/firstmate.md` to understand your direct delegates’ reality and how to best support them.
+If you are choosing a delegation shape, read [`references/subagents-vs-teams.md`](references/subagents-vs-teams.md).
+If you have teammates of your own, read [`references/peers.md`](references/peers.md).
+If your delegates are themselves leaders (you lead a fleet of teams), read [`references/leading-leaders.md`](references/leading-leaders.md).
 
 `./references/` contains additional resources for specific delegation use-cases and shapes. Don’t take them as gospel. They are incomplete and evolving. Think of them as examples to generalize from.

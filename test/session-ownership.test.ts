@@ -9,7 +9,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 
-import { bundledAiToAiSkillInstruction, bundledAiToAiSkillPath } from "../bundled-skill.ts";
+import { bundledAiToDelegatedSkillPath, bundledAiToLeaderSkillPath, bundledSkillsInstruction } from "../bundled-skill.ts";
 import { registerChildTools } from "../child-tools.ts";
 import teamExtension from "../index.ts";
 import type { TeamLogEntry } from "../teamlog.ts";
@@ -494,7 +494,7 @@ function installFakePi(): { restore: () => void } {
 	};
 }
 
-describe("bundled ai-to-ai skill guidance", () => {
+describe("bundled skill guidance", () => {
 	test("team_spawn returns the skill instruction to main", async () => {
 		const host = new ExtensionHost();
 
@@ -506,10 +506,12 @@ describe("bundled ai-to-ai skill guidance", () => {
 			});
 			const content = JSON.parse(result.content[0]!.text) as JsonRecord;
 
-			assert.equal(result.details?.instruction, bundledAiToAiSkillInstruction);
-			assert.equal(content.instruction, bundledAiToAiSkillInstruction);
-			assert.equal(path.isAbsolute(bundledAiToAiSkillPath), true);
-			assert.equal(fs.existsSync(bundledAiToAiSkillPath), true);
+			assert.equal(result.details?.instruction, bundledSkillsInstruction);
+			assert.equal(content.instruction, bundledSkillsInstruction);
+			for (const skillPath of [bundledAiToLeaderSkillPath, bundledAiToDelegatedSkillPath]) {
+				assert.equal(path.isAbsolute(skillPath), true, `Expected an absolute bundled skill path. Got: ${skillPath}`);
+				assert.equal(fs.existsSync(skillPath), true, `Expected the bundled skill file to exist at ${skillPath}`);
+			}
 		} finally {
 			await host.shutdown();
 		}

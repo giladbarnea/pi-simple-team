@@ -178,7 +178,7 @@ The tradeoff, like any higher-order delegation, is reduced control: you are move
 
 This is opt-in: teammates by default can't create teams.
 
-This technique plays even nicer if your main assumes the first mate[^1] or captain[^2] rank.
+This technique plays even nicer if your main assumes the captain rank[^1].
 
 ---
 
@@ -245,5 +245,4 @@ Kept minimal:
 
 ---
 
-[^1]: `skills/ai-to-ai/references/ranks/firstmate.md`
-[^2]: `skills/ai-to-ai/references/ranks/captain.md`
+[^1]: `skills/ai-to-delegated/references/leading-leaders.md`

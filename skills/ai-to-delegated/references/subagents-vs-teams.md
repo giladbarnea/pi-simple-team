@@ -23,7 +23,7 @@ Another way to think about it: whereas with sub-agents, it's a they-do-two-steps
 Therefore, use teams to lift you up to a decision-making level, rather than a task-execution level. This has its tradeoffs, but it is a powerful tool when used judiciously.
 
 **Tips:**
-1. Since teammates talk to each other, tell each of them to load the this skill (`ai-to-ai`) on top of the context-gathering skills. If you are spawning an adversary among them, tell it to load the `peer-review` skill too.
+1. Since teammates talk to each other, tell each of them to load [`roles.md`](roles.md) and the skills it routes to (for a teammate: `ai-to-leader` plus [`peers.md`](peers.md)) on top of the context-gathering skills. If you are spawning an adversary among them, tell it to load the `peer-review` skill too.
     <team-example>
       Team Example settings: at the session’s start the user ran `/skill:load-context domain: acme, subdomain1: the public REST API, subdomain2: the   data layer`; the main session explored the code, and the user approved a plan to add rate limiting to the public REST API.
       <negative-team-example why-bad="main agent burns its own context shuttling the diff and the feedback back and forth — dives into the sub-agent’s   work and clogs its own context window worse than doing the task solo would have, acts as a reviewer when biased">
@@ -32,7 +32,7 @@ Therefore, use teams to lift you up to a decision-making level, rather than a ta
       </negative-team-example>
       <positive-team-example why-good="main agent picks a team because the adversarial iteration is synergistic, replicates the user’s context levers   verbatim — including the domain and the subdomains the user specified when loading the context skill — has the reviewer also load `peer-review`,   declares only the bottom line it wants, and stays out of the loop while they converge">
       User to main agent: "Great, go ahead and implement the plan."
-      Main agent spawns an implementer–reviewer team and prompts them: "/skill:load-context domain: acme, subdomain1: the public REST API, subdomain2: the data layer, then load `ai-to-ai`. You are an implementer–reviewer team. Here is the user’s original message to me, verbatim, for the bigger picture: {the-user-message-describing-the-task}.
+      Main agent spawns an implementer–reviewer team and prompts them: "/skill:load-context domain: acme, subdomain1: the public REST API, subdomain2: the data layer, then load `ai-to-leader` and its teammate flavor `peers.md`. You are an implementer–reviewer team. Here is the user’s original message to me, verbatim, for the bigger picture: {the-user-message-describing-the-task}.
       [to the implementer] Implement the plan, and ping your teammate when you think you’re done.
       [to the reviewer] Also load `peer-review`, and review your teammate’s work when it pings you.
       [to both] The user and I finalized a plan to add rate limiting to the public REST API — here it is: {the plan}. Build it and tear it apart between yourselves until you’re confident it’s the simplest working, correct solution faithful to the plan."

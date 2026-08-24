@@ -6,7 +6,7 @@ import http from "node:http";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineTool, type ContextUsage, type ExtensionAPI, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import { bundledAiToAiSkillInstruction } from "./bundled-skill.ts";
+import { bundledSkillsInstruction } from "./bundled-skill.ts";
 import { formatContextWindowReport, requireKnownContextUsage, type KnownContextUsage } from "./context-window.ts";
 import { formatScopedModelGuidance, validateTeammateModels, type ModelReference } from "./model-preflight.ts";
 import { composeSystemPrompt } from "./system-prompt.ts";
@@ -974,7 +974,7 @@ export default function (pi: ExtensionAPI) {
 								.map((teammate) => [teammate.name, { sessionId: teammate.sessionId, sessionFile: teammate.sessionFile }]),
 						),
 						status: formatStatus(team),
-						instruction: bundledAiToAiSkillInstruction,
+						instruction: bundledSkillsInstruction,
 					});
 				},
 			}),

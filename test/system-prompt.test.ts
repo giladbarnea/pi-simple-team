@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { bundledAiToAiSkillInstruction } from "../bundled-skill.ts";
+import { bundledSkillsInstruction } from "../bundled-skill.ts";
 import { composeSystemPrompt } from "../system-prompt.ts";
 
 function prompt(): string {
@@ -16,9 +16,11 @@ describe("composeSystemPrompt participant list", () => {
 		expect(participantPrompt("Reviewer")).toContain("Participants: main, Implementer, Reviewer.");
 	});
 
-	test("instructs every teammate to read the bundled ai-to-ai skill", () => {
-		expect(participantPrompt("Implementer")).toContain(bundledAiToAiSkillInstruction);
-		expect(participantPrompt("Reviewer")).toContain(bundledAiToAiSkillInstruction);
+	test("instructs every teammate to read the bundled ai-to-leader and ai-to-delegated skills", () => {
+		expect(participantPrompt("Implementer")).toContain(bundledSkillsInstruction);
+		expect(participantPrompt("Reviewer")).toContain(bundledSkillsInstruction);
+		expect(bundledSkillsInstruction).toContain("ai-to-leader");
+		expect(bundledSkillsInstruction).toContain("ai-to-delegated");
 	});
 });
 
