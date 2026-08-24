@@ -178,25 +178,8 @@ if ((member === "resume-fails" && sequence > 1) || member === "add-fails") {
 	process.stderr.write("planned readiness failure");
 	process.exit(1);
 }
-for (const handler of sessionStartHandlers) {
-	await handler({ type: "session_start", reason: "startup" }, extensionContext);
-}
-if (member === "recursive-slow-stop") {
-	const spawnTool = registeredTools.get("team_spawn");
-	await spawnTool.execute(
-		"recursive-test-call",
-		{
-			team: "descendant-team",
-			teamPrompt: "Recursive shutdown descendant.",
-			teammates: [{ name: "recursive-descendant", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
-		},
-		new AbortController().signal,
-		undefined,
-		extensionContext,
-	);
-	fs.writeFileSync(path.join(root, "descendant-ready"), "1");
-}
-
+// SIGTERM handlers must exist before session_start registers with the parent:
+// the parent may shut the team down the moment registration resolves.
 if (member === "slow-stop") {
 	process.on("SIGTERM", () => {
 		setTimeout(() => {
@@ -223,6 +206,25 @@ if (member === "recursive-slow-stop") {
 		})();
 	});
 }
+for (const handler of sessionStartHandlers) {
+	await handler({ type: "session_start", reason: "startup" }, extensionContext);
+}
+if (member === "recursive-slow-stop") {
+	const spawnTool = registeredTools.get("team_spawn");
+	await spawnTool.execute(
+		"recursive-test-call",
+		{
+			team: "descendant-team",
+			teamPrompt: "Recursive shutdown descendant.",
+			teammates: [{ name: "recursive-descendant", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+		},
+		new AbortController().signal,
+		undefined,
+		extensionContext,
+	);
+	fs.writeFileSync(path.join(root, "descendant-ready"), "1");
+}
+
 
 async function handleCommand(command) {
 	let systemPrompt;
