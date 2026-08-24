@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 
 import { describe, test } from "bun:test";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { visibleWidth, type Component, type OverlayOptions, type TUI } from "@earendil-works/pi-tui";
+import { getKeybindings, KeybindingsManager, setKeybindings, TUI_KEYBINDINGS, visibleWidth, type Component, type OverlayOptions, type TUI } from "@earendil-works/pi-tui";
 
 import teamExtension from "../index.ts";
+import { glyphs } from "../render-support/glyphs.ts";
 import { openTeamOverview, type TeamSnapshot } from "../team-ui.ts";
 import type { TeamLogEntry } from "../teamlog.ts";
 
@@ -392,6 +393,208 @@ describe("/team", () => {
 		}
 	});
 
+	test("marks the messages widget focused by default and offers widget navigation", async () => {
+		const host = new TeamCommandHost();
+		try {
+			await host.openSnapshots(() => [liveSnapshot([])], (component) => {
+				const chevron = glyphs().chevron;
+				const text = component.render(90).join("\n");
+				assert.match(text, new RegExp(`${chevron} Messages`), "Expected the messages widget to carry the focus marker by default.");
+				assert.doesNotMatch(text, new RegExp(`${chevron} Team Log`), "Expected the team log widget to start unfocused.");
+				assert.match(text, /↑↓ widget · Enter zoom · Esc close/, "Expected the header to hint widget navigation.");
+				close(component);
+			});
+		} finally {
+			await host.shutdown();
+		}
+	});
+
+	test("moves widget focus with Up and Down, clamped at both ends", async () => {
+		const host = new TeamCommandHost();
+		try {
+			await host.openSnapshots(() => [liveSnapshot([])], (component) => {
+				const chevron = glyphs().chevron;
+				const focusedLog = new RegExp(`${chevron} Team Log`);
+				const focusedMessages = new RegExp(`${chevron} Messages`);
+
+				component.render(90);
+				component.handleInput?.("\u001b[B");
+				let text = component.render(90).join("\n");
+				assert.match(text, focusedLog, "Expected Down to focus the team log widget.");
+				assert.doesNotMatch(text, focusedMessages);
+
+				component.handleInput?.("\u001b[B");
+				assert.match(component.render(90).join("\n"), focusedLog, "Expected focus to clamp on the last widget.");
+
+				component.handleInput?.("\u001b[A");
+				text = component.render(90).join("\n");
+				assert.match(text, focusedMessages, "Expected Up to focus the messages widget again.");
+				assert.doesNotMatch(text, focusedLog);
+
+				component.handleInput?.("\u001b[A");
+				assert.match(component.render(90).join("\n"), focusedMessages, "Expected focus to clamp on the first widget.");
+				close(component);
+			});
+		} finally {
+			await host.shutdown();
+		}
+	});
+
+	test("zooms the messages widget with Enter and returns to the dashboard with Esc", async () => {
+		const host = new TeamCommandHost(24);
+		const messages = Array.from({ length: 6 }, (_, index) =>
+			logEntry({
+				sequence: index + 1,
+				kind: "send",
+				direction: "main->teammate",
+				summary: `message ${index + 1}`,
+				details: { from: "main", to: "reviewer", message: `message ${index + 1}` },
+			}),
+		);
+		const snapshot = liveSnapshot(messages);
+
+		try {
+			await host.openSnapshots(() => [snapshot], (component) => {
+				const dashboardText = component.render(90).join("\n");
+				assert.doesNotMatch(dashboardText, /message 3/, "Expected the dashboard message region to be too small for message 3.");
+
+				component.handleInput?.("\r");
+				const zoomedLines = component.render(90);
+				const zoomedText = zoomedLines.join("\n");
+				assert.equal(zoomedLines.length, 21, "Expected the zoomed view to keep the overlay height.");
+				assert.match(zoomedText, /Team: live-team-command-test/, "Expected the header to stay in the zoomed view.");
+				assert.match(zoomedText, /Messages/, "Expected the zoomed messages widget.");
+				assert.doesNotMatch(zoomedText, /Team Status/, "Expected the status region to leave the zoomed view.");
+				assert.doesNotMatch(zoomedText, /Team Log/, "Expected the log region to leave the zoomed view.");
+				assert.match(zoomedText, /message 3[\s\S]*message 6/, "Expected the zoomed view to fit more messages chronologically.");
+				assert.match(zoomedText, /Esc back/, "Expected the zoomed header to hint the way back.");
+
+				component.handleInput?.("\u001b");
+				const backText = component.render(90).join("\n");
+				assert.match(backText, /Team Status/, "Expected Esc to restore the full dashboard.");
+				assert.match(backText, /Team Log/);
+				close(component);
+			});
+		} finally {
+			await host.shutdown();
+		}
+	});
+
+	test("zooms the team log widget and reaches entries beyond the dashboard cap", async () => {
+		const host = new TeamCommandHost();
+		const logs = Array.from({ length: 30 }, (_, index) =>
+			logEntry({ sequence: index + 1, kind: "error", teammate: "reviewer", summary: `zoomlog-${String(index + 1).padStart(2, "0")}` }),
+		);
+		const snapshot = liveSnapshot(logs);
+
+		try {
+			await host.openSnapshots(() => [snapshot], (component) => {
+				const dashboardText = component.render(90).join("\n");
+				assert.doesNotMatch(dashboardText, /zoomlog-10/, "Expected the dashboard log region to be too small for entry 10.");
+
+				component.handleInput?.("\u001b[B");
+				component.handleInput?.("\r");
+				const zoomedText = component.render(90).join("\n");
+				assert.match(zoomedText, /Team Log/, "Expected the zoomed team log widget.");
+				assert.doesNotMatch(zoomedText, /Team Status/, "Expected the status region to leave the zoomed view.");
+				assert.doesNotMatch(zoomedText, /Messages/, "Expected the messages region to leave the zoomed view.");
+				assert.match(zoomedText, /zoomlog-10[\s\S]*zoomlog-30/, "Expected the zoomed log to reach past the dashboard cap, chronologically.");
+				component.handleInput?.("\u001b");
+				close(component);
+			});
+		} finally {
+			await host.shutdown();
+		}
+	});
+
+	test("zoomed log draws from the full retained log, not a fixed entry cap", async () => {
+		const host = new TeamCommandHost(140);
+		const logs = Array.from({ length: 130 }, (_, index) =>
+			logEntry({ sequence: index + 1, kind: "error", teammate: "reviewer", summary: `caplog-${String(index + 1).padStart(3, "0")}` }),
+		);
+		const snapshot = liveSnapshot(logs);
+
+		try {
+			await host.openSnapshots(() => [snapshot], (component) => {
+				component.render(90);
+				component.handleInput?.("\u001b[B");
+				component.handleInput?.("\r");
+				const zoomedText = component.render(90).join("\n");
+				assert.match(zoomedText, /caplog-020[\s\S]*caplog-130/, "Expected a tall zoomed log to reach entries older than the last 100.");
+				component.handleInput?.("\u001b");
+				close(component);
+			});
+		} finally {
+			await host.shutdown();
+		}
+	});
+
+	test("honors rebound selection keys for widget focus", async () => {
+		const previousKeybindings = getKeybindings();
+		setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, { "tui.select.down": "j" }));
+		const host = new TeamCommandHost();
+		try {
+			await host.openSnapshots(() => [liveSnapshot([])], (component) => {
+				component.render(90);
+				component.handleInput?.("j");
+				const text = component.render(90).join("\n");
+				assert.match(text, new RegExp(`${glyphs().chevron} Team Log`), "Expected the rebound down key to move widget focus.");
+				close(component);
+			});
+		} finally {
+			await host.shutdown();
+			setKeybindings(previousKeybindings);
+		}
+	});
+
+	test("zoomed views show a breadcrumb, keep the widget highlighted, and spell out the way back", async () => {
+		const host = new TeamCommandHost();
+		try {
+			await host.openSnapshots(() => [liveSnapshot([])], (component) => {
+				const chevron = glyphs().chevron;
+				component.render(90);
+				component.handleInput?.("\r");
+				const messagesText = component.render(90).join("\n");
+				assert.match(messagesText, new RegExp(`Team: live-team-command-test ${chevron} Messages`), "Expected a breadcrumb path in the zoomed header.");
+				assert.match(messagesText, new RegExp(`${chevron} Messages · latest`), "Expected the zoomed widget to keep its focus marker.");
+				assert.match(messagesText, /Esc back to team view/, "Expected the hint to name the way back.");
+
+				component.handleInput?.("\u001b");
+				component.handleInput?.("\u001b[B");
+				component.handleInput?.("\r");
+				const logText = component.render(90).join("\n");
+				assert.match(logText, new RegExp(`Team: live-team-command-test ${chevron} Team Log`), "Expected the breadcrumb to name the zoomed log widget.");
+				component.handleInput?.("\u001b");
+				close(component);
+			});
+		} finally {
+			await host.shutdown();
+		}
+	});
+
+	test("drops the zoomed view when the viewed team vanishes", async () => {
+		const host = new TeamCommandHost();
+		let snapshots: TeamSnapshot[] = [liveSnapshot([])];
+		try {
+			await host.openSnapshots(() => snapshots, (component) => {
+				component.render(90);
+				component.handleInput?.("\r");
+				assert.match(component.render(90).join("\n"), /Esc back/, "Expected Enter to zoom the focused widget.");
+
+				snapshots = [];
+				assert.match(component.render(90).join("\n"), /No teams exist/, "Expected the empty state after the zoomed team vanished.");
+
+				snapshots = [liveSnapshot([])];
+				const text = component.render(90).join("\n");
+				assert.match(text, /Team Status/, "Expected the reappeared team to open on the dashboard, not zoomed.");
+				assert.doesNotMatch(text, /Esc back/);
+				close(component);
+			});
+		} finally {
+			await host.shutdown();
+		}
+	});
+
 	test("shows the newest fitting messages and logs chronologically without scrolling", async () => {
 		const host = new TeamCommandHost(24);
 		const messages = Array.from({ length: 6 }, (_, index) =>
@@ -421,9 +624,10 @@ describe("/team", () => {
 				assert.match(text, /message 5[\s\S]*message 6/);
 				assert.doesNotMatch(text, /log [1-5]/);
 				assert.match(text, /log 6[\s\S]*log 7[\s\S]*log 8/);
-				component.handleInput?.("\u001b[B");
 				component.handleInput?.("\u001b[6~");
-				assert.deepEqual(component.render(90), populatedLines);
+				assert.deepEqual(component.render(90), populatedLines, "Expected paging keys to leave the view untouched.");
+				component.handleInput?.("\u001b[B");
+				assert.deepEqual(borderIndexes(component.render(90)), borderIndexes(populatedLines), "Expected a focus move to keep every region in place.");
 				close(component);
 			});
 		} finally {

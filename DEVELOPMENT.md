@@ -56,4 +56,7 @@ Basic sanity flow — use it as a skeleton for testing the behavior you want.
 5. Verify the outer border and fixed status, message, and log widgets. Confirm the newest fitting messages and log entries remain chronological.
 6. Use long names, status phrases, messages, and log entries. Verify middle truncation, aligned status columns, and right-aligned timestamps.
 7. Press scrolling keys and resize the terminal. Verify the regions never scroll, jump, or exceed the overlay bounds.
-8. Spawn a second team and reopen `/team`. Verify the selector lists both teams and opens the selected dashboard.
+8. Press Up and Down. Verify the focus marker moves only between the message and log widgets and no region moves.
+9. Press Enter on each widget. Verify it expands under the team header, shows older content than the dashboard, and keeps refreshing live.
+10. Press Esc in a zoomed widget. Verify it returns to the dashboard. Press Esc again and verify the overlay closes.
+11. Spawn a second team and reopen `/team`. Verify the selector lists both teams and opens the selected dashboard.

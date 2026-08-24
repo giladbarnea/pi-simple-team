@@ -1,5 +1,5 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, SelectList, sliceByColumn, truncateToWidth, visibleWidth, type Component, type SelectItem, type TUI } from "@earendil-works/pi-tui";
+import { getKeybindings, SelectList, sliceByColumn, truncateToWidth, visibleWidth, type Component, type SelectItem, type TUI } from "@earendil-works/pi-tui";
 
 import {
 	actorHueToken,
@@ -12,6 +12,7 @@ import {
 	type TeamStatusView,
 	type ThemeLike,
 } from "./render.ts";
+import { glyphs } from "./render-support/glyphs.ts";
 import type { TeamLogEntry, TeamLogKind } from "./teamlog.ts";
 
 export interface TeamSnapshot {
@@ -26,7 +27,13 @@ export interface TeamSnapshot {
 export type TeamSnapshotSource = () => readonly TeamSnapshot[];
 
 const RECENT_STATUS_LIMIT = 5;
-const RECENT_LOG_ENTRY_LIMIT = 20;
+
+type ZoomableWidget = "messages" | "log";
+
+interface WidgetView {
+	title: string;
+	lines: string[];
+}
 const LIVE_REFRESH_INTERVAL_MILLISECONDS = 500;
 const MESSAGE_LOG_KINDS = new Set<TeamLogKind>(["send", "deliver", "ack", "main_message"]);
 
@@ -147,6 +154,8 @@ class TeamOverviewOverlay implements Component {
 	private selector?: SelectList;
 	private selectorTeamNames?: string;
 	private selectedTeamName?: string;
+	private focusedWidget: ZoomableWidget = "messages";
+	private zoomedWidget?: ZoomableWidget;
 	private refreshTimer?: ReturnType<typeof setInterval>;
 	private closed = false;
 
@@ -190,17 +199,35 @@ class TeamOverviewOverlay implements Component {
 			this.tui.requestRender();
 			return;
 		}
-		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) this.close();
+		const keybindings = getKeybindings();
+		if (keybindings.matches(data, "tui.select.cancel")) {
+			if (!this.zoomedWidget) {
+				this.close();
+				return;
+			}
+			this.zoomedWidget = undefined;
+			this.tui.requestRender();
+			return;
+		}
+		if (!this.selectedTeamName || this.zoomedWidget) return;
+		if (keybindings.matches(data, "tui.select.up")) this.focusedWidget = "messages";
+		else if (keybindings.matches(data, "tui.select.down")) this.focusedWidget = "log";
+		else if (keybindings.matches(data, "tui.select.confirm")) this.zoomedWidget = this.focusedWidget;
+		else return;
+		this.tui.requestRender();
 	}
 
 	render(width: number): string[] {
 		const height = Math.max(4, Math.floor(this.tui.terminal.rows * 0.9));
 		const teams = this.teamSource();
-		if (this.selectedTeamName && !teams.some((candidate) => candidate.name === this.selectedTeamName)) this.selectedTeamName = undefined;
+		if (this.selectedTeamName && !teams.some((candidate) => candidate.name === this.selectedTeamName)) {
+			this.selectedTeamName = undefined;
+			this.zoomedWidget = undefined;
+		}
 		if (!this.selectedTeamName && teams.length === 1) this.selectedTeamName = teams[0]!.name;
 		if (this.selectedTeamName) {
 			const team = teams.find((candidate) => candidate.name === this.selectedTeamName)!;
-			return this.dashboard(team, width, height);
+			return this.zoomedWidget ? this.zoom(team, this.zoomedWidget, width, height) : this.dashboard(team, width, height);
 		}
 		if (teams.length > 1) this.refreshSelector(teams);
 		else this.selector = undefined;
@@ -248,6 +275,42 @@ class TeamOverviewOverlay implements Component {
 		];
 	}
 
+	private headerRegion(team: TeamSnapshot, hint: string, contentWidth: number, headerHeight: number, breadcrumb?: string): string[] {
+		const transport = team.showOnHerdrPanes ? "Herdr" : "RPC";
+		const metadata = [
+			`Created ${relativeTimeText(team.created)}`,
+			`${team.roster.length} teammate${team.roster.length === 1 ? "" : "s"}`,
+			transport,
+			hint,
+		].join(" · ");
+		const title = breadcrumb ? `Team: ${team.name} ${glyphs().chevron} ${breadcrumb}` : `Team: ${team.name}`;
+		return this.region(this.theme.fg("accent", this.theme.bold(title)), [this.theme.fg("muted", metadata)], contentWidth, headerHeight);
+	}
+
+	private messageWidget(team: TeamSnapshot, contentHeight: number): WidgetView {
+		const allMessages = team.log.flatMap((entry) => {
+			const message = teamMessage(entry);
+			return message ? [message] : [];
+		});
+		const messageGroups = allMessages.map((message) => teamMessageLines(this.theme, message, team.roster).map(teamLineText));
+		const selectedMessages = selectNewestMessageLines(messageGroups, Math.max(0, contentHeight));
+		const lines = selectedMessages.lines.length > 0 ? selectedMessages.lines : [this.theme.fg("muted", "No recent messages.")];
+		return { title: `Messages · latest ${selectedMessages.messageCount} of ${allMessages.length}`, lines };
+	}
+
+	private logWidget(team: TeamSnapshot, contentHeight: number): WidgetView {
+		const allLogEntries = team.log.filter((entry) => !MESSAGE_LOG_KINDS.has(entry.kind));
+		const renderedLogLines = teamLogLines(this.theme, {
+			team: team.name,
+			roster: team.roster,
+			entries: allLogEntries,
+			totalMatched: allLogEntries.length,
+			returned: allLogEntries.length,
+		}).slice(1);
+		const lines = renderedLogLines.slice(-Math.max(0, contentHeight));
+		return { title: `Team Log ${team.name} · latest ${lines.length} rows · ${allLogEntries.length} events`, lines };
+	}
+
 	private dashboard(team: TeamSnapshot, width: number, height: number): string[] {
 		const contentWidth = Math.max(1, width - 2);
 		const contentHeight = Math.max(1, height - 2);
@@ -258,51 +321,39 @@ class TeamOverviewOverlay implements Component {
 		const messageHeight = Math.max(1, Math.min(feedHeight - 1, Math.round(feedHeight * 0.55)));
 		const logHeight = feedHeight - messageHeight;
 
-		const transport = team.showOnHerdrPanes ? "Herdr" : "RPC";
-		const metadata = [
-			`Created ${relativeTimeText(team.created)}`,
-			`${team.roster.length} teammate${team.roster.length === 1 ? "" : "s"}`,
-			transport,
-			`${team.log.length} retained event${team.log.length === 1 ? "" : "s"}`,
-			"Esc close",
-		].join(" · ");
-
 		const statusContentHeight = Math.max(0, statusHeight - 2);
 		const statuses = recentStatuses(team.statuses, Math.min(RECENT_STATUS_LIMIT, statusContentHeight));
 		const statusLines = statusRows(this.theme, statuses, team.roster, Math.max(0, contentWidth - 2));
 
-		const allMessages = team.log.flatMap((entry) => {
-			const message = teamMessage(entry);
-			return message ? [message] : [];
-		});
-		const messageGroups = allMessages.map((message) => teamMessageLines(this.theme, message, team.roster).map(teamLineText));
-		const selectedMessages = selectNewestMessageLines(messageGroups, Math.max(0, messageHeight - 2));
-		const messageLines = selectedMessages.lines.length > 0 ? selectedMessages.lines : [this.theme.fg("muted", "No recent messages.")];
-
-		const allLogEntries = team.log.filter((entry) => !MESSAGE_LOG_KINDS.has(entry.kind));
-		const recentLogEntries = allLogEntries.slice(-RECENT_LOG_ENTRY_LIMIT);
-		const renderedLogLines = teamLogLines(this.theme, {
-			team: team.name,
-			roster: team.roster,
-			entries: recentLogEntries,
-			totalMatched: allLogEntries.length,
-			returned: recentLogEntries.length,
-		}).slice(1);
-		const logContentHeight = Math.max(0, logHeight - 2);
-		const logLines = renderedLogLines.slice(-logContentHeight);
+		const messages = this.messageWidget(team, messageHeight - 2);
+		const log = this.logWidget(team, logHeight - 2);
 
 		const content = [
-			...this.region(this.theme.fg("accent", this.theme.bold(`Team: ${team.name}`)), [this.theme.fg("muted", metadata)], contentWidth, headerHeight),
+			...this.headerRegion(team, "↑↓ widget · Enter zoom · Esc close", contentWidth, headerHeight),
 			...this.region(`Team Status ${team.name} · latest ${statuses.length} of ${Object.keys(team.statuses).length}`, statusLines, contentWidth, statusHeight),
-			...this.region(`Messages · latest ${selectedMessages.messageCount} of ${allMessages.length}`, messageLines, contentWidth, messageHeight),
-			...this.region(`Team Log ${team.name} · latest ${logLines.length} rows · ${allLogEntries.length} events`, logLines, contentWidth, logHeight),
+			...this.region(messages.title, messages.lines, contentWidth, messageHeight, this.focusedWidget === "messages"),
+			...this.region(log.title, log.lines, contentWidth, logHeight, this.focusedWidget === "log"),
 		];
 		return this.frame(content, width, height);
 	}
 
-	private region(title: string, content: string[], width: number, height: number): string[] {
+	private zoom(team: TeamSnapshot, widget: ZoomableWidget, width: number, height: number): string[] {
+		const contentWidth = Math.max(1, width - 2);
+		const contentHeight = Math.max(1, height - 2);
+		const headerHeight = Math.min(3, Math.max(1, contentHeight - 3));
+		const widgetHeight = Math.max(1, contentHeight - headerHeight);
+		const view = widget === "messages" ? this.messageWidget(team, widgetHeight - 2) : this.logWidget(team, widgetHeight - 2);
+		const breadcrumb = widget === "messages" ? "Messages" : "Team Log";
+		const content = [
+			...this.headerRegion(team, "Esc back to team view", contentWidth, headerHeight, breadcrumb),
+			...this.region(view.title, view.lines, contentWidth, widgetHeight, true),
+		];
+		return this.frame(content, width, height);
+	}
+
+	private region(title: string, content: string[], width: number, height: number, focused = false): string[] {
 		const frameWidth = Math.max(1, width);
-		const border = (text: string): string => this.theme.fg("border", text);
+		const border = (text: string): string => this.theme.fg(focused ? "borderAccent" : "border", text);
 		if (frameWidth < 3) {
 			const top = border(frameWidth === 1 ? "╭" : "╭╮");
 			if (height === 1) return [top];
@@ -312,7 +363,7 @@ class TeamOverviewOverlay implements Component {
 
 		const innerWidth = frameWidth - 2;
 		const labelWidth = Math.max(0, innerWidth - 3);
-		const label = middleTruncateToWidth(title, labelWidth);
+		const label = middleTruncateToWidth(focused ? `${glyphs().chevron} ${title}` : title, labelWidth);
 		const topFill = "─".repeat(Math.max(0, innerWidth - 3 - visibleWidth(label)));
 		const top = innerWidth < 3 ? border(`╭${"─".repeat(innerWidth)}╮`) : `${border("╭─ ")}${label}${border(` ${topFill}╮`)}`;
 		if (height === 1) return [top];

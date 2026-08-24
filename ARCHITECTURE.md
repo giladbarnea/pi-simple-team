@@ -1,5 +1,5 @@
 ---
-updated: 2026-08-14
+updated: 2026-08-20
 status: current
 audience: AI agents and maintainers
 ---
@@ -156,11 +156,13 @@ With no snapshots, the command renders an empty state. One snapshot opens direct
 
 The 90% overlay has one outer frame and fixed bordered regions for metadata, status, messages, and the non-message log. Region heights depend on the terminal height, not incoming data, so updates cannot move the boundaries. The view has no scrolling path.
 
+The message and log widgets are zoomable. Up and Down move a focus marker between them, Enter expands the focused widget to the full overlay under the metadata header, and Esc returns to the dashboard. From the dashboard, Esc closes the overlay. A zoomed view keeps the user oriented three ways: the header title becomes a breadcrumb (`Team: <name> ❯ Messages`), the expanded widget keeps its focused styling, and the hint reads `Esc back to team view`. The dashboard resolves these keys through the `tui.select.*` keybindings, the same ids the team selector uses, so user rebinds apply everywhere. The overlay keeps two intent fields for this: the focused widget and the zoomed widget. Every render still derives the visible screen from those fields plus a fresh snapshot, so a vanished team drops both the selection and the zoom.
+
 The status region shows at most the five most recently updated participants. It aligns the name, status word, and phrase columns, then right-aligns timestamps.
 
 The message region turns `send` and `main_message` entries into message views. It chooses the newest message groups that fit and keeps those groups in chronological order. If one message exceeds its region, the view retains its outer lines around an omission marker.
 
-The log region excludes messages and their delivery entries: `send`, `deliver`, `ack`, and `main_message`. This separation prevents message activity from duplicating the message view. The region considers at most the latest 20 non-message entries, then shows the newest rows that fit in chronological order.
+The log region excludes messages and their delivery entries: `send`, `deliver`, `ack`, and `main_message`. This separation prevents message activity from duplicating the message view. The region folds all retained non-message entries, then shows the newest rows that fit in chronological order. The log's own 1000-entry retention is the only cap.
 
 Every region uses middle truncation for horizontal overflow. This preserves both ends of names, status phrases, messages, and event rows without changing the fixed layout.
 

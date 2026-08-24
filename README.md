@@ -81,6 +81,8 @@ Main agent:
 
 The command opens an overlay rolling recent statuses, messages, and a separate event log.
 
+Up/Down select the messages or log widget. Enter zooms it to the full overlay. Esc goes back.
+
 <a href="screenshots/team-view.png">
   <img src="screenshots/team-view.png" width="100%" alt="The live team dashboard showing statuses, messages, and recent events">
 </a>
