@@ -23,6 +23,7 @@ Reproduce / baseline tests run first thing.
 
 **Automatic testing:**
 We do high quality TDD. Load related skills.
+`bun test` is hermetic: `test/preload.ts` points `PI_CODING_AGENT_DIR` at a temp directory, so no test reads or writes the real `~/.pi/agent` (registry manifests, settings.json). `test/isolation.test.ts` guards this. The opt-in real-pi run (`PI_SIMPLE_TEAM_TEST_REAL_PI=1`) is the one exception: the real binary needs the real config.
 Not everything can be tested programmatically, though. We lean on manual tests for that reason.
 
 **Manual (behavior) testing:**
