@@ -345,6 +345,19 @@ export function teamShutdownLines(theme: ThemeLike, team: string, teammates: str
 	return [header, `${treeConnector(theme, "└")}${actorList(theme, teammates, roster, glyphs().dot)}`];
 }
 
+function reminderCallBody(theme: ThemeLike, args: Record<string, unknown>): string {
+	const delayMinutes = args.delayMinutes;
+	const message = typeof args.message === "string" ? args.message : "";
+	const target = typeof delayMinutes === "number" ? theme.fg("accent", `in ${plural(delayMinutes, "minute")}`) : "";
+	return callBody(theme, "Schedule Reminder", target, message ? [theme.fg("muted", formatCharCount(message.length))] : []);
+}
+
+export function scheduleReminderLines(theme: ThemeLike, options: { delayMinutes: number; message: string; expanded: boolean }): TeamLine[] {
+	const header = `${stackPrefix(theme)}${reminderCallBody(theme, options)}`;
+	const lineLimit = options.expanded ? Number.POSITIVE_INFINITY : SEND_PREVIEW_LINES;
+	return [header, ...quotedBody(theme, options.message, { lineLimit, barToken: "muted" })];
+}
+
 const TEAMMATE_HUE_TOKENS = ["mdCode", "customMessageLabel", "mdHeading"] as const;
 
 /**
@@ -855,6 +868,30 @@ export function renderTeamToolResult(
 		return new TeamSendView(header, message, bar, markdownTheme, options.expanded, theme);
 	}
 	return new TeamLines(resultLinesFor(tool, theme, args, details, options.expanded, roster), options.expanded ? "wrap" : "clip");
+}
+
+export function renderReminderToolCall(args: Record<string, unknown>, theme: ThemeLike, context: ToolRenderContextLike) {
+	return renderPendingCall(reminderCallBody(theme, args ?? {}), theme, context, context?.cwd);
+}
+
+export function renderReminderToolResult(
+	result: { isError?: boolean; details?: unknown },
+	options: { expanded: boolean },
+	theme: ThemeLike,
+	context: ToolRenderContextLike,
+): TeamLines {
+	const args = (context?.args ?? {}) as Record<string, unknown>;
+	if (context?.isError || result?.isError) {
+		return new TeamLines(errorLines(theme, reminderCallBody(theme, args), textContent(result)), options.expanded ? "wrap" : "clip");
+	}
+	return new TeamLines(
+		scheduleReminderLines(theme, {
+			delayMinutes: args.delayMinutes as number,
+			message: args.message as string,
+			expanded: options.expanded,
+		}),
+		options.expanded ? "wrap" : "clip",
+	);
 }
 
 export function renderTeamMessage(message: { details?: unknown }, theme: ThemeLike, markdownTheme?: MarkdownTheme, roster: string[] = []): TeamMessageView | TeamLines | undefined {

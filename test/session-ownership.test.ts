@@ -30,6 +30,12 @@ type RegisteredTool = {
 	description: string;
 	promptSnippet?: string;
 	parameters: TSchema;
+	renderShell?: "self";
+	renderCall?: (
+		args: JsonRecord,
+		theme: { bold: (text: string) => string; fg: (token: string, text: string) => string },
+		context: { executionStarted?: boolean; isPartial?: boolean },
+	) => RenderedToolResult;
 	renderResult?: (
 		result: ToolResult,
 		options: { expanded: boolean },
@@ -101,6 +107,7 @@ describe("recursive team oversight", () => {
 				[...host.tools.keys()].sort(),
 				[
 					"report_context_window",
+					"schedule_reminder",
 					"team_add",
 					"team_list",
 					"team_resume",
@@ -113,6 +120,33 @@ describe("recursive team oversight", () => {
 				].sort(),
 				"Expected an opted-in teammate to remain a parent-team member and gain the complete manager tool set.",
 			);
+		} finally {
+			for (const [name, value] of Object.entries(previousEnvironment)) {
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			}
+			await host?.shutdown();
+		}
+	});
+
+	test("a normal teammate does not receive the manager reminder tool", async () => {
+		const environment = {
+			PI_SIMPLE_TEAM_CHILD: "1",
+			PI_SIMPLE_TEAM_CALLBACK_URL: "http://127.0.0.1:1/callback",
+			PI_SIMPLE_TEAM_CALLBACK_TOKEN: "unused",
+			PI_SIMPLE_TEAM_TEAM: "parent-team-id",
+			PI_SIMPLE_TEAM_TEAM_NAME: "parent-team",
+			PI_SIMPLE_TEAM_MEMBER: "worker",
+			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["worker"]),
+			PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS: "0",
+		};
+		const previousEnvironment = Object.fromEntries(Object.keys(environment).map((name) => [name, process.env[name]]));
+		Object.assign(process.env, environment);
+		let host: ExtensionHost | undefined;
+
+		try {
+			host = new ExtensionHost();
+			assert.equal(host.tools.has("schedule_reminder"), false, "Expected normal teammates to receive only parent-team member tools.");
 		} finally {
 			for (const [name, value] of Object.entries(previousEnvironment)) {
 				if (value === undefined) delete process.env[name];
@@ -284,9 +318,16 @@ type ScopedModel = {
 const fakeAvailableModels = [{ provider: "fake", id: "fake-model" }];
 
 type RecordedMessage = {
+	customType?: string;
+	content?: string;
+	display?: boolean;
 	details?: {
 		team?: string;
 		from?: string;
+	};
+	options?: {
+		deliverAs?: "steer" | "followUp" | "nextTurn";
+		triggerTurn?: boolean;
 	};
 };
 
@@ -311,8 +352,8 @@ class ExtensionHost {
 			registerCommand: () => undefined,
 			registerMessageRenderer: () => undefined,
 			registerTool: (tool: RegisteredTool) => this.tools.set(tool.name, tool),
-			sendMessage: (message: RecordedMessage) => {
-				this.messages.push(message);
+			sendMessage: (message: RecordedMessage, options: RecordedMessage["options"]) => {
+				this.messages.push({ ...message, options });
 				onMessage();
 			},
 		} as unknown as ExtensionAPI;
@@ -493,6 +534,104 @@ function installFakePi(): { restore: () => void } {
 		},
 	};
 }
+
+describe("schedule_reminder", () => {
+	test("returns before waking the manager once with its custom message", async () => {
+		const host = new ExtensionHost();
+		const message = "Check whether the team needs help.";
+
+		try {
+			const result = await host.execute<{ scheduledAt: string; message: string }>("schedule_reminder", {
+				delayMinutes: 0.002,
+				message,
+			});
+
+			assert.equal(host.messages.length, 0, "Expected schedule_reminder to return without waiting for its timer.");
+			assert.equal(result.message, message, "Expected the scheduled result to retain the agent-defined message.");
+			assert.ok(Number.isFinite(Date.parse(result.scheduledAt)), `Expected an ISO scheduled time. Got: ${result.scheduledAt}`);
+
+			await new Promise((resolve) => setTimeout(resolve, 200));
+
+			assert.deepEqual(
+				host.messages,
+				[
+					{
+						customType: "pi-simple-team-reminder",
+						content: message,
+						display: false,
+						options: { deliverAs: "followUp", triggerTurn: true },
+					},
+				],
+				"Expected one custom follow-up message that triggers an idle manager turn.",
+			);
+		} finally {
+			await host.shutdown();
+		}
+	});
+
+	test("accepts only a positive delay within the single-timer range", async () => {
+		const host = new ExtensionHost();
+		const schema = host.tools.get("schedule_reminder")?.parameters;
+		assert.ok(schema, "Expected managers to receive the schedule_reminder schema.");
+
+		assert.equal(Value.Check(schema, { delayMinutes: 30, message: "Check the team." }), true, "Expected a normal future delay to pass validation.");
+		assert.equal(Value.Check(schema, { delayMinutes: 0, message: "Check the team." }), false, "Expected a zero delay to fail validation.");
+		assert.equal(Value.Check(schema, { delayMinutes: 35_792, message: "Check the team." }), false, "Expected a delay beyond the runtime timer range to fail validation.");
+		assert.equal(Value.Check(schema, { delayMinutes: 30, message: "" }), false, "Expected an empty wake-up message to fail validation.");
+
+		await host.shutdown();
+	});
+
+	test("guides the manager to offer reminders as an unattended team safety net", async () => {
+		const host = new ExtensionHost();
+		const tool = host.tools.get("schedule_reminder");
+		assert.ok(tool, "Expected managers to receive schedule_reminder guidance.");
+		const guidance = `${tool.description} ${tool.promptSnippet ?? ""}`;
+
+		assert.match(guidance, /wakes you with a custom message/, "Expected the guidance to explain the wake-up behavior.");
+		assert.match(guidance, /Ask whether the user wants periodic checks, such as every 30 minutes/, "Expected the manager to offer periodic team checks.");
+		assert.match(guidance, /multi-hour unattended work/, "Expected longer unattended runs to receive a stronger safety-net recommendation.");
+
+		await host.shutdown();
+	});
+
+	test("renders a compact reminder instead of raw result JSON", async () => {
+		const host = new ExtensionHost();
+		const args = { delayMinutes: 30, message: "Check whether the team needs help." };
+
+		try {
+			const tool = host.tools.get("schedule_reminder");
+			assert.equal(tool?.renderShell, "self", "Expected schedule_reminder to replace Pi's default tool shell.");
+			assert.equal(typeof tool?.renderCall, "function", "Expected schedule_reminder to render its pending call.");
+			const result = await host.executeResult("schedule_reminder", args);
+			const lines = host.renderResult("schedule_reminder", result, args);
+			const output = lines.join("\n");
+
+			assert.equal(lines.length, 2, `Expected one stat line and one message line. Got: ${output}`);
+			assert.match(lines[0]!, /Schedule Reminder/, `Expected the tool label in the stat line. Got: ${lines[0]}`);
+			assert.match(lines[0]!, /in 30 minutes/, `Expected the relative delay in the stat line. Got: ${lines[0]}`);
+			assert.match(lines[0]!, new RegExp(`${args.message.length} chars`), `Expected the message size in the stat line. Got: ${lines[0]}`);
+			assert.match(lines[1]!, /▌/, `Expected the reminder message behind the shared quote bar. Got: ${lines[1]}`);
+			assert.match(lines[1]!, new RegExp(args.message.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `Expected the custom reminder message in the body. Got: ${lines[1]}`);
+			assert.doesNotMatch(output, /scheduledAt|"message"|[{}]/, `Expected no raw result JSON. Got: ${output}`);
+		} finally {
+			await host.shutdown();
+		}
+	});
+
+	test("cancels a pending reminder when its session shuts down", async () => {
+		const host = new ExtensionHost();
+
+		await host.execute("schedule_reminder", {
+			delayMinutes: 0.002,
+			message: "This message must not reach a replacement session.",
+		});
+		await host.shutdown();
+		await new Promise((resolve) => setTimeout(resolve, 200));
+
+		assert.equal(host.messages.length, 0, "Expected session shutdown to cancel pending reminders.");
+	});
+});
 
 describe("bundled skill guidance", () => {
 	test("team_spawn returns the skill instruction to main", async () => {

@@ -24,7 +24,7 @@ import {
 	type TeamManifestMember,
 } from "./team-registry.ts";
 import { appendTeamLog, filterTeamLog, normalizeChildEvent, pageTeamLog, preview, renderTeamLogPage, type TeamLogEntry } from "./teamlog.ts";
-import { renderTeamMessage, renderTeamToolCall, renderTeamToolResult, type TeamMessageDetails } from "./render.ts";
+import { renderReminderToolCall, renderReminderToolResult, renderTeamMessage, renderTeamToolCall, renderTeamToolResult, type TeamMessageDetails } from "./render.ts";
 import { openTeamOverview, type TeamSnapshot } from "./team-ui.ts";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -844,6 +844,7 @@ export default function (pi: ExtensionAPI) {
 	const parentPiExecutable = process.argv[1];
 	if (!parentPiExecutable) throw new Error("pi-simple-team could not locate the parent Pi executable");
 	const owner = Symbol("pi-simple-team-owner");
+	const reminderTimers = new Set<ReturnType<typeof setTimeout>>();
 	const sessionTeammateRoster = childRuntimeConfig?.participants ?? [];
 	pi.registerMessageRenderer(teamMessageType, (message, _options, theme) => renderTeamMessage(message, theme, getMarkdownTheme(), sessionTeammateRoster));
 
@@ -855,6 +856,8 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async () => {
+		for (const timer of reminderTimers) clearTimeout(timer);
+		reminderTimers.clear();
 		for (const team of [...teams.values()]) {
 			if (team.owner === owner) await shutdownTeam(team);
 		}
@@ -980,6 +983,36 @@ export default function (pi: ExtensionAPI) {
 			}),
 		);
 	});
+
+	pi.registerTool(
+		defineTool({
+			name: "schedule_reminder",
+			label: "Schedule Reminder",
+			description: "Set yourself a one-shot reminder that wakes you with a custom message after a specified number of minutes.",
+			promptSnippet: "Use schedule_reminder as a safety net for team oversight if delegates do not wake you proactively. Ask whether the user wants periodic checks, such as every 30 minutes. Recommend this safety net more strongly as the expected run time grows, especially for multi-hour unattended work. For periodic checks, schedule the next reminder after each check.",
+			renderShell: "self",
+			renderCall: (args, theme, context) => renderReminderToolCall(args, theme, context),
+			renderResult: (result, options, theme, context) => renderReminderToolResult(result, options, theme, context),
+			parameters: Type.Object({
+				delayMinutes: Type.Number({ exclusiveMinimum: 0, maximum: 35_791, description: "Minutes until the reminder" }),
+				message: Type.String({ minLength: 1, description: "Custom message that wakes you" }),
+			}),
+			async execute(_toolCallId, params) {
+				const delayMilliseconds = params.delayMinutes * 60_000;
+				const scheduledAt = new Date(Date.now() + delayMilliseconds).toISOString();
+				const timer = setTimeout(() => {
+					reminderTimers.delete(timer);
+					pi.sendMessage(
+						{ customType: "pi-simple-team-reminder", content: params.message, display: false },
+						{ deliverAs: "followUp", triggerTurn: true },
+					);
+				}, delayMilliseconds);
+				reminderTimers.add(timer);
+				timer.unref();
+				return toolResult({ scheduledAt, message: params.message });
+			},
+		}),
+	);
 
 	pi.registerTool(
 		defineTool({

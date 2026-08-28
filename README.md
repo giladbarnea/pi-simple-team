@@ -212,7 +212,8 @@ Kept minimal:
 | | With team | `teamsend` |
 | | On team | `teamstatus`, `teamlog` |
 | | On everyone | `report_context_window` |
-| **Overseeing teammate** | On own teams | Same tools as the main agent |
+| | On self | `schedule_reminder` |
+| **Overseeing teammate** | On self and own teams | Same tools as the main agent |
 | | With parent team | `teamsend`, `teamstatus`, `teammain` |
 | **Teammates** | With team | `teamsend` |
 | | With main | `teammain` |
