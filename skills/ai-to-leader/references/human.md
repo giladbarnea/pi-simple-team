@@ -13,7 +13,7 @@ In this context, forgetfulness isn’t deletion of memory — memory typically p
 
 <cognitive-overload.forgetfulness.mitigation>
 Help your human recall.
-Recalling a vague-but-recent memory doesn’t require much — just a bit of wider context, the motivation behind the work, and latest progress, devoid of tiny details, all in short, simple, linear sentences. You’re aiming for the human to have a “Oh right, of course! yes, good, let’s resume” moment.
+Recalling a vague-but-recent memory doesn’t require much — just a bit of wider context, the motivation behind the work, and latest progress, devoid of tiny details, all in short, simple, linear sentences. Aim for the human to have a “Oh right, of course! yes, good, let’s resume” moment.
 </cognitive-overload.forgetfulness.mitigation>
 </cognitive-overload.forgetfulness>
 
