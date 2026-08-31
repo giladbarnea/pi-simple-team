@@ -45,9 +45,9 @@ main(){
 	# place before they are staged.
 	local anonymization_prompt
 	IFS= read -r -d '' anonymization_prompt <<'EOF' || true
-The files in ./skills/ai-to-leader/references/*.md have been copied from ~/.agents/plugins/interaction/skills/ai-to-leader/references/*.md.
-The plugin at ~/.agents/plugins/interaction/skills/ copies speak in Gilad's personal voice (Gilad, ADHD, first person).
-The bundled copies in ./skills/ai-to-leader/references/*.md must be anonymized (a generic human leader, cognitive overload, direct assertions softened).
+The markdown files under ./skills/*/references/ (including subdirectories) have been copied from ~/.agents/plugins/interaction/.
+The plugin copies at ~/.agents/plugins/interaction/ speak in Gilad's personal voice (Gilad, ADHD, first person).
+The bundled copies under ./skills/ must be anonymized (a generic human leader, cognitive overload, direct assertions softened).
 Here is a signed-off before-and-after past anonymization of the files you need to anonymize now. Note what’s modified and what’s left untouched. Apply this principle on the copied bundled files.
 <human.md pre-anonymization: gilad personal voice>
     ---
@@ -244,6 +244,40 @@ Here is a signed-off before-and-after past anonymization of the files you need t
     Repeat what you said in plain English, with half the length and half the depth. Add enough surrounding context to bring your human back into the work.
     Apply the principles in the canonical [`./human.md`](./human.md) especially strictly.
 </help.md post-anonymization>
+
+---
+
+<head-of-product.md pre-anonymization: gilad personal voice>
+    ---
+    name: head-of-product
+    description: Keeps work focused on the smallest useful outcome and prevents discovery-driven scope creep.
+    type: role
+    goes_well_with: tech-lead
+    ---
+
+    # Head of Product
+
+    Cares about user value, time to delivery, and working outcomes. For Gilad’s business, working deliverables create income. For his clients, useful deliverables create value and trust, and lead to more work.
+    Head of product deeply understands that homing in on the minimal deliverable that works well but does not go an inch beyond that desired minimal scope is crucial for the business to work.
+    The inverse of successful scope home-in is the following scope-creep failure mode to prevent: as the team loops, it convinces itself, when deciding on the next iteration’s goal and scope, that they must add this and that new requirement to the scope because of something they had discovered in the last loop iteration. Scope blows up, and the team ends up with more unfinished loose ends that they managed to convince themselves are important. A team that ends up like this does more damage than good. Head of product understands this. It keeps its eyes on the overarching goal and does not forget ‘good enough’.
+</head-of-product.md pre-anonymization: gilad personal voice>
+
+<head-of-product.md post-anonymization>
+    ---
+    name: head-of-product
+    description: Keeps work focused on the smallest useful outcome and prevents discovery-driven scope creep.
+    type: role
+    goes_well_with: tech-lead
+    ---
+
+    # Head of Product
+
+    Cares about user value, time to delivery, and working outcomes.
+    Head of product deeply understands that homing in on the minimal deliverable that works well but does not go an inch beyond that desired minimal scope is crucial for the business to work.
+    The inverse of successful scope home-in is the following scope-creep failure mode to prevent: as the team loops, it convinces itself, when deciding on the next iteration’s goal and scope, that they must add this and that new requirement to the scope because of something they had discovered in the last loop iteration. Scope blows up, and the team ends up with more unfinished loose ends that they managed to convince themselves are important. A team that ends up like this does more damage than good. Head of product understands this. It keeps its eyes on the overarching goal and does not forget ‘good enough’.
+</head-of-product.md post-anonymization>
+
+Note the head-of-product.md example: details true only of Gilad's specific situation (his business model, his clients) are removed outright, not reworded — the anonymized files address a general audience for whom those details may not hold.
 EOF
 
 	pi --model openai-codex/gpt-5.6-luna --thinking high --no-session --no-skills --no-prompt-templates --no-extensions --no-themes --no-context-files "$anonymization_prompt"
