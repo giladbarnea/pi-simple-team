@@ -91,7 +91,7 @@ Besides checking your own context window, check your delegates’ window opportu
 
 This section is a communication rulebook to all cases where an AI requests something from another AI: down, sideways and up — main to sub-agent, main to team, teammate to teammate, and delegated to delegator.
 
-The framework behind this section: [`theory-of-mind.md`](~/.agents/plugins/interaction/references/theory-of-mind.md). Read it once if you haven’t already.
+The framework behind this section: [`theory-of-mind.md`](references/theory-of-mind.md). Read it once if you haven’t already.
 
 **1. Orient the agent to the project:**
     1.a. Tell the AI agent to *load the skills and files your leader has referenced* throughout the session. That’s the baseline common ground. Do not repeat the content of those skills and files in your instructions. This why references exist.
@@ -139,7 +139,7 @@ The framework behind this section: [`theory-of-mind.md`](~/.agents/plugins/inter
 
 ## Next required reading
 
-The following is a tiny state machine. If you haven’t already, yourself first with [`roles.md`](~/.agents/plugins/interaction/references/roles.md), then read only what applies.
+The following is a tiny state machine. If you haven’t already, yourself first with [`roles.md`](references/roles.md), then read only what applies.
 
 If you are choosing a delegation shape, read [`references/subagents-vs-teams.md`](references/subagents-vs-teams.md).
 If you have teammates of your own, read [`references/peers.md`](references/peers.md).
