@@ -225,13 +225,22 @@ function enqueueDelivery(team: TeamState, from: string, recipient: TeammateState
 		});
 }
 
+/** @example resolveTeamIdentifier([{ id: "main-review", name: "review" }], "review")?.id // "main-review" */
+function resolveTeamIdentifier<IdentifiedTeam extends { id?: string; name: string }>(
+	candidates: Iterable<IdentifiedTeam>,
+	teamIdentifier: string,
+): IdentifiedTeam | undefined {
+	const matches = [...candidates].filter((team) => team.id === teamIdentifier || team.name === teamIdentifier);
+	if (matches.length > 1) throw new Error(`Ambiguous team name: ${teamIdentifier}. Pass the persistent team ID.`);
+	return matches[0];
+}
+
 function resolveTeam(owner: symbol, teamIdentifier?: string): TeamState {
 	const ownedTeams = [...teams.values()].filter((team) => team.owner === owner);
 	if (teamIdentifier) {
-		const matches = ownedTeams.filter((team) => team.id === teamIdentifier || team.name === teamIdentifier);
-		if (matches.length === 0) throw new Error(`Unknown team: ${teamIdentifier}`);
-		if (matches.length > 1) throw new Error(`Ambiguous team name: ${teamIdentifier}. Pass the persistent team ID.`);
-		return matches[0]!;
+		const team = resolveTeamIdentifier(ownedTeams, teamIdentifier);
+		if (!team) throw new Error(`Unknown team: ${teamIdentifier}`);
+		return team;
 	}
 
 	if (ownedTeams.length === 1) return ownedTeams[0];
@@ -1073,7 +1082,7 @@ export default function (pi: ExtensionAPI) {
 			renderCall: (args, theme, context) => renderTeamToolCall("team_resume", args, theme, context, sessionTeammateRoster),
 			renderResult: (result, options, theme, context) => renderTeamToolResult("team_resume", result, options, theme, context, undefined, sessionTeammateRoster),
 			parameters: Type.Object({
-				team: Type.String({ description: "Persistent team ID" }),
+				team: Type.String({ description: "Team name or persistent ID" }),
 				teammates: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: "Stopped teammate names. Omit to resume all stopped teammates." })),
 				showOnHerdrPanes: Type.Optional(Type.Boolean({ default: false, description: "Resume selected teammates in visible Herdr panes. Defaults to RPC." })),
 			}),
@@ -1082,9 +1091,10 @@ export default function (pi: ExtensionAPI) {
 				if (!rawProjectDirectory) throw new Error("team_resume requires a project directory");
 				const managerSessionId = childRuntimeConfig ? context.sessionManager?.getSessionId?.() : undefined;
 				if (childRuntimeConfig && !managerSessionId) throw new Error("team_resume requires a persistent overseeing teammate session");
-				const manifest = listTeamManifests(rawProjectDirectory).find(
-					(candidate) => candidate.id === params.team && (!managerSessionId || candidate.originMainSessionId === managerSessionId),
+				const availableManifests = listTeamManifests(rawProjectDirectory).filter(
+					(candidate) => !managerSessionId || candidate.originMainSessionId === managerSessionId,
 				);
+				const manifest = resolveTeamIdentifier(availableManifests, params.team);
 				if (!manifest) throw new Error(`Unknown current-project team: ${params.team}`);
 				const requestedNames = params.teammates?.map(compactName) ?? manifest.members.map((member) => member.name);
 				const duplicateNames = requestedNames.filter((name, index) => requestedNames.indexOf(name) !== index);
@@ -1183,11 +1193,14 @@ export default function (pi: ExtensionAPI) {
 			renderCall: (args, theme, context) => renderTeamToolCall("team_add", args, theme, context, sessionTeammateRoster),
 			renderResult: (result, options, theme, context) => renderTeamToolResult("team_add", result, options, theme, context, undefined, sessionTeammateRoster),
 			parameters: Type.Object({
-				team: Type.String({ description: "Persistent team ID" }),
+				team: Type.String({ description: "Team name or persistent ID" }),
 				teammates: Type.Array(teammateSchema(""), { minItems: 1, description: "New teammates to add" }),
 			}),
 			async execute(_toolCallId, params, _signal, _onUpdate, context) {
-				const team = [...teams.values()].find((candidate) => candidate.id === params.team && candidate.owner === owner);
+				const team = resolveTeamIdentifier(
+					[...teams.values()].filter((candidate) => candidate.owner === owner),
+					params.team,
+				);
 				if (!team || !team.manifest || !team.lease || team.manifest.state !== "active") {
 					throw new Error(`team_add requires a running team owned by this main session: ${params.team}`);
 				}

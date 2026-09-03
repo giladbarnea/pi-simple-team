@@ -488,6 +488,43 @@ test("canonical team IDs distinguish live teams with the same display name", asy
 	}
 });
 
+test("team_resume rejects an ambiguous team name and asks for the persistent team ID", async () => {
+	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-ambiguous-resume-test-"));
+	const agentDirectory = path.join(temporaryDirectory, "agent");
+	const projectDirectory = path.join(temporaryDirectory, "project");
+	fs.mkdirSync(agentDirectory);
+	fs.mkdirSync(projectDirectory);
+	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const hosts: ExtensionHost[] = [];
+
+	try {
+		const { default: teamExtension } = await import("../index.ts");
+		const teamName = "shared-name";
+		for (const sessionId of ["first-main", "second-main"]) {
+			const host = new ExtensionHost(teamExtension, makeContext(sessionId, projectDirectory));
+			hosts.push(host);
+			await host.start();
+			await host.execute("team_spawn", { team: teamName, teamPrompt: sessionId, teammates: [] });
+			await host.shutdown();
+		}
+
+		const resumingHost = new ExtensionHost(teamExtension, makeContext("resuming-main", projectDirectory));
+		hosts.push(resumingHost);
+		await resumingHost.start();
+		await assert.rejects(
+			() => resumingHost.execute("team_resume", { team: teamName }),
+			/Ambiguous team name.*persistent team ID/i,
+			"Expected team_resume to reject a name shared by multiple current-project teams.",
+		);
+	} finally {
+		for (const host of hosts.reverse()) await host.shutdown();
+		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+	}
+});
+
 test("an overseeing teammate can discover and resume only teams it created", async () => {
 	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-recursive-scope-test-"));
 	const agentDirectory = path.join(temporaryDirectory, "agent");
@@ -652,7 +689,7 @@ test("team_shutdown gives an overseeing teammate time to stop its own teams", as
 	}
 });
 
-test("team_add grows an owned running team with durable new sessions and a next-turn roster", async () => {
+test("team_add accepts a team name and grows the owned running team", async () => {
 	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-add-test-"));
 	const agentDirectory = path.join(temporaryDirectory, "agent");
 	const projectDirectory = path.join(temporaryDirectory, "project");
@@ -714,7 +751,7 @@ test("team_add grows an owned running team with durable new sessions and a next-
 		);
 
 		const addResult = await host.execute("team_add", {
-			team: teamId,
+			team: teamName,
 			teammates: [
 				{ name: "security", prompt: "Review security.", model: "fake/fake-model", thinking: "high" },
 				{ name: "operations", prompt: "Review operations.", model: "fake/fake-model", thinking: "medium" },
@@ -892,7 +929,7 @@ test("a later same-project session resumes selected and all stopped teammates wi
 			`Expected team_list to expose the untouched member provisional session file. Got: ${JSON.stringify(dormantList.details)}`,
 		);
 
-		const selectedResume = await resumingHost.execute("team_resume", { team: teamId, teammates: ["persisted"] });
+		const selectedResume = await resumingHost.execute("team_resume", { team: teamName, teammates: ["persisted"] });
 		assert.deepEqual(
 			selectedResume.details?.resumed,
 			["persisted"],
