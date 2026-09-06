@@ -69,7 +69,6 @@ interface TeammateState {
 	rejectReady?: (error: Error) => void;
 	alive: boolean;
 	deliveryQueue: Promise<void>;
-	stderr: string;
 }
 
 interface TeamState {
@@ -353,7 +352,6 @@ function createTeammateState(team: TeamState, teammateSpec: TeammateSpec): Teamm
 		rejectReady,
 		alive: true,
 		deliveryQueue: Promise.resolve(),
-		stderr: "",
 	};
 }
 
@@ -416,7 +414,6 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 
 	proc.stderr?.on("data", (chunk: Buffer | string) => {
 		const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-		teammate.stderr += text;
 		appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "stderr", summary: preview(text) });
 	});
 	proc.on("exit", (code, signal) => {

@@ -753,6 +753,16 @@ describe("renderTeamToolResult", () => {
 });
 
 describe("renderTeamToolCall", () => {
+	test("shows a static warning indicator only while the tool is pending", () => {
+		const component = renderTeamToolCall("team_list", {}, taggingTheme, { executionStarted: true, isPartial: true });
+		const expected = `«warning:${g.bullet}»`;
+		expect(component.render(200)[0]).toStartWith(expected);
+		component.invalidate();
+		expect(component.render(100)[0]).toStartWith(expected);
+		expect(renderTeamToolCall("team_list", {}, taggingTheme, { executionStarted: false, isPartial: true }).render(200)).toEqual([]);
+		expect(renderTeamToolCall("team_list", {}, taggingTheme, { executionStarted: true, isPartial: false }).render(200)).toEqual([]);
+	});
+
 	test("renders multiple Team Log kinds as one OR filter", () => {
 		const component = renderTeamToolCall(
 			"teamlog",

@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 
 import { stableRenderWidth, stripAnsi } from "./ansi.js";
 import { glyphs, truncateText } from "./glyphs.js";
-import { pendingStatusAnimation, settingNumber, stackToolCalls } from "./settings.js";
+import { settingNumber, stackToolCalls } from "./settings.js";
 import { stackPrefix, toolLabel, treeConnector, type TreeBranch } from "./theme.js";
 
 export class TruncatedLines {
@@ -122,67 +122,9 @@ export function readResultSummary(result: any, args: any, theme: any): string {
 	return summary;
 }
 
-interface BlinkEntry {
-	invalidate: () => void;
-}
-
-const blinkEntries = new Map<unknown, BlinkEntry>();
-let blinkTimer: ReturnType<typeof setInterval> | undefined;
-
-function blinkKey(context: any): unknown {
-	return context?.toolCallId ?? context?.id ?? context;
-}
-
-function startBlinkTimer(): void {
-	if (blinkTimer) return;
-	blinkTimer = setInterval(() => {
-		for (const entry of blinkEntries.values()) {
-			try {
-				entry.invalidate();
-			} catch {
-				// Rendering invalidation is best-effort only.
-			}
-		}
-		if (blinkEntries.size === 0 && blinkTimer) {
-			clearInterval(blinkTimer);
-			blinkTimer = undefined;
-		}
-	}, 450);
-	blinkTimer.unref?.();
-}
-
-function trackBlink(context: any): void {
-	const key = blinkKey(context);
-	if (!key || typeof context?.invalidate !== "function") return;
-	blinkEntries.set(key, { invalidate: () => context.invalidate() });
-	startBlinkTimer();
-}
-
-export function clearBlink(context: any): void {
-	const key = blinkKey(context);
-	if (key) blinkEntries.delete(key);
-	if (blinkEntries.size === 0 && blinkTimer) {
-		clearInterval(blinkTimer);
-		blinkTimer = undefined;
-	}
-}
-
-export function blinkingPrefix(theme: any, context: any, cwd?: string): string {
-	trackBlink(context);
-	const on = Math.floor(Date.now() / 450) % 2 === 0;
-	const g = glyphs(context?.cwd ?? cwd);
-	return theme.fg(on ? "success" : "muted", on ? g.bullet : g.emptyBullet);
-}
-
-export function pendingStatusPrefix(theme: any, context: any, cwd?: string): string {
-	if (pendingStatusAnimation(context?.cwd ?? cwd)) return blinkingPrefix(theme, context, cwd);
-	clearBlink(context);
-	return theme.fg("warning", glyphs(context?.cwd ?? cwd).bullet);
-}
-
 export function renderPendingCall(call: string, theme: any, context: any, cwd?: string): TruncatedLines | ReturnType<typeof makeEmpty> {
 	if (!context?.executionStarted || !context?.isPartial || stackToolCalls(context?.cwd ?? cwd)) return makeEmpty();
-	return makeTruncatedLines(`${pendingStatusPrefix(theme, context, cwd)}${call}`);
+	return makeTruncatedLines(`${theme.fg("warning", glyphs(context?.cwd ?? cwd).bullet)}${call}`);
 }
 
 export function renderPendingDetail(text: string, theme: any, cwd?: string): TruncatedLines {

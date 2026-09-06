@@ -155,10 +155,6 @@ export function treeStyle(cwd?: string): TreeStyle {
 	return settingEnum("treeStyle", ["unicode", "ascii"] as const, "unicode", cwd);
 }
 
-export function pendingStatusAnimation(cwd?: string): boolean {
-	return settingBoolean("pendingStatusAnimation", false, cwd);
-}
-
 export function diffBackgroundEnabled(cwd?: string): boolean {
 	return settingBoolean("diffBackgrounds", true, cwd);
 }
