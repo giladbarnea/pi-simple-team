@@ -2,4 +2,6 @@
 set -euo pipefail
 
 repository_root="$(git rev-parse --show-toplevel)"
-"$repository_root/scripts/sync-bundled-skills.sh"
+if [[ "${SIMPLETEAM_DISABLE_SYNC_BUNDLED_SKILLS:-}" != "1" ]]; then
+	"$repository_root/scripts/sync-bundled-skills.sh"
+fi
