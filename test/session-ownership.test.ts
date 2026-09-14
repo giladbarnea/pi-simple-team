@@ -52,30 +52,41 @@ type RegisteredTool = {
 };
 
 describe("teammate creation schemas", () => {
+	test("rejects obsolete optional teammate fields instead of silently starting with defaults", async () => {
+		const host = new ExtensionHost();
+		try {
+			const schema = host.tools.get("team_spawn")?.parameters.properties.teammates.items;
+			assert.ok(schema, "Spawn must expose the teammate input schema.");
+			assert.equal(Value.Check(schema, { name: "copier", systemPrompt: "Use inherited context.", model: "fake/fake-model", inheritContext: true }), false, "An obsolete inheritContext flag must not be silently ignored and create a fresh teammate.");
+		} finally {
+			await host.shutdown();
+		}
+	});
+
 	test("accept opt-in team oversight and default it to false", async () => {
 		const host = new ExtensionHost();
 		const spawnSchema = host.tools.get("team_spawn")?.parameters;
-		const addSchema = host.tools.get("team_add")?.parameters;
+		const addSchema = host.tools.get("team_add_teammates")?.parameters;
 		assert.ok(spawnSchema, "Expected the extension to register the team_spawn input schema.");
-		assert.ok(addSchema, "Expected the extension to register the team_add input schema.");
+		assert.ok(addSchema, "Expected the extension to register the team_add_teammates input schema.");
 
-		for (const [toolName, schema] of [["team_spawn", spawnSchema], ["team_add", addSchema]] as const) {
+		for (const [toolName, schema] of [["team_spawn", spawnSchema], ["team_add_teammates", addSchema]] as const) {
 			const teammateSchema = schema.properties.teammates.items;
-			const capabilitySchema = teammateSchema.properties.canOverseeOwnTeams;
+			const capabilitySchema = teammateSchema.properties.canManageOwnTeams;
 			assert.equal(
 				capabilitySchema?.default,
 				false,
-				`Expected ${toolName} to default canOverseeOwnTeams to false.`,
+				`Expected ${toolName} to default canManageOwnTeams to false.`,
 			);
 			assert.equal(
-				Value.Check(teammateSchema, { name: "lead", prompt: "Lead.", model: "fake/fake-model", canOverseeOwnTeams: true }),
+				Value.Check(teammateSchema, { name: "lead", systemPrompt: "Lead.", model: "fake/fake-model", canManageOwnTeams: true }),
 				true,
-				`Expected ${toolName} to accept canOverseeOwnTeams=true.`,
+				`Expected ${toolName} to accept canManageOwnTeams=true.`,
 			);
 			assert.equal(
-				Value.Check(teammateSchema, { name: "lead", prompt: "Lead.", model: "fake/fake-model", canOverseeOwnTeams: "yes" }),
+				Value.Check(teammateSchema, { name: "lead", systemPrompt: "Lead.", model: "fake/fake-model", canManageOwnTeams: "yes" }),
 				false,
-				`Expected ${toolName} to reject non-boolean canOverseeOwnTeams values.`,
+				`Expected ${toolName} to reject non-boolean canManageOwnTeams values.`,
 			);
 		}
 
@@ -93,7 +104,7 @@ describe("recursive team oversight", () => {
 			PI_SIMPLE_TEAM_TEAM_NAME: "parent-team",
 			PI_SIMPLE_TEAM_MEMBER: "lead",
 			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["lead", "peer"]),
-			PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS: "1",
+			PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "1",
 		};
 		const previousEnvironment = Object.fromEntries(
 			Object.keys(environment).map((name) => [name, process.env[name]]),
@@ -106,17 +117,17 @@ describe("recursive team oversight", () => {
 			assert.deepEqual(
 				[...host.tools.keys()].sort(),
 				[
-					"report_context_window",
+					"get_context_window_usage",
 					"schedule_reminder",
-					"team_add",
+					"team_add_teammates",
 					"team_list",
 					"team_resume",
 					"team_shutdown",
 					"team_spawn",
-					"teamlog",
-					"teammain",
-					"teamsend",
-					"teamstatus",
+					"team_log",
+					"send_main_message",
+					"team_send_message",
+					"team_status",
 				].sort(),
 				"Expected an opted-in teammate to remain a parent-team member and gain the complete manager tool set.",
 			);
@@ -138,7 +149,7 @@ describe("recursive team oversight", () => {
 			PI_SIMPLE_TEAM_TEAM_NAME: "parent-team",
 			PI_SIMPLE_TEAM_MEMBER: "worker",
 			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["worker"]),
-			PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS: "0",
+			PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "0",
 		};
 		const previousEnvironment = Object.fromEntries(Object.keys(environment).map((name) => [name, process.env[name]]));
 		Object.assign(process.env, environment);
@@ -165,9 +176,11 @@ describe("recursive team oversight", () => {
 				const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as JsonRecord;
 				receivedBodies.push(body);
 				response.writeHead(200, { "content-type": "application/json" });
-				response.end(JSON.stringify(body.tool === "teamstatus"
+				response.end(JSON.stringify(body.tool === "team_context"
+					? { teamName: "parent-team", teamId: "parent-team-id", teammates: [{ name: "lead", teammateId: "lead-id" }, { name: "peer", teammateId: "peer-id" }] }
+					: body.tool === "team_status"
 					? { team: "parent-team", status: {} }
-					: { accepted: true, team: "parent-team", from: "lead", to: ["peer"] }));
+					: { published: true, teams: [{ teamName: "parent-team", teamId: "parent-team-id", status: {} }] }));
 			})();
 		});
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -182,7 +195,7 @@ describe("recursive team oversight", () => {
 			PI_SIMPLE_TEAM_TEAM_NAME: "parent-team",
 			PI_SIMPLE_TEAM_MEMBER: "lead",
 			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["lead", "peer"]),
-			PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS: "1",
+			PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "1",
 		};
 		const previousEnvironment = Object.fromEntries(Object.keys(environment).map((name) => [name, process.env[name]]));
 		Object.assign(process.env, environment);
@@ -190,23 +203,24 @@ describe("recursive team oversight", () => {
 
 		try {
 			host = new ExtensionHost();
-			await host.execute("teamsend", { to: ["peer"], message: "Update the parent team." });
-			await host.execute("teamstatus", { gerund: "coordinating", phrase: "Managing a child team." });
+			await host.execute("team_send_message", { targets: ["peer"], message: "Update the parent team." });
+			await host.execute("team_status", { gerund: "coordinating", phrase: "Managing a child team." });
 			assert.deepEqual(
 				receivedBodies,
 				[
+					{ token: "parent-token", team: "parent-team-id", from: "lead", tool: "team_context", args: {} },
 					{
 						token: "parent-token",
 						team: "parent-team-id",
 						from: "lead",
-						tool: "teamsend",
-						args: { to: ["peer"], message: "Update the parent team." },
+						tool: "team_send_message",
+						args: { targets: ["peer-id"], message: "Update the parent team.", interrupt: [] },
 					},
 					{
 						token: "parent-token",
 						team: "parent-team-id",
 						from: "lead",
-						tool: "teamstatus",
+						tool: "team_status",
 						args: { gerund: "coordinating", phrase: "Managing a child team." },
 					},
 				],
@@ -233,11 +247,11 @@ describe("recursive team oversight", () => {
 
 		try {
 			await host.execute("team_spawn", {
-				team: "recursive-capability-team",
-				teamPrompt: "Capability propagation test.",
+				teamName: "recursive-capability-team",
+				startIdle: true, commonPrompt: "Capability propagation test.",
 				teammates: [
-					{ name: "lead", prompt: "Lead.", model: "fake/fake-model", canOverseeOwnTeams: true },
-					{ name: "worker", prompt: "Work.", model: "fake/fake-model" },
+					{ name: "lead", systemPrompt: "Lead.", model: "fake/fake-model", canManageOwnTeams: true },
+					{ name: "worker", systemPrompt: "Work.", model: "fake/fake-model" },
 				],
 			});
 			await receipt.wait();
@@ -257,21 +271,21 @@ describe("recursive team oversight", () => {
 	});
 });
 
-describe("teamlog input schema", () => {
+describe("team_log input schema", () => {
 	test("accepts only a non-empty kind list containing non-empty strings", async () => {
 		const host = new ExtensionHost();
-		const schema = host.tools.get("teamlog")?.parameters;
-		assert.ok(schema, "Expected the extension to register the teamlog input schema.");
+		const schema = host.tools.get("team_log")?.parameters;
+		assert.ok(schema, "Expected the extension to register the team_log input schema.");
 
-		assert.equal(Value.Check(schema, { kind: ["send", "error"] }), true, "Expected teamlog to accept multiple kinds.");
-		assert.equal(Value.Check(schema, { kind: [] }), false, "Expected teamlog to reject an empty kind list.");
-		assert.equal(Value.Check(schema, { kind: [""] }), false, "Expected teamlog to reject an empty kind value.");
-		assert.equal(Value.Check(schema, { kind: "send" }), false, "Expected teamlog to reject the old string kind value.");
+		assert.equal(Value.Check(schema, { kind: ["send", "error"] }), true, "Expected team_log to accept multiple kinds.");
+		assert.equal(Value.Check(schema, { kind: [] }), false, "Expected team_log to reject an empty kind list.");
+		assert.equal(Value.Check(schema, { kind: [""] }), false, "Expected team_log to reject an empty kind value.");
+		assert.equal(Value.Check(schema, { kind: "send" }), false, "Expected team_log to reject the old string kind value.");
 
 		await host.shutdown();
 	});
 
-	test("adds scoped models to team_spawn guidance", async () => {
+	test("places scoped model guidance only on the model parameter", async () => {
 		const host = new ExtensionHost(() => undefined, [
 			{ model: { provider: "openai-codex", id: "gpt-5.6-sol" } },
 			{ model: { provider: "anthropic", id: "claude-sonnet-4-6" } },
@@ -279,8 +293,8 @@ describe("teamlog input schema", () => {
 		const tool = host.tools.get("team_spawn");
 		assert.ok(tool);
 		const guidance = "You should probably use one of these user-scoped models: openai-codex/gpt-5.6-sol, anthropic/claude-sonnet-4-6.";
-		assert.match(tool.description, new RegExp(guidance.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-		assert.match(tool.promptSnippet ?? "", new RegExp(guidance.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		assert.equal(tool.parameters.properties.teammates.items.properties.model.description.includes(guidance), true, "Model choices belong next to the model parameter.");
+		assert.doesNotMatch(`${tool.description} ${tool.promptSnippet ?? ""}`, /gpt-5\.6-sol|claude-sonnet/, "Model choices must not be repeated in tool-level prose.");
 		await host.shutdown();
 	});
 
@@ -288,20 +302,20 @@ describe("teamlog input schema", () => {
 		const host = new ExtensionHost();
 		const tool = host.tools.get("team_spawn");
 		assert.ok(tool);
-		const prose = `${tool.description} ${tool.promptSnippet ?? ""}`;
+		const prose = tool.parameters.properties.teammates.items.properties.model.description;
 		assert.match(prose, /PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL/);
 		assert.match(prose, /Confirm with the user before picking any model id/);
 		await host.shutdown();
 	});
 
-	test("keeps showOnHerdrPanes guidance only in the team_spawn description", async () => {
+	test("keeps pane configuration guidance on its parameter", async () => {
 		const host = new ExtensionHost();
 		const tool = host.tools.get("team_spawn");
 		assert.ok(tool);
-		assert.match(tool.description, /If the user is interested, set `showOnHerdrPanes` to run each teammate in a visible Herdr pane\./);
+		assert.doesNotMatch(tool.description, /showOnHerdrPanes/);
 		assert.doesNotMatch(tool.promptSnippet ?? "", /showOnHerdrPanes/);
 		const properties = tool.parameters.properties as Record<string, { description?: string }>;
-		assert.equal(properties.showOnHerdrPanes?.description, undefined);
+		assert.match(properties.showOnHerdrPanes?.description ?? "", /Overrides individual teammate Herdr settings/);
 		await host.shutdown();
 	});
 });
@@ -391,7 +405,7 @@ class ExtensionHost {
 }
 
 async function spawnEmptyTeam(host: ExtensionHost, team: string): Promise<void> {
-	await host.execute("team_spawn", { team, teamPrompt: "Ownership regression test.", teammates: [] });
+	await host.execute("team_spawn", { teamName: team, startIdle: true, commonPrompt: "Ownership regression test.", teammates: [] });
 }
 
 async function shutdownHosts(...hosts: ExtensionHost[]): Promise<void> {
@@ -438,7 +452,7 @@ if (process.argv[2] === "--list-models") {
 if (process.env.PI_SIMPLE_TEAM_TEST_CAPABILITY_LOG) {
 	fs.appendFileSync(
 		process.env.PI_SIMPLE_TEAM_TEST_CAPABILITY_LOG,
-		process.env.PI_SIMPLE_TEAM_MEMBER + "=" + String(process.env.PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS) + "\n",
+		process.env.PI_SIMPLE_TEAM_MEMBER + "=" + String(process.env.PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS) + "\n",
 	);
 }
 
@@ -454,9 +468,15 @@ const server = http.createServer((request, response) => {
 			response.end();
 			return;
 		}
-		if (body.tool === "report_context_window") {
+		if (body.tool === "get_context_window_usage") {
 			response.end(JSON.stringify({ contextUsage: { tokens: 87_000, contextWindow: 272_000, percent: 31.985 } }));
 			return;
+		}
+		if (body.tool === "deliver" && body.args.triggerTurn !== false) {
+			await fetch(process.env.PI_SIMPLE_TEAM_CALLBACK_URL, {
+				method: "POST", headers: { "content-type": "application/json" },
+				body: JSON.stringify({ token: process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN, team: process.env.PI_SIMPLE_TEAM_TEAM, from: process.env.PI_SIMPLE_TEAM_MEMBER, tool: "event", args: { event: { type: "agent_start" } } }),
+			});
 		}
 		response.end(JSON.stringify({ accepted: true }));
 	})();
@@ -482,7 +502,7 @@ setTimeout(() => {
 		token: process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN,
 		team: process.env.PI_SIMPLE_TEAM_TEAM,
 		from: process.env.PI_SIMPLE_TEAM_MEMBER,
-		tool: "teammain",
+		tool: "send_main_message",
 		args: { message: "callback ownership test" },
 	});
 	const request = http.request(process.env.PI_SIMPLE_TEAM_CALLBACK_URL, {
@@ -582,17 +602,21 @@ describe("schedule_reminder", () => {
 		await host.shutdown();
 	});
 
-	test("guides the manager to offer reminders as an unattended team safety net", async () => {
+	test("offers oversight reminders after team creation instead of in the reminder snippet", async () => {
+		const fakePi = installFakePi();
 		const host = new ExtensionHost();
-		const tool = host.tools.get("schedule_reminder");
-		assert.ok(tool, "Expected managers to receive schedule_reminder guidance.");
-		const guidance = `${tool.description} ${tool.promptSnippet ?? ""}`;
-
-		assert.match(guidance, /wakes you with a custom message/, "Expected the guidance to explain the wake-up behavior.");
-		assert.match(guidance, /Ask whether the user wants periodic checks, such as every 30 minutes/, "Expected the manager to offer periodic team checks.");
-		assert.match(guidance, /multi-hour unattended work/, "Expected longer unattended runs to receive a stronger safety-net recommendation.");
-
-		await host.shutdown();
+		try {
+			const reminder = host.tools.get("schedule_reminder");
+			assert.ok(reminder, "Managers must receive the reminder tool.");
+			assert.equal(reminder.promptSnippet, undefined, "Reminder guidance must not occupy a separate system-prompt snippet.");
+			assert.match(reminder.description, /one-shot.*next reminder after each check/s, "The tool description must explain one-shot and periodic usage.");
+			const result = await host.execute("team_spawn", { teamName: "reminder-guidance", commonPrompt: "Work.", teammates: [{ name: "worker", systemPrompt: "Work.", model: "fake/fake-model" }] });
+			assert.match(String(result.instruction), /Ask the user.*15 minutes/s, "A successful start must offer the user 15-minute oversight checks.");
+			assert.doesNotMatch(host.tools.get("team_spawn")?.description ?? "", /15 minutes|polling/, "Post-start guidance must not remain in the invocation description.");
+		} finally {
+			await host.shutdown();
+			fakePi.restore();
+		}
 	});
 
 	test("renders a compact reminder instead of raw result JSON", async () => {
@@ -639,14 +663,14 @@ describe("bundled skill guidance", () => {
 
 		try {
 			const result = await host.executeResult("team_spawn", {
-				team: "skill-guidance-team",
-				teamPrompt: "Skill guidance test.",
+				teamName: "skill-guidance-team",
+				startIdle: true, commonPrompt: "Skill guidance test.",
 				teammates: [],
 			});
 			const content = JSON.parse(result.content[0]!.text) as JsonRecord;
 
-			assert.equal(result.details?.instruction, bundledSkillsInstruction);
-			assert.equal(content.instruction, bundledSkillsInstruction);
+			assert.ok(String(content.instruction).startsWith(bundledSkillsInstruction), "The result must retain the bundled skill instruction.");
+			assert.equal(result.details?.instruction, content.instruction, "Rendered and model-facing instructions must match.");
 			for (const skillPath of [bundledAiToLeaderSkillPath, bundledAiToDelegatedSkillPath]) {
 				assert.equal(path.isAbsolute(skillPath), true, `Expected an absolute bundled skill path. Got: ${skillPath}`);
 				assert.equal(fs.existsSync(skillPath), true, `Expected the bundled skill file to exist at ${skillPath}`);
@@ -666,12 +690,12 @@ describe("team ownership across in-process AgentSessions", () => {
 
 		try {
 			await host.execute("team_spawn", {
-				team,
-				teamPrompt: "Full message test.",
-				teammates: [{ name: "reviewer", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+				teamName: team,
+				startIdle: true, commonPrompt: "Full message test.",
+				teammates: [{ name: "reviewer", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 			});
-			await host.execute("teamsend", { team, to: ["reviewer"], message });
-			const log = await host.execute<{ entries: TeamLogEntry[] }>("teamlog", { team });
+			await host.execute("team_send_message", { targets: ["reviewer"], message });
+			const log = await host.execute<{ entries: TeamLogEntry[] }>("team_log", { targets: [team] });
 			const send = log.entries.find((entry) => entry.kind === "send");
 			assert.equal(send?.details?.message, message);
 		} finally {
@@ -687,23 +711,23 @@ describe("team ownership across in-process AgentSessions", () => {
 
 		try {
 			await host.execute("team_spawn", {
-				team,
-				teamPrompt: "Color roster test.",
+				teamName: team,
+				startIdle: true, commonPrompt: "Color roster test.",
 				teammates: [
-					{ name: "implementer", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
-					{ name: "reviewer", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+					{ name: "implementer", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+					{ name: "reviewer", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
 				],
 			});
-			const statusResult = await host.executeResult("teamstatus", { team });
-			const logResult = await host.executeResult("teamlog", { team });
+			const statusResult = await host.executeResult("team_status", { team });
+			const logResult = await host.executeResult("team_log", { targets: [team] });
 
 			assert.match(
-				host.renderResult("teamstatus", statusResult, { team }).join("\n"),
+				host.renderResult("team_status", statusResult, { team }).join("\n"),
 				/«customMessageLabel:reviewer/,
 				"Expected Team Status to use the reviewer color from the session roster.",
 			);
 			assert.match(
-				host.renderResult("teamlog", logResult, { team }).join("\n"),
+				host.renderResult("team_log", logResult, { team }).join("\n"),
 				/«customMessageLabel:reviewer/,
 				"Expected Team Log to use the same reviewer color from the session roster.",
 			);
@@ -722,11 +746,11 @@ describe("team ownership across in-process AgentSessions", () => {
 			await spawnEmptyTeam(owner, team);
 			await foreignSession.shutdown();
 
-			let status: { team: string } | undefined;
+			let status: { teamName: string } | undefined;
 			await assert.doesNotReject(async () => {
-				status = await owner.execute<{ team: string }>("teamstatus", { team });
+				status = await owner.execute<{ teamName: string }>("team_status", { team });
 			}, "Expected a foreign AgentSession shutdown to leave the owner's team available.");
-			assert.equal(status?.team, team, `Expected owner to retain ${JSON.stringify(team)} after the foreign session shut down.`);
+			assert.equal(status?.teamName, team, `Expected owner to retain ${JSON.stringify(team)} after the foreign session shut down.`);
 		} finally {
 			await shutdownHosts(owner, foreignSession);
 		}
@@ -739,13 +763,13 @@ describe("team ownership across in-process AgentSessions", () => {
 
 		try {
 			await spawnEmptyTeam(owner, team);
-			const ownerStatus = await owner.execute<{ teams: Record<string, JsonRecord> }>("teamstatus", {});
-			const foreignStatus = await foreignSession.execute<{ teams: Record<string, JsonRecord> }>("teamstatus", {});
+			const ownerStatus = await owner.execute<{ teams: Array<{ teamName: string }> }>("team_status", {});
+			const foreignStatus = await foreignSession.execute<{ teams: Array<{ teamName: string }> }>("team_status", {});
 
 			assert.deepEqual(
 				{
-					owner: Object.keys(ownerStatus.teams),
-					foreign: Object.keys(foreignStatus.teams),
+					owner: ownerStatus.teams.map((team) => team.teamName),
+					foreign: foreignStatus.teams.map((team) => team.teamName),
 				},
 				{ owner: [team], foreign: [] },
 				"Expected each AgentSession to see only teams created through its own extension instance.",
@@ -768,14 +792,14 @@ describe("team ownership across in-process AgentSessions", () => {
 				"Expected team_shutdown to reject a team owned by another AgentSession.",
 			);
 
-			const status = await owner.execute<{ team: string }>("teamstatus", { team });
-			assert.equal(status.team, team, `Expected rejected foreign shutdown to leave ${JSON.stringify(team)} available to its owner.`);
+			const status = await owner.execute<{ teamName: string }>("team_status", { team });
+			assert.equal(status.teamName, team, `Expected rejected foreign shutdown to leave ${JSON.stringify(team)} available to its owner.`);
 		} finally {
 			await shutdownHosts(owner, foreignSession);
 		}
 	});
 
-	test("teammain callbacks are delivered to the AgentSession that owns the team", async () => {
+	test("send_main_message callbacks are delivered to the AgentSession that owns the team", async () => {
 		const fakePi = installFakePi();
 		const receipt = messageReceipt(2);
 		const firstOwner = new ExtensionHost(receipt.record);
@@ -783,14 +807,14 @@ describe("team ownership across in-process AgentSessions", () => {
 
 		try {
 			await firstOwner.execute("team_spawn", {
-				team: "callback-owner-a",
-				teamPrompt: "Callback ownership test.",
-				teammates: [{ name: "teammate-a", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+				teamName: "callback-owner-a",
+				startIdle: true, commonPrompt: "Callback ownership test.",
+				teammates: [{ name: "teammate-a", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 			});
 			await secondOwner.execute("team_spawn", {
-				team: "callback-owner-b",
-				teamPrompt: "Callback ownership test.",
-				teammates: [{ name: "teammate-b", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+				teamName: "callback-owner-b",
+				startIdle: true, commonPrompt: "Callback ownership test.",
+				teammates: [{ name: "teammate-b", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 			});
 			await receipt.wait();
 
@@ -802,7 +826,7 @@ describe("team ownership across in-process AgentSessions", () => {
 				{ firstOwner: ["callback-owner-a"], secondOwner: ["callback-owner-b"] },
 				"Expected each teammate callback to use the Pi API belonging to its team's owning AgentSession.",
 			);
-			const firstLog = await firstOwner.execute<{ entries: TeamLogEntry[] }>("teamlog", { team: "callback-owner-a" });
+			const firstLog = await firstOwner.execute<{ entries: TeamLogEntry[] }>("team_log", { targets: ["callback-owner-a" ]});
 			const received = firstLog.entries.find((entry) => entry.kind === "main_message");
 			assert.equal(received?.details?.message, "callback ownership test", "Expected the team log to retain the full incoming message.");
 		} finally {
@@ -822,7 +846,7 @@ describe("context-window reports", () => {
 			PI_SIMPLE_TEAM_TEAM_NAME: "parent-team",
 			PI_SIMPLE_TEAM_MEMBER: "lead",
 			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["lead"]),
-			PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS: "1",
+			PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "1",
 		};
 		const previousEnvironment = Object.fromEntries(Object.keys(environment).map((name) => [name, process.env[name]]));
 		Object.assign(process.env, environment);
@@ -833,7 +857,7 @@ describe("context-window reports", () => {
 			const context = {
 				getContextUsage: () => ({ tokens: 87_000, contextWindow: 272_000, percent: 31.985 }),
 			} as ExtensionContext;
-			const result = await host.executeResult("report_context_window", {}, context);
+			const result = await host.executeResult("get_context_window_usage", {}, context);
 			assert.equal(
 				result.content[0]?.text,
 				"You have used 87k tokens out of 272k available (32%).",
@@ -861,9 +885,9 @@ describe("context-window reports", () => {
 			teamName: "context-team",
 			teammateName: "product-head",
 			participants: ["product-head"],
-			canOverseeOwnTeams: false,
+			canManageOwnTeams: false,
 		});
-		const tool = tools.get("report_context_window");
+		const tool = tools.get("get_context_window_usage");
 		assert.ok(tool, "Expected teammates to register report_context_window.");
 		const context = {
 			getContextUsage: () => ({ tokens: 87_000, contextWindow: 272_000, percent: 31.985 }),
@@ -878,7 +902,7 @@ describe("context-window reports", () => {
 		);
 	});
 
-	test("main removes repeated self targets, preserves teammate order, then reports itself once", async () => {
+	test("main removes repeated teammate targets, preserves teammate order, then reports itself once", async () => {
 		const fakePi = installFakePi();
 		const host = new ExtensionHost();
 		const context = {
@@ -887,19 +911,19 @@ describe("context-window reports", () => {
 
 		try {
 			await host.execute("team_spawn", {
-				team: "context-team",
-				teamPrompt: "Context-window report test.",
+				teamName: "context-team",
+				startIdle: true, commonPrompt: "Context-window report test.",
 				teammates: [
-					{ name: "product-head", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
-					{ name: "reviewer", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+					{ name: "product-head", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+					{ name: "reviewer", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
 				],
 			});
 
-			const result = await host.executeResult("report_context_window", { targets: ["main", "reviewer", "main", "product-head"] }, context);
+			const result = await host.executeResult("get_context_window_usage", { targets: ["reviewer", "product-head", "reviewer"] }, context);
 
-			assert.equal(
+			assert.match(
 				result.content[0]?.text,
-				"Teammate reviewer has used 87k tokens out of 272k available (32%).\nTeammate product-head has used 87k tokens out of 272k available (32%).\nYou have used 43k tokens out of 200k available (22%).",
+				/^Teammate reviewer .* has used 87k tokens out of 272k available \(32%\)\.\nTeammate product-head .* has used 87k tokens out of 272k available \(32%\)\.\nYou have used 43k tokens out of 200k available \(22%\)\.$/,
 				"Expected one string in target order with main's report last.",
 			);
 		} finally {

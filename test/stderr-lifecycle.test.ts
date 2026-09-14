@@ -20,7 +20,7 @@ async function waitFor(check: () => Promise<boolean>, label: string): Promise<vo
 }
 
 describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("RPC stderr and conversation lifetime", () => {
-	test("keeps stderr previews and the same Pi conversation across follow-up turns", async () => {
+	test("keeps Pi conversation across follow-up turns, idle resumption, default resumption, and additions", async () => {
 		const executable = Bun.which("pi");
 		assert.ok(executable, "The real-Pi check requires pi on PATH");
 		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-team-stderr-"));
@@ -75,23 +75,26 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("RPC stderr and
 			assert.ok(tool, `Missing tool ${name}`);
 			return tool.execute("probe", parameters, new AbortController().signal, undefined, context);
 		};
-		const log = async (): Promise<LogEntry[]> => (await execute("teamlog", { team: "stderr-check", limit: 100 })).details.entries as LogEntry[];
+		const log = async (): Promise<LogEntry[]> => (await execute("team_log", { targets: ["stderr-check"], limit: 100 })).details.entries as LogEntry[];
 		try {
 			teamExtension(api);
-			const spawned = await execute("team_spawn", { team: "stderr-check", teamPrompt: "Follow instructions.", teammates: [{ name: "probe", model: "local-probe/probe", thinking: "low", prompt: "Wait for a message." }] });
-			const session = (spawned.details.sessions as Record<string, { sessionId: string; sessionFile: string }>).probe;
+			const spawned = await execute("team_spawn", { teamName: "stderr-check", startIdle: true, commonPrompt: "Follow instructions.", teammates: [{ name: "probe", model: "local-probe/probe", thinking: "low", systemPrompt: "Wait for a message." }] });
+			const listing = await execute("team_list", {});
+			const team = (listing.details.teams as Array<{ teamId: string; teammates: Array<{ name: string; teammateId: string; sessionFile: string }> }>).find((candidate) => candidate.teamId === spawned.details.teamId);
+			const session = team?.teammates.find((candidate) => candidate.name === "probe");
+			assert.ok(session, "Team listing must expose the registered Pi session.");
 			const processId = Number(fs.readFileSync(processIdFile, "utf8"));
 			await waitFor(async () => (await log()).some((entry) => entry.kind === "stderr" && entry.summary.includes(diagnostic)), "stderr preview");
 			const stderrEntry = (await log()).find((entry) => entry.kind === "stderr" && entry.summary.includes(diagnostic))!;
 			assert.ok(stderrEntry.summary.length < 2000, "The log should contain a shortened preview, not the complete stderr chunk");
 
-			await execute("teamsend", { team: "stderr-check", to: ["probe"], message: `Remember this token: ${token}` });
+			await execute("team_send_message", { targets: ["probe"], message: `Remember this token: ${token}` });
 			await waitFor(async () => (await log()).filter((entry) => entry.kind === "agent_end").length === 1, "first completed turn");
 			assert.equal(requests.length, 1, "First delivery should produce exactly one model request");
 			assert.ok(fs.readFileSync(session.sessionFile, "utf8").includes(token), "The first turn must remain in the durable Pi session");
 			process.kill(processId, 0);
 
-			await execute("teamsend", { team: "stderr-check", to: ["probe"], message: "What token did I ask you to remember?" });
+			await execute("team_send_message", { targets: ["probe"], message: "What token did I ask you to remember?" });
 			await waitFor(async () => (await log()).filter((entry) => entry.kind === "agent_end").length === 2, "follow-up completed turn");
 			assert.equal(requests.length, 2, "Follow-up delivery should start one more real Pi turn");
 			const followUpMessages = requests[1].messages as Array<{ role: string; content: unknown }>;
@@ -103,7 +106,32 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("RPC stderr and
 			assert.equal(Number(fs.readFileSync(processIdFile, "utf8")), processId, "Follow-up must reuse the same Pi process");
 			process.kill(processId, 0);
 			const saved = fs.readFileSync(session.sessionFile, "utf8");
-			assert.ok(saved.includes(session.sessionId) && saved.includes("What token"), "Both turns must use the registered session file");
+			assert.ok(saved.includes(session.teammateId) && saved.includes("What token"), "Both turns must use the registered session file");
+
+			await execute("team_shutdown", { team: "stderr-check" });
+			const resumptionPrompt = `next-task-${crypto.randomUUID()}`;
+			const resumed = await execute("team_resume", { team: "stderr-check", startIdle: true, resumptionPrompt });
+			assert.equal(requests.length, 2, "Idle resumption must not issue a real model request.");
+			assert.equal(resumed.details.started, false, "Idle resumption must report no work started.");
+			assert.equal((resumed.details.teammates as JsonRecord[])[0]?.teammateId, session.teammateId, "Idle resumption must preserve the Pi session identity.");
+			await execute("team_send_message", { targets: ["probe"], message: "Continue the task." });
+			await waitFor(async () => (await log()).filter((entry) => entry.kind === "agent_end").length === 1, "turn after idle resumption");
+			assert.equal(requests.length, 3, "Only the later explicit message should start the resumed model turn.");
+			const resumedMessages = requests[2].messages as Array<{ role: string; content: unknown }>;
+			assert.equal(resumedMessages.filter((message) => message.role !== "system" && JSON.stringify(message.content).includes(resumptionPrompt)).length, 1, "The resumption prompt must occur once in conversation context.");
+			assert.ok(resumedMessages.some((message) => message.role !== "system" && JSON.stringify(message.content).includes(token)), "Resumption must retain the original conversation.");
+			const resumedSystem = JSON.stringify(resumedMessages.filter((message) => message.role === "system"));
+			assert.ok(resumedSystem.includes("Follow instructions.") && resumedSystem.includes("Wait for a message."), "Resumption must retain common and individual system prompts.");
+			assert.ok(!resumedSystem.includes(resumptionPrompt), "The resumption prompt must not become a system prompt.");
+
+			await execute("team_shutdown", { team: "stderr-check" });
+			const automaticResume = await execute("team_resume", { team: "stderr-check" });
+			assert.equal(automaticResume.details.started, (automaticResume.details.teammates as JsonRecord[]).some((teammate) => teammate.active), "The result must report the actual team activity at return time.");
+			await waitFor(async () => (await log()).filter((entry) => entry.kind === "agent_end").length === 1, "automatic resumption turn");
+			assert.equal(requests.length, 4, "Default resumption must start exactly one real model request.");
+			await execute("team_add_teammates", { teammates: [{ name: "addition", model: "local-probe/probe", thinking: "low", systemPrompt: "Perform the small task." }] });
+			await waitFor(async () => (await log()).filter((entry) => entry.kind === "agent_end").length === 2, "automatic added teammate turn");
+			assert.equal(requests.length, 5, "Add must start only its new teammate, not the existing member.");
 		} finally {
 			for (const shutdown of shutdownHandlers) await shutdown();
 			provider.stop(true);

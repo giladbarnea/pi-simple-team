@@ -25,15 +25,15 @@ describe("composeSystemPrompt participant list", () => {
 });
 
 describe("composeSystemPrompt acknowledgement instructions (review issue 2)", () => {
-	test("tells the teammate to ack via teamstatus on wake up, before doing substantive work", () => {
+	test("tells the teammate to ack via team_status on wake up, before doing substantive work", () => {
 		const text = prompt();
-		expect(text).toContain("teamstatus");
+		expect(text).toContain("team_status");
 		expect(text).toMatch(/wake up|start(?:s|ed)?\b.*before|as soon as/s);
 	});
 
-	test("tells the teammate to ack via teamstatus before acting on an incoming message", () => {
+	test("tells the teammate to ack via team_status before acting on an incoming message", () => {
 		const text = prompt();
-		expect(text).toMatch(/message.{0,120}teamstatus|teamstatus.{0,120}message/s);
+		expect(text).toMatch(/message.{0,120}team_status|teamstatus.{0,120}message/s);
 	});
 });
 
@@ -41,7 +41,7 @@ describe("composeSystemPrompt proactive handoff instruction (review issue 3)", (
 	test("tells the teammate to notify the blocking party before setting a waiting status", () => {
 		const text = prompt();
 		expect(text).toContain("waiting");
-		expect(text).toMatch(/teamsend|teammain/);
+		expect(text).toMatch(/team_send_message|send_main_message/);
 	});
 });
 
@@ -59,6 +59,7 @@ test("explains recursive-team tools and their ownership boundary to an overseein
 	expect(text).toContain("cannot manage this parent team or teams owned by other sessions");
 	expect(text).toContain("omit `team` to operate on this parent team");
 	expect(text).toContain("Set `team` to operate on a team you own");
+	expect(text).not.toMatch(/team_send_message[^\n]+(?:omit|set) `team`/i);
 });
 
 test("does not claim that the current main observed work before a resume", () => {

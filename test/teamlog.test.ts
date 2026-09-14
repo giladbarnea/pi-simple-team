@@ -272,7 +272,7 @@ describe("pageTeamLog", () => {
 	test("nextCursor points to the oldest sequence in the page when older entries remain", () => {
 		const entries = makeEntries(25);
 		const page = pageTeamLog(entries, { limit: 20 });
-		expect(page.nextCursor).toBe("before:6");
+		expect(pageTeamLog(entries, { cursor: page.nextCursor }).entries.at(-1)?.sequence).toBe(5);
 	});
 
 	test("omits nextCursor when the page reaches the oldest entry", () => {
@@ -335,7 +335,7 @@ describe("renderTeamLogPage", () => {
 		const entries = makeEntries(25);
 		const page = pageTeamLog(entries, { limit: 20 });
 		const text = renderTeamLogPage({ ...page, team: "demo-team" });
-		expect(text.split("\n").at(-1)).toBe('Showing 20 of 25 matching events. nextCursor="before:6"');
+		expect(text.split("\n").at(-1)).toBe(`Showing 20 of 25 matching events. nextCursor="${page.nextCursor}"`);
 	});
 
 	test("footer omits nextCursor when there is no older page", () => {
@@ -414,7 +414,7 @@ describe("normalizeChildEvent (child agent/tool lifecycle normalization)", () =>
 	});
 
 	test("skips tool frames for the team child tools, whose semantic entries carry the story", () => {
-		for (const toolName of ["teamsend", "teammain", "teamstatus"]) {
+		for (const toolName of ["team_send_message", "send_main_message", "team_status"]) {
 			expect(normalizeChildEvent("demo-team", "Implementer", { type: "tool_execution_start", toolCallId: "c1", toolName, args: {} })).toBeUndefined();
 			expect(normalizeChildEvent("demo-team", "Implementer", { type: "tool_execution_end", toolCallId: "c1", toolName, result: {}, isError: false })).toBeUndefined();
 		}

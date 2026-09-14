@@ -3,23 +3,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import type { TeammateRecord } from "./teammate.ts";
 
-export interface TeamManifestMember {
-	name: string;
-	prompt: string;
-	model: string;
-	thinking: string;
-	inheritContext: boolean;
-	canOverseeOwnTeams?: boolean;
-	transport: "rpc" | "herdr";
-	live: boolean;
-	sessionId: string;
-	sessionFile: string;
+export interface TeamManifestMember extends TeammateRecord {
 	sessionMaterialized: boolean;
 }
 
 export interface TeamManifest {
-	version: 1;
+	version: 2;
 	id: string;
 	name: string;
 	originMainSessionId: string;
@@ -46,7 +37,7 @@ export interface TeamLease {
 export const dormantManifestRetentionMilliseconds = 30 * 24 * 60 * 60 * 1_000;
 
 function manifestsDirectory(): string {
-	return path.join(getAgentDir(), "pi-simple-team", "teams");
+	return path.join(getAgentDir(), "pi-simple-team", "teams-v2");
 }
 
 /** @example canonicalProjectDirectory(".") // absolute real path */
@@ -75,14 +66,15 @@ function isManifestMember(value: unknown): value is TeamManifestMember {
 	const member = value as Record<string, unknown>;
 	return (
 		typeof member.name === "string" &&
-		typeof member.prompt === "string" &&
+		typeof member.systemPrompt === "string" &&
 		typeof member.model === "string" &&
 		typeof member.thinking === "string" &&
-		typeof member.inheritContext === "boolean" &&
-		(member.canOverseeOwnTeams === undefined || typeof member.canOverseeOwnTeams === "boolean") &&
-		(member.transport === "rpc" || member.transport === "herdr") &&
+		typeof member.inheritMainContext === "boolean" &&
+		typeof member.canManageOwnTeams === "boolean" &&
+		typeof member.showOnHerdrPane === "boolean" &&
 		typeof member.live === "boolean" &&
-		typeof member.sessionId === "string" &&
+		typeof member.active === "boolean" &&
+		typeof member.teammateId === "string" &&
 		typeof member.sessionFile === "string" &&
 		typeof member.sessionMaterialized === "boolean"
 	);
@@ -97,7 +89,7 @@ function parseManifest(filePath: string): TeamManifest {
 	const manifest = parsed as Record<string, unknown>;
 	const validState = manifest.state === "active" || manifest.state === "dormant";
 	if (
-		manifest.version !== 1 ||
+		manifest.version !== 2 ||
 		typeof manifest.id !== "string" ||
 		typeof manifest.name !== "string" ||
 		typeof manifest.originMainSessionId !== "string" ||
@@ -167,12 +159,7 @@ export function listTeamManifests(projectDirectory: string): TeamManifest[] {
 		.map((entry) => ({ filePath: path.join(directory, entry.name), manifest: parseManifest(path.join(directory, entry.name)) }))
 		.filter(({ filePath, manifest }) => {
 			const expiresAt = Date.parse(manifest.expiresAt ?? "");
-			const shutdownAt = Date.parse(manifest.shutdownAt ?? "");
-			const expired = manifest.state === "dormant" && (
-				Number.isFinite(expiresAt)
-					? now >= expiresAt
-					: now - shutdownAt >= dormantManifestRetentionMilliseconds
-			);
+			const expired = manifest.state === "dormant" && now >= expiresAt;
 			if (!expired) return true;
 			fs.rmSync(leasePath(manifest.id), { force: true });
 			fs.rmSync(filePath);
@@ -210,7 +197,7 @@ function markAbandonedTeamDormant(teamId: string): void {
 	const shutdownAt = new Date().toISOString();
 	writeTeamManifest({
 		...manifest,
-		members: manifest.members.map((member) => ({ ...member, live: false })),
+		members: manifest.members.map((member) => ({ ...member, live: false, active: false })),
 		state: "dormant",
 		updatedAt: shutdownAt,
 		shutdownAt,

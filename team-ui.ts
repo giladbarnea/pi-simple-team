@@ -18,7 +18,7 @@ import type { TeamLogEntry, TeamLogKind } from "./teamlog.ts";
 export interface TeamSnapshot {
 	name: string;
 	created: string;
-	showOnHerdrPanes: boolean;
+	transports: readonly ("rpc" | "herdr")[];
 	roster: string[];
 	statuses: Record<string, TeamStatusView>;
 	log: TeamLogEntry[];
@@ -276,7 +276,7 @@ class TeamOverviewOverlay implements Component {
 	}
 
 	private headerRegion(team: TeamSnapshot, hint: string, contentWidth: number, headerHeight: number, breadcrumb?: string): string[] {
-		const transport = team.showOnHerdrPanes ? "Herdr" : "RPC";
+		const transport = team.transports.map((transport) => transport === "herdr" ? "Herdr" : "RPC").join(" + ") || "RPC";
 		const metadata = [
 			`Created ${relativeTimeText(team.created)}`,
 			`${team.roster.length} teammate${team.roster.length === 1 ? "" : "s"}`,

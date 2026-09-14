@@ -14,7 +14,7 @@ import { composeSystemPrompt } from "../system-prompt.ts";
  * fake-based suite cannot: a child in `--mode rpc` registers its delivery runtime on
  * session_start, and an extension `sendMessage` (deliverAs steer + triggerTurn) starts
  * a real turn there. Run with: PI_SIMPLE_TEAM_TEST_REAL_PI=1 bun test test/real-pi.test.ts
- * Requires a configured default model; the delivered prompt costs one tiny turn.
+ * Uses the user-approved Luna model with low thinking; the delivered prompt costs one tiny turn.
  */
 const realPiEnabled = process.env.PI_SIMPLE_TEAM_TEST_REAL_PI === "1";
 
@@ -45,7 +45,7 @@ describe.skipIf(!realPiEnabled)("real pi child runtime", () => {
 				const payload =
 					record.tool === "team_context"
 						? { team: "probe-team", from: "probe", participants: ["probe"], status: {} }
-						: record.tool === "teamstatus"
+						: record.tool === "team_status"
 							? { team: "probe-team", status: {} }
 							: { accepted: true, team: "probe-team", from: "probe" };
 				const responseBody = JSON.stringify(payload);
@@ -62,7 +62,7 @@ describe.skipIf(!realPiEnabled)("real pi child runtime", () => {
 		const systemPrompt = composeSystemPrompt("probe-team", "You are part of a connectivity probe.", "probe", "Wait for instructions.", ["probe"], false);
 		const child = childProcess.spawn(
 			"pi",
-			["--mode", "rpc", "--no-extensions", "-e", extensionPath, "--no-prompt-templates", "--no-themes", "--system-prompt", systemPrompt],
+			["--mode", "rpc", "--model", "openai-codex/gpt-5.6-luna", "--thinking", "low", "--no-extensions", "-e", extensionPath, "--no-prompt-templates", "--no-themes", "--system-prompt", systemPrompt],
 			{
 				cwd: projectDirectory,
 				stdio: ["pipe", "ignore", "pipe"],
@@ -75,7 +75,7 @@ describe.skipIf(!realPiEnabled)("real pi child runtime", () => {
 					PI_SIMPLE_TEAM_TEAM_NAME: "probe-team",
 					PI_SIMPLE_TEAM_MEMBER: "probe",
 					PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["probe"]),
-					PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS: "0",
+					PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "0",
 				},
 			},
 		);

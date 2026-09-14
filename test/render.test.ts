@@ -115,22 +115,22 @@ describe("teamStatusLines", () => {
 		expect(lines[3]).toContain("«customMessageLabel:reviewer");
 	});
 
-	test("renders ISO updated timestamps as relative time and passes legacy strings through", () => {
+	test("renders ISO updated timestamps as relative time", () => {
 		const lines = teamStatusLines(identityTheme, "demo-team", {
 			implementer: { word: "working", phrase: "Running gates", updated: new Date(Date.now() - 12.5 * 60_000).toISOString() },
-			main: { word: "waiting", phrase: "Standing by", updated: "July 16, 22:53:47" },
+			main: { word: "waiting", phrase: "Standing by", updated: new Date(Date.now() - 2.5 * 60_000).toISOString() },
 		}).map(teamLineText);
 		expect(lines[1]).toEndWith("12m ago");
-		expect(lines[2]).toEndWith("July 16, 22:53:47");
+		expect(lines[2]).toEndWith("2m ago");
 	});
 });
 
 describe("allTeamsStatusLines", () => {
 	test("groups member rows under accent team rows", () => {
-		const lines = allTeamsStatusLines(identityTheme, {
-			alpha: { main: { word: "waiting", phrase: "", updated: "July 16, 22:00:00" } },
-			beta: { main: { word: "working", phrase: "on it", updated: "July 16, 22:00:01" } },
-		}).map(teamLineText);
+		const lines = allTeamsStatusLines(identityTheme, [
+			{ teamName: "alpha", status: { main: { word: "waiting", phrase: "", updated: "July 16, 22:00:00" } } },
+			{ teamName: "beta", status: { main: { word: "working", phrase: "on it", updated: "July 16, 22:00:01" } } },
+		]).map(teamLineText);
 		expect(lines[0]).toContain("2 teams");
 		expect(lines[1]).toContain("alpha");
 		expect(lines[2]).toContain("waiting");
@@ -141,10 +141,10 @@ describe("allTeamsStatusLines", () => {
 	test("keeps member colors across teams", () => {
 		const lines = allTeamsStatusLines(
 			taggingTheme,
-			{
-				alpha: { scout: { word: "working", phrase: "", updated: "July 16, 22:00:00" } },
-				beta: { reviewer: { word: "waiting", phrase: "", updated: "July 16, 22:00:01" } },
-			},
+			[
+				{ teamName: "alpha", status: { scout: { word: "working", phrase: "", updated: "July 16, 22:00:00" } } },
+				{ teamName: "beta", status: { reviewer: { word: "waiting", phrase: "", updated: "July 16, 22:00:01" } } },
+			],
 			["scout", "reviewer"],
 		).map(teamLineText);
 		expect(lines.join("\n")).toContain("«mdCode:scout");
@@ -199,8 +199,8 @@ describe("teamAddLines", () => {
 describe("teamResumeLines", () => {
 	test("distinguishes restored history from empty restarts", () => {
 		const lines = teamResumeLines(identityTheme, "demo-team", [
-			{ name: "scout", restored: true },
-			{ name: "reviewer", restored: false },
+			{ name: "scout", restored: true, live: true, active: false },
+			{ name: "reviewer", restored: false, live: true, active: false },
 		], 3);
 		expect(lines[0]).toContain("Team Resume demo-team");
 		expect(lines[0]).toContain("2 of 3 resumed");
@@ -211,7 +211,7 @@ describe("teamResumeLines", () => {
 	});
 
 	test("a full resume drops the of-count", () => {
-		const lines = teamResumeLines(identityTheme, "demo-team", [{ name: "scout", restored: true }], 1);
+		const lines = teamResumeLines(identityTheme, "demo-team", [{ name: "scout", restored: true, live: true, active: false }], 1);
 		expect(lines[0]).toContain("1 resumed");
 		expect(lines[0]).not.toContain(" of ");
 	});
@@ -232,8 +232,8 @@ describe("teamListLines", () => {
 			state: "active",
 			leaseState: "claimed",
 			members: [
-				{ name: "scout", live: true, canOverseeOwnTeams: false },
-				{ name: "reviewer", live: false, canOverseeOwnTeams: true },
+				{ name: "scout", live: true, canManageOwnTeams: false },
+				{ name: "reviewer", live: false, canManageOwnTeams: true },
 			],
 			updatedAt: new Date(Date.now() - 12.5 * MINUTE).toISOString(),
 		},
@@ -241,7 +241,7 @@ describe("teamListLines", () => {
 			name: "profitability-branch",
 			state: "dormant",
 			leaseState: "stale",
-			members: [{ name: "branch-a", live: false, canOverseeOwnTeams: false }],
+			members: [{ name: "branch-a", live: false, canManageOwnTeams: false }],
 			updatedAt: new Date(Date.now() - 6.5 * DAY).toISOString(),
 			expiresAt: new Date(Date.now() + 20.5 * DAY).toISOString(),
 		},
@@ -287,21 +287,21 @@ describe("teamSendLines", () => {
 	const message = ["## Review", "Line two", "Line three", "Line four", "Line five"].join("\n");
 
 	test("renders arrow, recipients, and size in the header", () => {
-		const lines = teamSendLines(identityTheme, { to: ["implementer", "reviewer"], message, interrupt: false, expanded: false }).map(teamLineText);
+		const lines = teamSendLines(identityTheme, { targets: ["implementer", "reviewer"], message, interrupt: false, expanded: false }).map(teamLineText);
 		expect(lines[0]).toContain(`${g.arrow} implementer, reviewer`);
 		expect(lines[0]).toContain(`${message.length} chars`);
 		expect(lines[0]).not.toContain("interrupt");
 	});
 
 	test("shows the interrupt stat only when set", () => {
-		const lines = teamSendLines(identityTheme, { to: ["reviewer"], message, interrupt: true, expanded: false }).map(teamLineText);
+		const lines = teamSendLines(identityTheme, { targets: ["reviewer"], message, interrupt: true, expanded: false }).map(teamLineText);
 		expect(lines[0]).toContain("interrupt");
 	});
 
 	test("colors each recipient from the session roster", () => {
 		const lines = teamSendLines(
 			taggingTheme,
-			{ to: ["implementer", "reviewer"], message, interrupt: false, expanded: false },
+			{ targets: ["implementer", "reviewer"], message, interrupt: false, expanded: false },
 			["implementer", "reviewer"],
 		).map(teamLineText);
 		expect(lines[0]).toContain("«mdCode:implementer»");
@@ -309,7 +309,7 @@ describe("teamSendLines", () => {
 	});
 
 	test("collapsed body shows a quote-barred preview with an expand hint", () => {
-		const lines = teamSendLines(identityTheme, { to: ["reviewer"], message, interrupt: false, expanded: false }).map(teamLineText);
+		const lines = teamSendLines(identityTheme, { targets: ["reviewer"], message, interrupt: false, expanded: false }).map(teamLineText);
 		expect(lines).toHaveLength(5);
 		expect(lines[1]).toContain(g.codeBar);
 		expect(lines[1]).toContain("## Review");
@@ -318,7 +318,7 @@ describe("teamSendLines", () => {
 	});
 
 	test("expanded body shows every line without a hint", () => {
-		const lines = teamSendLines(identityTheme, { to: ["reviewer"], message, interrupt: false, expanded: true }).map(teamLineText);
+		const lines = teamSendLines(identityTheme, { targets: ["reviewer"], message, interrupt: false, expanded: true }).map(teamLineText);
 		expect(lines).toHaveLength(6);
 		expect(lines[5]).toContain("Line five");
 	});
@@ -465,7 +465,7 @@ describe("teamLogLines", () => {
 		expect(lines[1]).toContain("«warning:interrupt»");
 	});
 
-	test("a teammain report renders as a message to main", () => {
+	test("a send_main_message report renders as a message to main", () => {
 		const entries = [logEntry({ sequence: 30, kind: "main_message", teammate: "implementer", summary: "all gates green" })];
 		const lines = teamLogLines(taggingTheme, logView(entries));
 		expect(lines[1]).toContain("message");
@@ -583,13 +583,13 @@ describe("teamMessageLines", () => {
 		const lines = teamMessageLines(identityTheme, {
 			team: "demo-team",
 			from: "reviewer",
-			sentAt: "July 16, 22:49:46",
+			sentAt: new Date(Date.now() - 12.5 * 60_000).toISOString(),
 			message: "Checkpoint verified.\n\nWaiting for the final gate.",
 		}).map(teamLineText);
 		expect(lines[0]).toContain(g.diamond);
 		expect(lines[0]).toContain(`reviewer ${g.arrow} main`);
 		expect(lines[0]).toContain("demo-team");
-		expect(lines[0]).toContain("July 16, 22:49:46");
+		expect(lines[0]).toContain("12m ago");
 		expect(lines).toHaveLength(4);
 		expect(lines[1]).toContain(g.codeBar);
 		expect(lines[1]).toContain("Checkpoint verified.");
@@ -632,11 +632,11 @@ describe("renderTeamMessage", () => {
 describe("renderTeamToolResult", () => {
 	test("renders the call header with the error in red on failure", () => {
 		const component = renderTeamToolResult(
-			"teamsend",
+			"team_send_message",
 			{ isError: true, content: [{ type: "text", text: "Unknown teammate(s) in demo-team: main" }] } as never,
 			{ expanded: false },
 			taggingTheme,
-			{ args: { to: ["main"], message: "hi" }, isError: true },
+			{ args: { targets: ["main"], message: "hi" }, isError: true },
 		);
 		const line = component.render(400)[0]!;
 		expect(line).toContain("Team Send");
@@ -645,11 +645,11 @@ describe("renderTeamToolResult", () => {
 
 	test("colors Team Send recipients when rendering a Markdown body", () => {
 		const component = renderTeamToolResult(
-			"teamsend",
-			{ details: { to: ["implementer", "reviewer"], interrupt: false } },
+			"team_send_message",
+			{ details: { published: true } },
 			{ expanded: false },
 			taggingTheme,
-			{ args: { message: "Please review." } },
+			{ args: { targets: ["implementer", "reviewer"], message: "Please review.", interrupt: false } },
 			identityMarkdownTheme,
 			["implementer", "reviewer"],
 		);
@@ -661,17 +661,17 @@ describe("renderTeamToolResult", () => {
 	test("right-aligns Team Status timestamps and truncates phrases to the remaining width", () => {
 		const width = 80;
 		const component = renderTeamToolResult(
-			"teamstatus",
+			"team_status",
 			{
 				details: {
-					team: "demo-team",
+					teamName: "demo-team",
 					status: {
 						afterword: {
 							word: "completed",
 							phrase: "Translated and verified the afterword; no non-English prose remains",
-							updated: "August 04, 21:31:00",
+							updated: new Date(Date.now() - 12.5 * 60_000).toISOString(),
 						},
-						readme: { word: "completed", phrase: "Verified README", updated: "August 04, 21:31:33" },
+						readme: { word: "completed", phrase: "Verified README", updated: new Date(Date.now() - 12.1 * 60_000).toISOString() },
 					},
 				},
 			},
@@ -684,10 +684,10 @@ describe("renderTeamToolResult", () => {
 
 		expect(rows).toHaveLength(2);
 		for (const row of rows) expect(visibleLength(row)).toBe(stableRenderWidth(width));
-		expect(plainRows[0]).toEndWith("August 04, 21:31:00");
-		expect(plainRows[1]).toEndWith("August 04, 21:31:33");
-		for (const row of plainRows) expect(row).not.toContain(" · August");
-		expect(plainRows[0]!.indexOf("August")).toBe(plainRows[1]!.indexOf("August"));
+		expect(plainRows[0]).toEndWith("12m ago");
+		expect(plainRows[1]).toEndWith("12m ago");
+		for (const row of plainRows) expect(row).not.toContain(" · 12m ago");
+		expect(plainRows[0]!.indexOf("12m ago")).toBe(plainRows[1]!.indexOf("12m ago"));
 		expect(plainRows[0]).toContain(g.ellipsis);
 		expect(plainRows[0]).not.toContain("no non-English prose remains");
 	});
@@ -695,12 +695,15 @@ describe("renderTeamToolResult", () => {
 	test("translates Team Resume result details into restored and restarted rows", () => {
 		const component = renderTeamToolResult(
 			"team_resume",
-			{
+			{ startIdle: true,
 				details: {
-					team: "demo-team",
-					teammates: ["scout", "reviewer", "release"],
-					resumed: ["scout", "reviewer"],
-					restartedEmpty: ["reviewer"],
+					teamName: "demo-team",
+					teammates: [
+						{ name: "scout", teammateId: "scout-session", contextRestored: true, live: true, active: false },
+						{ name: "reviewer", teammateId: "reviewer-session", contextRestored: false, live: true, active: false },
+						{ name: "release", teammateId: "release-session", live: true, active: true },
+					],
+					status: { main: {}, scout: {}, reviewer: {}, release: {} },
 				},
 			},
 			{ expanded: false },
@@ -717,13 +720,15 @@ describe("renderTeamToolResult", () => {
 		expect(lines[2]).toContain("«customMessageLabel:reviewer»");
 		expect(lines[2]).toContain("«warning:restarted");
 		expect(lines[2]).toContain("empty session");
+		expect(lines[3]).toContain("release");
+		expect(lines[3]).toContain("working");
 	});
 
 	test("keeps a teammate color consistent across Team Status and Team Log", () => {
 		const roster = ["implementer", "reviewer"];
 		const status = renderTeamToolResult(
-			"teamstatus",
-			{ details: { team: "demo-team", status: { reviewer: { word: "working", phrase: "Reviewing", updated: "July 16, 23:01:10" } } } },
+			"team_status",
+			{ details: { teamName: "demo-team", status: { reviewer: { word: "working", phrase: "Reviewing", updated: "July 16, 23:01:10" } } } },
 			{ expanded: false },
 			taggingTheme,
 			{},
@@ -731,14 +736,14 @@ describe("renderTeamToolResult", () => {
 			roster,
 		);
 		const log = renderTeamToolResult(
-			"teamlog",
+			"team_log",
 			{
 				details: {
-					team: "demo-team",
+					teams: [{ teamName: "demo-team", teamId: "demo-id",
 					roster: ["reviewer", "implementer"],
 					entries: [logEntry({ teammate: "reviewer" })],
 					totalMatched: 1,
-					returned: 1,
+					}],
 				},
 			},
 			{ expanded: false },
@@ -765,23 +770,23 @@ describe("renderTeamToolCall", () => {
 
 	test("renders multiple Team Log kinds as one OR filter", () => {
 		const component = renderTeamToolCall(
-			"teamlog",
-			{ team: "demo-team", kind: ["status", "error"] },
+			"team_log",
+			{ targets: ["demo-team"], kind: ["status", "error"] },
 			taggingTheme,
 			{ executionStarted: true, isPartial: true },
 		);
 		expect(component.render(200)[0]).toContain("«dim:kind=status,error»");
 	});
 
-	test("colors a Team Log teammate filter from the session roster", () => {
+	test("colors a Team Log target from the session roster", () => {
 		const component = renderTeamToolCall(
-			"teamlog",
-			{ team: "demo-team", teammate: "reviewer" },
+			"team_log",
+			{ targets: ["reviewer"] },
 			taggingTheme,
 			{ executionStarted: true, isPartial: true },
 			["implementer", "reviewer"],
 		);
-		expect(component.render(200)[0]).toContain("«dim:teammate=»«customMessageLabel:reviewer»");
+		expect(component.render(200)[0]).toContain("«customMessageLabel:reviewer»");
 	});
 });
 
@@ -828,34 +833,34 @@ describe("markdown views in a narrow terminal", () => {
 
 	test("a team send header is clipped instead of overflowing", () => {
 		const component = renderTeamToolResult(
-			"teamsend",
-			{ details: { to: ["surveyor", "navigator", "quartermaster"] } },
+			"team_send_message",
+			{ details: { published: true } },
 			{ expanded: false },
 			identityTheme,
-			{ args: { message: "x".repeat(1200) } },
+			{ args: { targets: ["surveyor", "navigator", "quartermaster"], message: "x".repeat(1200) } },
 			identityMarkdownTheme,
 		);
 		for (const line of component.render(NARROW)) expect(visibleLength(line)).toBeLessThanOrEqual(NARROW);
 	});
 
 	test("team spawn call and result fit a nine-column render width", () => {
-		const args = { team: "visible-team", teammates: [{ name: "reviewer", model: "fake-model", thinking: "low" }] };
+		const args = { teamName: "visible-team", teammates: [{ name: "reviewer", model: "fake-model", thinking: "low" }] };
 		const call = renderTeamToolCall("team_spawn", args, identityTheme, { executionStarted: true, isPartial: true });
-		const result = renderTeamToolResult("team_spawn", { details: { team: "visible-team" } }, { expanded: false }, identityTheme, { args });
+		const result = renderTeamToolResult("team_spawn", { details: { teamName: "visible-team", teammates: args.teammates } }, { expanded: false }, identityTheme, { args });
 		assertLinesFit(call.render(VERY_NARROW), VERY_NARROW);
 		assertLinesFit(result.render(VERY_NARROW), VERY_NARROW);
 	});
 
 	test("shared prefixed rows and message bodies fit a nine-column render width", () => {
 		assertLinesFit(new TeamLines([{ prefix: `  ${g.codeBar} `, text: "hello" }], "wrap").render(VERY_NARROW), VERY_NARROW);
-		const send = renderTeamToolResult("teamsend", { details: { to: ["reviewer"] } }, { expanded: false }, identityTheme, { args: { message: "hello" } }, identityMarkdownTheme);
+		const send = renderTeamToolResult("team_send_message", { details: { published: true } }, { expanded: false }, identityTheme, { args: { targets: ["reviewer"], message: "hello" } }, identityMarkdownTheme);
 		const message = renderTeamMessage({ details: { team: "team", from: "reviewer", sentAt: "12:00:00", message: "hello" } }, identityTheme, identityMarkdownTheme);
 		assertLinesFit(send.render(VERY_NARROW), VERY_NARROW);
 		assertLinesFit(message!.render(VERY_NARROW), VERY_NARROW);
 	});
 
 	test("keeps the composed in-progress Team Spawn row within a nine-column render width", () => {
-		const toolDefinition = (name: "teamsend" | "team_spawn") => ({
+		const toolDefinition = (name: "team_send_message" | "team_spawn") => ({
 			name,
 			label: name,
 			description: name,
@@ -863,25 +868,25 @@ describe("markdown views in a narrow terminal", () => {
 			renderShell: "self" as const,
 			renderCall: (args: Record<string, unknown>, theme: ThemeLike, context: { executionStarted?: boolean; isPartial?: boolean; cwd?: string }) => renderTeamToolCall(name, args, theme, context),
 			renderResult: (result: { isError?: boolean; details?: unknown }, options: { expanded: boolean }, theme: ThemeLike, context: { args?: Record<string, unknown>; isError?: boolean; cwd?: string }) =>
-				renderTeamToolResult(name, result, options, theme, context, name === "teamsend" ? identityMarkdownTheme : undefined),
+				renderTeamToolResult(name, result, options, theme, context, name === "team_send_message" ? identityMarkdownTheme : undefined),
 		});
 		const ui = { requestRender() {} } as unknown as TUI;
 		const send = new ToolExecutionComponent(
-			"teamsend",
+			"team_send_message",
 			"send-call",
-			{ message: "START_POC_20260808" },
+			{ targets: ["alpha"], message: "START_POC_20260808" },
 			undefined,
-			toolDefinition("teamsend") as never,
+			toolDefinition("team_send_message") as never,
 			ui,
 			process.cwd(),
 		);
 		send.markExecutionStarted();
-		send.updateResult({ content: [{ type: "text", text: "accepted" }], details: { to: ["alpha"] }, isError: false });
+		send.updateResult({ content: [{ type: "text", text: "published" }], details: { published: true }, isError: false });
 
 		const spawn = new ToolExecutionComponent(
 			"team_spawn",
 			"spawn-call",
-			{ team: "visible-team", teammates: [{ name: "alpha", model: "fake-model", thinking: "low" }] },
+			{ teamName: "visible-team", teammates: [{ name: "alpha", model: "fake-model", thinking: "low" }] },
 			undefined,
 			toolDefinition("team_spawn") as never,
 			ui,

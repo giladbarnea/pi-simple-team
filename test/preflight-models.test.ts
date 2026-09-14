@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import assert from "node:assert/strict";
 import { formatModelReference, formatScopedModelGuidance, validateTeammateModels, type ModelReference } from "../model-preflight.ts";
 
 const availableModels: ModelReference[] = [
@@ -27,6 +28,15 @@ describe("formatScopedModelGuidance", () => {
 });
 
 describe("validateTeammateModels", () => {
+	test("unavailable model errors identify the model field and available replacement IDs", () => {
+		assert.throws(() => validateTeammateModels([{ name: "reviewer", model: "missing/model" }], availableModels), (error: unknown) => {
+			assert.ok(error instanceof Error, "Model selection must fail with a readable error.");
+			assert.ok(error.message.includes("Available model IDs") && error.message.includes("openai-codex/gpt-5.6-sol") && error.message.includes("anthropic/claude-sonnet-4-6"), `The caller needs configured model choices. Got: ${error.message}`);
+			assert.match(error.message, /model field/, "The error must say which field to correct.");
+			return true;
+		});
+	});
+
 	test("accepts an available model that is outside the scoped guidance", () => {
 		const scopedModels = [availableModels[0]];
 		expect(formatScopedModelGuidance(scopedModels)).not.toContain("anthropic/claude-sonnet-4-6");

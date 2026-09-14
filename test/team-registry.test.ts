@@ -79,6 +79,7 @@ function makeContext(sessionId: string, projectDirectory: string): ExtensionCont
 		shutdown: () => undefined,
 		scopedModels: [],
 		modelRegistry: { getAvailable: () => [{ provider: "fake", id: "fake-model" }] },
+		getContextUsage: () => ({ tokens: 43_210, contextWindow: 200_000, percent: 21.605 }),
 		sessionManager: {
 			getCwd: () => projectDirectory,
 			getSessionFile: () => path.join(projectDirectory, `${sessionId}.jsonl`),
@@ -92,7 +93,7 @@ type FakePiInvocation = {
 	args: string[];
 	sessionId: string;
 	sessionFile: string;
-	canOverseeOwnTeams: boolean;
+	canManageOwnTeams: boolean;
 };
 
 type FakePiTurn = {
@@ -129,12 +130,13 @@ fs.appendFileSync(
 		args: process.argv.slice(2),
 		sessionId,
 		sessionFile,
-		canOverseeOwnTeams: process.env.PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS === "1",
+		canManageOwnTeams: process.env.PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS === "1",
 	}) + "\n",
 );
 const beforeAgentStartHandlers = [];
 const sessionStartHandlers = [];
 const sessionShutdownHandlers = [];
+const activityHandlers = new Map();
 const registeredTools = new Map();
 const extensionArgumentIndex = process.argv.indexOf("-e");
 const extensionPath = process.argv[extensionArgumentIndex + 1];
@@ -143,13 +145,16 @@ const extensionApi = {
 		if (event === "before_agent_start") beforeAgentStartHandlers.push(handler);
 		if (event === "session_start") sessionStartHandlers.push(handler);
 		if (event === "session_shutdown") sessionShutdownHandlers.push(handler);
+		if (event === "agent_start" || event === "agent_settled") activityHandlers.set(event, handler);
 	},
 	registerCommand: () => undefined,
 	registerMessageRenderer: () => undefined,
 	registerTool: (tool) => registeredTools.set(tool.name, tool),
 	// Emulates Pi's turn semantics: a delivered message starts a turn after before_agent_start refreshes the system prompt.
-	sendMessage: (message) => {
+	sendMessage: (message, options) => {
+		if (options.triggerTurn === false) return;
 		void (async () => {
+			await activityHandlers.get("agent_start")?.({}, extensionContext);
 			const systemPromptArgumentIndex = process.argv.indexOf("--system-prompt");
 			let systemPrompt = process.argv[systemPromptArgumentIndex + 1];
 			for (const handler of beforeAgentStartHandlers) {
@@ -157,6 +162,7 @@ const extensionApi = {
 				if (result && typeof result.systemPrompt === "string") systemPrompt = result.systemPrompt;
 			}
 			fs.appendFileSync(path.join(root, "turns.jsonl"), JSON.stringify({ member, message: message.content, systemPrompt }) + "\n");
+			if (message.content.includes("FINISH_ACTIVITY_TEST")) await activityHandlers.get("agent_settled")?.({});
 		})();
 	},
 };
@@ -214,9 +220,9 @@ if (member === "recursive-slow-stop") {
 	await spawnTool.execute(
 		"recursive-test-call",
 		{
-			team: "descendant-team",
-			teamPrompt: "Recursive shutdown descendant.",
-			teammates: [{ name: "recursive-descendant", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+			teamName: "descendant-team",
+			startIdle: true, commonPrompt: "Recursive shutdown descendant.",
+			teammates: [{ name: "recursive-descendant", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 		},
 		new AbortController().signal,
 		undefined,
@@ -327,14 +333,112 @@ async function waitForFakePiTurns(root: string, expectedCount: number): Promise<
 
 function listedTeam(result: ToolResult, teamId: string): JsonRecord | undefined {
 	const teams = Array.isArray(result.details?.teams) ? result.details.teams : [];
-	return teams.find((candidate) => typeof candidate === "object" && candidate !== null && (candidate as JsonRecord).id === teamId) as JsonRecord | undefined;
+	return teams.find((candidate) => typeof candidate === "object" && candidate !== null && (candidate as JsonRecord).teamId === teamId) as JsonRecord | undefined;
 }
 
 function listedMember(result: ToolResult, teamId: string, memberName: string): JsonRecord | undefined {
 	const team = listedTeam(result, teamId);
-	const members = Array.isArray(team?.members) ? team.members : [];
+	const members = Array.isArray(team?.teammates) ? team.teammates : [];
 	return members.find((candidate) => typeof candidate === "object" && candidate !== null && (candidate as JsonRecord).name === memberName) as JsonRecord | undefined;
 }
+
+test("idle resume reports the complete team and work that was already active", async () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-team-active-resume-"));
+	const agentDirectory = path.join(root, "agent");
+	const projectDirectory = path.join(root, "project");
+	fs.mkdirSync(agentDirectory);
+	fs.mkdirSync(projectDirectory);
+	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreFakePi = installFakePi(root);
+	let host: ExtensionHost | undefined;
+	try {
+		const { default: teamExtension } = await import("../index.ts");
+		host = new ExtensionHost(teamExtension, makeContext("main-activity", projectDirectory));
+		await host.start();
+		await host.execute("team_spawn", { teamName: "activity", commonPrompt: "Work.", teammates: [{ name: "persisted", systemPrompt: "Keep working.", model: "fake/fake-model" }] });
+		await waitForFakePiTurns(root, 1);
+		const result = await host.execute("team_resume", { team: "activity", startIdle: true });
+		assert.equal(result.details?.started, true, "An idle no-op resume must report the work already underway.");
+		const members = result.details?.teammates as JsonRecord[] | undefined;
+		assert.deepEqual(members?.map(({ name, live, active }) => ({ name, live, active })), [{ name: "persisted", live: true, active: true }], "The already-live teammate must remain visible and active in the result.");
+		assert.deepEqual(result.details?.alreadyActiveTeammates, [{ name: "persisted", teammateId: "persisted-1" }], "The caller must know which pre-existing teammate is active despite startIdle.");
+		assert.doesNotMatch(String(result.details?.instruction), /These teammates are idle/, "The success instruction must agree with the actual team state.");
+		assert.equal(readFakePiInvocations(root).length, 1, "No-op resume must not restart the active Pi session.");
+		assert.equal(readFakePiTurns(root).length, 1, "No-op resume must not deliver another kickoff.");
+		const added = await host.execute("team_add_teammates", { team: "activity", startIdle: true, teammates: [{ name: "waiting", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+		assert.deepEqual(added.details?.teammates, [
+			{ name: "persisted", teammateId: "persisted-1", live: true, active: true },
+			{ name: "waiting", teammateId: "waiting-1", live: true, active: false },
+		], "Add must return a lightweight complete roster with each teammate's actual state.");
+		assert.equal(added.details?.started, true, "Adding an idle teammate must not hide existing active work.");
+		const listed = await host.execute("team_list", {});
+		assert.equal(listedMember(listed, "main-activity-activity", "persisted")?.active, true, "List must use the same activity meaning as lifecycle results.");
+		await host.execute("team_send_message", { targets: ["persisted"], message: "FINISH_ACTIVITY_TEST" });
+		await waitForFakePiTurns(root, 2);
+		const settled = await host.execute("team_resume", { team: "activity", startIdle: true });
+		assert.equal(settled.details?.started, false, "After the runtime settles, a live process must not count as active work.");
+		assert.deepEqual(settled.details?.alreadyActiveTeammates, [], "Settled teammates must not be reported as already active.");
+	} finally {
+		await host?.shutdown();
+		restoreFakePi();
+		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("context usage selects same-named teammates by Pi session ID across teams", async () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-team-selection-"));
+	const agentDirectory = path.join(root, "agent");
+	const projectDirectory = path.join(root, "project");
+	fs.mkdirSync(agentDirectory);
+	fs.mkdirSync(projectDirectory);
+	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreFakePi = installFakePi(root);
+	let host: ExtensionHost | undefined;
+	try {
+		const { default: teamExtension } = await import("../index.ts");
+		host = new ExtensionHost(teamExtension, makeContext("selection-main", projectDirectory));
+		await host.start();
+		for (const teamName of ["first", "second"]) {
+			await host.execute("team_spawn", { teamName, startIdle: true, commonPrompt: "Wait.", teammates: [{ name: "reviewer", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+		}
+		const result = await host.execute("get_context_window_usage", { targets: ["reviewer-1", "reviewer-2", "first"] });
+		const text = result.content.map((block) => block.text).join("\n");
+		assert.match(text, /reviewer.*reviewer-1.*first.*87k/, "The first report must identify the first Pi session and its team.");
+		assert.match(text, /reviewer.*reviewer-2.*second.*87k/, "The second report must identify the other same-named Pi session and its team.");
+		assert.equal(text.match(/87k/g)?.length, 2, "Overlapping team and teammate selections must query each session once.");
+		assert.match(text, /You have used 43k/, "The caller's own usage remains included.");
+		await assert.rejects(() => host!.execute("get_context_window_usage", { targets: ["reviewer"] }), /Ambiguous target.*reviewer-1.*reviewer-2/s, "Ambiguous names must supply both usable IDs.");
+		await assert.rejects(() => host!.execute("team_send_message", { targets: ["first", "reviewer"], message: "Must not publish." }), /Ambiguous target.*reviewer-1.*reviewer-2/s, "The whole recipient list must resolve before any message is published.");
+		assert.equal(readFakePiTurns(root).length, 0, "A rejected mixed selection must not start the valid recipient either.");
+		const published = await host.execute("team_send_message", { targets: ["first", "reviewer-1", "reviewer-2"], message: "CROSS_TEAM_MESSAGE", interrupt: ["reviewer-2"] });
+		assert.equal(published.details?.published, true, "The message call must acknowledge publication across both teams.");
+		assert.deepEqual((published.details?.teams as JsonRecord[] | undefined)?.map((team) => team.teamId), ["selection-main-first", "selection-main-second"], "The result must identify both teams whose statuses it returns.");
+		const turns = await waitForFakePiTurns(root, 2);
+		assert.equal(turns.filter((turn) => turn.message.includes("CROSS_TEAM_MESSAGE")).length, 2, "Overlapping recipients must receive one message per Pi session.");
+		const logged = await host.execute("team_log", { targets: ["reviewer-1", "reviewer-2"], kind: ["send"], search: "CROSS_TEAM_MESSAGE", limit: 1 });
+		assert.equal(logged.details?.totalMatched, 2, "One log query must find both same-named teammates' messages.");
+		assert.equal(logged.details?.returned, 1, "The limit applies across selected teams.");
+		assert.equal(typeof logged.details?.nextCursor, "string", "The first page must expose an opaque cursor for the remaining message.");
+		const older = await host.execute("team_log", { targets: ["reviewer-1", "reviewer-2"], kind: ["send"], search: "CROSS_TEAM_MESSAGE", limit: 1, cursor: logged.details?.nextCursor });
+		const firstEntries = logged.details?.entries as JsonRecord[] | undefined;
+		const secondEntries = older.details?.entries as JsonRecord[] | undefined;
+		assert.equal(older.details?.returned, 1, "The second page must contain the other selected team's message.");
+		assert.notEqual(firstEntries?.[0]?.team, secondEntries?.[0]?.team, "Paging must not confuse the two teams' local sequence numbers.");
+		const tables = logged.content[0]?.text + older.content[0]?.text;
+		assert.match(tables, /selection-main-first/, "The log text must identify the first team unambiguously.");
+		assert.match(tables, /selection-main-second/, "The log text must identify the second team unambiguously.");
+	} finally {
+		await host?.shutdown();
+		restoreFakePi();
+		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
 
 test("team_spawn isolates teammates from conflicting discovered team extensions", async () => {
 	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-extension-conflict-test-"));
@@ -352,11 +456,11 @@ test("team_spawn isolates teammates from conflicting discovered team extensions"
 		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
 		await host.start();
 		const result = await host.execute("team_spawn", {
-			team: "isolated-team",
-			teamPrompt: "Ignore unrelated team extensions.",
-			teammates: [{ name: "conflict-sensitive", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+			teamName: "isolated-team",
+			startIdle: true, commonPrompt: "Ignore unrelated team extensions.",
+			teammates: [{ name: "conflict-sensitive", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 		});
-		assert.equal(result.details?.accepted, true, `Expected teammate startup to ignore conflicting discovered extensions. Got: ${JSON.stringify(result.details)}`);
+		assert.equal(result.details?.teamId, "origin-main-session-id-isolated-team", `Expected teammate startup to ignore conflicting discovered extensions. Got: ${JSON.stringify(result.details)}`);
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();
@@ -382,21 +486,25 @@ test("team_spawn returns each durable Pi session identity", async () => {
 		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
 		await host.start();
 		const result = await host.execute("team_spawn", {
-			team: "identity-team",
-			teamPrompt: "Expose durable session identities.",
-			teammates: [{ name: "persisted", prompt: "Wait.", model: "fake/fake-model", thinking: "low", canOverseeOwnTeams: true }],
+			teamName: "identity-team",
+			startIdle: true, commonPrompt: "Expose durable session identities.",
+			teammates: [{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low", canManageOwnTeams: true }],
 		});
 		const invocation = readFakePiInvocations(temporaryDirectory)[0];
 		assert.deepEqual(
-			result.details?.sessions,
-			{ persisted: { sessionId: invocation?.sessionId, sessionFile: invocation?.sessionFile } },
+			result.details?.teammates,
+			[{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low", inheritMainContext: false, canManageOwnTeams: true, showOnHerdrPane: false, teammateId: invocation?.sessionId, sessionFile: invocation?.sessionFile, live: true, active: false }],
 			`Expected team_spawn to return the reported Pi session identity. Got: ${JSON.stringify(result.details)}`,
 		);
+		const manifestPath = path.join(agentDirectory, "pi-simple-team", "teams-v2", "origin-main-session-id-identity-team.json");
+		const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as JsonRecord;
+		assert.equal(manifest.version, 2, "The current manifest must have a distinct version without legacy field adapters.");
+		assert.deepEqual((manifest.members as JsonRecord[] | undefined)?.[0], { ...(result.details?.teammates as JsonRecord[])[0], sessionMaterialized: true }, "Storage must preserve the current teammate fields directly.");
 		const listed = await host.execute("team_list", {});
-		const listedTeam = (listed.details?.teams as JsonRecord[] | undefined)?.find((team) => team.id === "origin-main-session-id-identity-team");
-		const listedMember = (listedTeam?.members as JsonRecord[] | undefined)?.find((member) => member.name === "persisted");
+		const listedTeam = (listed.details?.teams as JsonRecord[] | undefined)?.find((team) => team.teamId === "origin-main-session-id-identity-team");
+		const listedMember = (listedTeam?.teammates as JsonRecord[] | undefined)?.find((member) => member.name === "persisted");
 		assert.equal(
-			listedMember?.canOverseeOwnTeams,
+			listedMember?.canManageOwnTeams,
 			true,
 			`Expected the durable attachment to retain recursive-team oversight. Got: ${JSON.stringify(listed.details)}`,
 		);
@@ -427,9 +535,9 @@ test("team_spawn cannot overwrite a dormant team attachment", async () => {
 		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
 		await host.start();
 		await host.execute("team_spawn", {
-			team: teamName,
-			teamPrompt: "Keep this attachment.",
-			teammates: [{ name: "persisted", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+			teamName: teamName,
+			startIdle: true, commonPrompt: "Keep this attachment.",
+			teammates: [{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 		});
 		await host.execute("team_shutdown", { team: teamName });
 		const originalMember = listedMember(await host.execute("team_list", {}), teamId, "persisted");
@@ -437,9 +545,9 @@ test("team_spawn cannot overwrite a dormant team attachment", async () => {
 
 		await assert.rejects(
 			() => host!.execute("team_spawn", {
-				team: teamName,
-				teamPrompt: "Replace the attachment.",
-				teammates: [{ name: "replacement", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+				teamName: teamName,
+				startIdle: true, commonPrompt: "Replace the attachment.",
+				teammates: [{ name: "replacement", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 			}),
 			/already exists.*team_resume/i,
 			"Expected team_spawn to preserve an existing dormant team attachment.",
@@ -476,9 +584,9 @@ test("canonical team IDs distinguish live teams with the same display name", asy
 			const host = new ExtensionHost(teamExtension, makeContext(sessionId, projectDirectory));
 			hosts.push(host);
 			await host.start();
-			await host.execute("team_spawn", { team: teamName, teamPrompt: sessionId, teammates: [] });
-			const result = await host.execute("teamstatus", { team: `${sessionId}-${teamName}` });
-			assert.equal(result.details?.team, teamName, `Expected ${sessionId} to address its live team by canonical ID.`);
+			await host.execute("team_spawn", { teamName: teamName, startIdle: true, commonPrompt: sessionId, teammates: [] });
+			const result = await host.execute("team_status", { team: `${sessionId}-${teamName}` });
+			assert.equal(result.details?.teamName, teamName, `Expected ${sessionId} to address its live team by canonical ID.`);
 		}
 	} finally {
 		for (const host of hosts.reverse()) await host.shutdown();
@@ -505,7 +613,7 @@ test("team_resume rejects an ambiguous team name and asks for the persistent tea
 			const host = new ExtensionHost(teamExtension, makeContext(sessionId, projectDirectory));
 			hosts.push(host);
 			await host.start();
-			await host.execute("team_spawn", { team: teamName, teamPrompt: sessionId, teammates: [] });
+			await host.execute("team_spawn", { teamName: teamName, startIdle: true, commonPrompt: sessionId, teammates: [] });
 			await host.shutdown();
 		}
 
@@ -513,7 +621,7 @@ test("team_resume rejects an ambiguous team name and asks for the persistent tea
 		hosts.push(resumingHost);
 		await resumingHost.start();
 		await assert.rejects(
-			() => resumingHost.execute("team_resume", { team: teamName }),
+			() => resumingHost.execute("team_resume", { startIdle: true, team: teamName }),
 			/Ambiguous team name.*persistent team ID/i,
 			"Expected team_resume to reject a name shared by multiple current-project teams.",
 		);
@@ -541,7 +649,7 @@ test("an overseeing teammate can discover and resume only teams it created", asy
 			const host = new ExtensionHost(teamExtension, makeContext(sessionId, projectDirectory));
 			hosts.push(host);
 			await host.start();
-			await host.execute("team_spawn", { team: teamName, teamPrompt: "Foreign scope.", teammates: [] });
+			await host.execute("team_spawn", { teamName: teamName, startIdle: true, commonPrompt: "Foreign scope.", teammates: [] });
 			await host.shutdown();
 			hosts.pop();
 		}
@@ -554,7 +662,7 @@ test("an overseeing teammate can discover and resume only teams it created", asy
 			PI_SIMPLE_TEAM_TEAM_NAME: "parent-team",
 			PI_SIMPLE_TEAM_MEMBER: "lead",
 			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["lead"]),
-			PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS: "1",
+			PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "1",
 		};
 		const previousChildEnvironment = Object.fromEntries(Object.keys(childEnvironment).map((name) => [name, process.env[name]]));
 		Object.assign(process.env, childEnvironment);
@@ -566,15 +674,15 @@ test("an overseeing teammate can discover and resume only teams it created", asy
 			else process.env[name] = value;
 		}
 
-		await overseer.execute("team_spawn", { team: "owned-team", teamPrompt: "Owned scope.", teammates: [] });
+		await overseer.execute("team_spawn", { teamName: "owned-team", startIdle: true, commonPrompt: "Owned scope.", teammates: [] });
 		const listed = await overseer.execute("team_list", {});
 		assert.deepEqual(
-			(listed.details?.teams as JsonRecord[] | undefined)?.map((team) => team.id),
+			(listed.details?.teams as JsonRecord[] | undefined)?.map((team) => team.teamId),
 			["lead-session-owned-team"],
 			`Expected the overseeing teammate to discover only its own teams. Got: ${JSON.stringify(listed.details)}`,
 		);
 		await assert.rejects(
-			() => overseer.execute("team_resume", { team: "top-main-session-parent-team" }),
+			() => overseer.execute("team_resume", { startIdle: true, team: "top-main-session-parent-team" }),
 			/Unknown current-project team/,
 			"Expected the overseeing teammate to reject its dormant parent team as outside its management scope.",
 		);
@@ -602,9 +710,9 @@ test("team_shutdown waits for every RPC runtime before releasing ownership", asy
 		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
 		await host.start();
 		await host.execute("team_spawn", {
-			team: "slow-shutdown-team",
-			teamPrompt: "Wait for process exit.",
-			teammates: [{ name: "slow-stop", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+			teamName: "slow-shutdown-team",
+			startIdle: true, commonPrompt: "Wait for process exit.",
+			teammates: [{ name: "slow-stop", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 		});
 		await host.execute("team_shutdown", { team: "slow-shutdown-team" });
 		const exitsPath = path.join(temporaryDirectory, "exits.jsonl");
@@ -635,14 +743,14 @@ test("team_shutdown gives an overseeing teammate time to stop its own teams", as
 		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
 		await host.start();
 		await host.execute("team_spawn", {
-			team: "recursive-shutdown-team",
-			teamPrompt: "Allow descendant shutdown.",
+			teamName: "recursive-shutdown-team",
+			startIdle: true, commonPrompt: "Allow descendant shutdown.",
 			teammates: [{
 				name: "recursive-slow-stop",
-				prompt: "Stop descendants before exiting.",
+				systemPrompt: "Stop descendants before exiting.",
 				model: "fake/fake-model",
 				thinking: "low",
-				canOverseeOwnTeams: true,
+				canManageOwnTeams: true,
 			}],
 		});
 		const descendantReadyPath = path.join(temporaryDirectory, "descendant-ready");
@@ -669,13 +777,13 @@ test("team_shutdown gives an overseeing teammate time to stop its own teams", as
 		);
 		const listed = await host.execute("team_list", {});
 		const descendantTeam = (listed.details?.teams as JsonRecord[] | undefined)?.find(
-			(team) => team.id === "recursive-slow-stop-1-descendant-team",
+			(team) => team.teamId === "recursive-slow-stop-1-descendant-team",
 		);
 		assert.deepEqual(
 			{
 				state: descendantTeam?.state,
 				leaseState: descendantTeam?.leaseState,
-				memberLive: (descendantTeam?.members as JsonRecord[] | undefined)?.[0]?.live,
+				memberLive: (descendantTeam?.teammates as JsonRecord[] | undefined)?.[0]?.live,
 			},
 			{ state: "dormant", leaseState: "unclaimed", memberLive: false },
 			`Expected recursive shutdown to leave the descendant attachment dormant and unclaimed. Got: ${JSON.stringify(descendantTeam)}`,
@@ -689,7 +797,7 @@ test("team_shutdown gives an overseeing teammate time to stop its own teams", as
 	}
 });
 
-test("team_add accepts a team name and grows the owned running team", async () => {
+test("team_add_teammates accepts a team name and grows the owned running team", async () => {
 	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-add-test-"));
 	const agentDirectory = path.join(temporaryDirectory, "agent");
 	const projectDirectory = path.join(temporaryDirectory, "project");
@@ -708,41 +816,41 @@ test("team_add accepts a team name and grows the owned running team", async () =
 		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
 		await host.start();
 		await host.execute("team_spawn", {
-			team: teamName,
-			teamPrompt: "Add public-interface test.",
-			teammates: [{ name: "original", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+			teamName: teamName,
+			startIdle: true, commonPrompt: "Add public-interface test.",
+			teammates: [{ name: "original", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 		});
 
 		const invocationCountBeforeRejectedAdds = readFakePiInvocations(temporaryDirectory).length;
 		await assert.rejects(
 			() =>
-				host!.execute("team_add", {
+				host!.execute("team_add_teammates", { startIdle: true,
 					team: teamId,
 					teammates: [
-						{ name: "duplicate", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
-						{ name: " duplicate ", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+						{ name: "duplicate", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+						{ name: " duplicate ", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
 					],
 				}),
 			/duplicate teammate name/i,
-			"Expected team_add to reject duplicate names within one request before starting a session.",
+			"Expected team_add_teammates to reject duplicate names within one request before starting a session.",
 		);
 		await assert.rejects(
 			() =>
-				host!.execute("team_add", {
+				host!.execute("team_add_teammates", { startIdle: true,
 					team: teamId,
-					teammates: [{ name: "original", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+					teammates: [{ name: "original", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 				}),
 			/already.*team|duplicate teammate name/i,
-			"Expected team_add to reject a name already present in the team.",
+			"Expected team_add_teammates to reject a name already present in the team.",
 		);
 		await assert.rejects(
 			() =>
-				host!.execute("team_add", {
+				host!.execute("team_add_teammates", { startIdle: true,
 					team: teamId,
-					teammates: [{ name: "main", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+					teammates: [{ name: "main", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 				}),
 			/"main" is reserved/i,
-			"Expected team_add to reject the reserved main name.",
+			"Expected team_add_teammates to reject the reserved main name.",
 		);
 		assert.equal(
 			readFakePiInvocations(temporaryDirectory).length,
@@ -750,17 +858,17 @@ test("team_add accepts a team name and grows the owned running team", async () =
 			"Expected rejected additions to start no Pi sessions.",
 		);
 
-		const addResult = await host.execute("team_add", {
+		const addResult = await host.execute("team_add_teammates", { startIdle: true,
 			team: teamName,
 			teammates: [
-				{ name: "security", prompt: "Review security.", model: "fake/fake-model", thinking: "high" },
-				{ name: "operations", prompt: "Review operations.", model: "fake/fake-model", thinking: "medium" },
+				{ name: "security", systemPrompt: "Review security.", model: "fake/fake-model", thinking: "high" },
+				{ name: "operations", systemPrompt: "Review operations.", model: "fake/fake-model", thinking: "medium" },
 			],
 		});
 		assert.deepEqual(
-			addResult.details?.added,
-			["security", "operations"],
-			`Expected team_add to report both new teammates in request order. Got: ${JSON.stringify(addResult.details)}`,
+			(addResult.details?.teammates as JsonRecord[] | undefined)?.map((member) => member.name),
+			["original", "security", "operations"],
+			`Expected team_add_teammates to return the complete roster. Got: ${JSON.stringify(addResult.details)}`,
 		);
 
 		const invocations = readFakePiInvocations(temporaryDirectory);
@@ -780,20 +888,18 @@ test("team_add accepts a team name and grows the owned running team", async () =
 
 		const listed = await host.execute("team_list", {});
 		assert.deepEqual(
-			listedTeam(listed, teamId)?.teammates,
+			(listedTeam(listed, teamId)?.teammates as JsonRecord[] | undefined)?.map((member) => member.name),
 			["original", "security", "operations"],
 			`Expected team_list to expose the persisted expanded roster. Got: ${JSON.stringify(listed.details)}`,
 		);
 		for (const memberName of ["security", "operations"]) {
 			const member = listedMember(listed, teamId, memberName);
-			assert.equal(typeof member?.sessionId, "string", `Expected ${memberName} to have a persisted session ID. Got: ${JSON.stringify(member)}`);
+			assert.equal(typeof member?.teammateId, "string", `Expected ${memberName} to have a persisted session ID. Got: ${JSON.stringify(member)}`);
 			assert.equal(typeof member?.sessionFile, "string", `Expected ${memberName} to have a persisted session file. Got: ${JSON.stringify(member)}`);
 		}
 
-		assert.deepEqual(readFakePiTurns(temporaryDirectory), [], "Expected team_add to leave the original teammate asleep.");
-		await host.execute("teamsend", {
-			team: teamName,
-			to: ["original", "security", "operations"],
+		assert.deepEqual(readFakePiTurns(temporaryDirectory), [], "Expected team_add_teammates to leave the original teammate asleep.");
+		await host.execute("team_send_message", { targets: ["original", "security", "operations"],
 			message: "Report the current roster.",
 		});
 		const turns = await waitForFakePiTurns(temporaryDirectory, 3);
@@ -809,12 +915,12 @@ test("team_add accepts a team name and grows the owned running team", async () =
 		await host.execute("team_shutdown", { team: teamName });
 		await assert.rejects(
 			() =>
-				host!.execute("team_add", {
+				host!.execute("team_add_teammates", { startIdle: true,
 					team: teamId,
-					teammates: [{ name: "too-late", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+					teammates: [{ name: "too-late", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 				}),
-			/running team/i,
-			"Expected team_add to reject a dormant team even when its manifest remains discoverable.",
+			/active team/i,
+			"Expected team_add_teammates to reject a dormant team even when its manifest remains discoverable.",
 		);
 	} finally {
 		await host?.shutdown();
@@ -825,7 +931,7 @@ test("team_add accepts a team name and grows the owned running team", async () =
 	}
 });
 
-test("failed team_add waits for only its newly started processes to exit", async () => {
+test("failed team_add_teammates waits for only its newly started processes to exit", async () => {
 	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-add-rollback-test-"));
 	const agentDirectory = path.join(temporaryDirectory, "agent");
 	const projectDirectory = path.join(temporaryDirectory, "project");
@@ -843,17 +949,17 @@ test("failed team_add waits for only its newly started processes to exit", async
 		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
 		await host.start();
 		await host.execute("team_spawn", {
-			team: teamName,
-			teamPrompt: "Rollback only the new teammates.",
-			teammates: [{ name: "persisted", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+			teamName: teamName,
+			startIdle: true, commonPrompt: "Rollback only the new teammates.",
+			teammates: [{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 		});
 
 		await assert.rejects(
-			() => host!.execute("team_add", {
+			() => host!.execute("team_add_teammates", { startIdle: true,
 				team: teamId,
 				teammates: [
-					{ name: "slow-stop", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
-					{ name: "add-fails", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+					{ name: "slow-stop", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+					{ name: "add-fails", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
 				],
 			}),
 			/add-fails exited/,
@@ -863,15 +969,15 @@ test("failed team_add waits for only its newly started processes to exit", async
 		assert.equal(
 			fs.existsSync(exitsPath),
 			true,
-			"Expected team_add rollback to return only after the newly started slow process exited.",
+			"Expected team_add_teammates rollback to return only after the newly started slow process exited.",
 		);
 		const listed = await host.execute("team_list", {});
 		assert.deepEqual(
-			listedTeam(listed, teamId)?.teammates,
+			(listedTeam(listed, teamId)?.teammates as JsonRecord[] | undefined)?.map((member) => member.name),
 			["persisted"],
 			`Expected rollback to remove only the requested additions. Got: ${JSON.stringify(listed.details)}`,
 		);
-		await host.execute("teamsend", { team: teamId, to: ["persisted"], message: "Confirm that you remained live." });
+		await host.execute("team_send_message", { targets: ["persisted"], message: "Confirm that you remained live." });
 		const turns = await waitForFakePiTurns(temporaryDirectory, 1);
 		assert.equal(turns[0]?.member, "persisted", `Expected the existing teammate to remain reachable. Got: ${JSON.stringify(turns)}`);
 	} finally {
@@ -903,11 +1009,11 @@ test("a later same-project session resumes selected and all stopped teammates wi
 		hosts.push(originHost);
 		await originHost.start();
 		await originHost.execute("team_spawn", {
-			team: teamName,
-			teamPrompt: "Resume public-interface test.",
+			teamName: teamName,
+			startIdle: true, commonPrompt: "Resume public-interface test.",
 			teammates: [
-				{ name: "persisted", prompt: "Wait.", model: "fake/fake-model", thinking: "low", canOverseeOwnTeams: true },
-				{ name: "untouched", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+				{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low", canManageOwnTeams: true },
+				{ name: "untouched", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
 			],
 		});
 		await originHost.execute("team_shutdown", { team: teamName });
@@ -929,11 +1035,11 @@ test("a later same-project session resumes selected and all stopped teammates wi
 			`Expected team_list to expose the untouched member provisional session file. Got: ${JSON.stringify(dormantList.details)}`,
 		);
 
-		const selectedResume = await resumingHost.execute("team_resume", { team: teamName, teammates: ["persisted"] });
+		const selectedResume = await resumingHost.execute("team_resume", { startIdle: true, team: teamName, teammates: [String(persistedBeforeResume?.teammateId)] });
 		assert.deepEqual(
-			selectedResume.details?.resumed,
-			["persisted"],
-			`Expected selective resume to start only persisted. Got: ${JSON.stringify(selectedResume.details)}`,
+			(selectedResume.details?.teammates as JsonRecord[] | undefined)?.map(({ name, live, active, contextRestored }) => ({ name, live, active, contextRestored })),
+			[{ name: "persisted", live: true, active: false, contextRestored: true }, { name: "untouched", live: false, active: false, contextRestored: undefined }],
+			`Expected selective resume by Pi session ID to return the complete roster and restore only persisted. Got: ${JSON.stringify(selectedResume.details)}`,
 		);
 		const persistedResumeInvocation = readFakePiInvocations(temporaryDirectory).filter((invocation) => invocation.member === "persisted").at(-1);
 		assert.deepEqual(
@@ -952,7 +1058,7 @@ test("a later same-project session resumes selected and all stopped teammates wi
 			`Expected persisted session state to choose its restored model. Got: ${JSON.stringify(persistedResumeInvocation)}`,
 		);
 		assert.equal(
-			persistedResumeInvocation?.canOverseeOwnTeams,
+			persistedResumeInvocation?.canManageOwnTeams,
 			true,
 			`Expected resume to restore recursive-team oversight. Got: ${JSON.stringify(persistedResumeInvocation)}`,
 		);
@@ -961,16 +1067,16 @@ test("a later same-project session resumes selected and all stopped teammates wi
 		hosts.push(competingHost);
 		await competingHost.start();
 		await assert.rejects(
-			() => competingHost.execute("team_resume", { team: teamId }),
+			() => competingHost.execute("team_resume", { startIdle: true, team: teamId }),
 			/already owned/i,
 			"Expected the live team lease to reject concurrent ownership.",
 		);
 
-		const defaultResume = await resumingHost.execute("team_resume", { team: teamId });
+		const defaultResume = await resumingHost.execute("team_resume", { startIdle: true, team: teamId });
 		assert.deepEqual(
-			defaultResume.details?.resumed,
-			["untouched"],
-			`Expected default resume to start every stopped member only. Got: ${JSON.stringify(defaultResume.details)}`,
+			(defaultResume.details?.teammates as JsonRecord[] | undefined)?.map(({ name, live, active, contextRestored }) => ({ name, live, active, contextRestored })),
+			[{ name: "persisted", live: true, active: false, contextRestored: undefined }, { name: "untouched", live: true, active: false, contextRestored: false }],
+			`Expected default resume to preserve the full roster and report the empty restart. Got: ${JSON.stringify(defaultResume.details)}`,
 		);
 		const untouchedEmptyRestart = readFakePiInvocations(temporaryDirectory).filter((invocation) => invocation.member === "untouched").at(-1);
 		assert.equal(
@@ -990,7 +1096,7 @@ test("a later same-project session resumes selected and all stopped teammates wi
 		const verificationHost = new ExtensionHost(teamExtension, makeContext("verification-main-session-id", projectDirectory));
 		hosts.push(verificationHost);
 		await verificationHost.start();
-		await verificationHost.execute("team_resume", { team: teamId, teammates: ["untouched"] });
+		await verificationHost.execute("team_resume", { startIdle: true, team: teamId, teammates: ["untouched"] });
 		const untouchedPersistedResume = readFakePiInvocations(temporaryDirectory).filter((invocation) => invocation.member === "untouched").at(-1);
 		assert.equal(
 			untouchedPersistedResume?.args[untouchedPersistedResume.args.indexOf("--session") + 1],
@@ -1004,7 +1110,7 @@ test("a later same-project session resumes selected and all stopped teammates wi
 		hosts.push(missingHistoryHost);
 		await missingHistoryHost.start();
 		await assert.rejects(
-			() => missingHistoryHost.execute("team_resume", { team: teamId, teammates: ["persisted"] }),
+			() => missingHistoryHost.execute("team_resume", { startIdle: true, team: teamId, teammates: ["persisted"] }),
 			/materialized session file.*missing/i,
 			"Expected resume to fail instead of replacing known conversation history.",
 		);
@@ -1036,11 +1142,11 @@ test("a failed selective resume leaves members that were already running alive",
 		hosts.push(originHost);
 		await originHost.start();
 		await originHost.execute("team_spawn", {
-			team: teamName,
-			teamPrompt: "Keep existing runtimes alive after a failed selective resume.",
+			teamName: teamName,
+			startIdle: true, commonPrompt: "Keep existing runtimes alive after a failed selective resume.",
 			teammates: [
-				{ name: "persisted", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
-				{ name: "resume-fails", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+				{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+				{ name: "resume-fails", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
 			],
 		});
 		await originHost.execute("team_shutdown", { team: teamId });
@@ -1048,16 +1154,14 @@ test("a failed selective resume leaves members that were already running alive",
 		const resumingHost = new ExtensionHost(teamExtension, makeContext("resuming-main-session-id", projectDirectory));
 		hosts.push(resumingHost);
 		await resumingHost.start();
-		await resumingHost.execute("team_resume", { team: teamId, teammates: ["persisted"] });
+		await resumingHost.execute("team_resume", { startIdle: true, team: teamId, teammates: ["persisted"] });
 		await assert.rejects(
-			() => resumingHost.execute("team_resume", { team: teamId, teammates: ["resume-fails"] }),
+			() => resumingHost.execute("team_resume", { startIdle: true, team: teamId, teammates: ["resume-fails"] }),
 			/resume-fails exited/,
 			"Expected the selected teammate's failed readiness handshake to reject resume.",
 		);
 
-		await resumingHost.execute("teamsend", {
-			team: teamId,
-			to: ["persisted"],
+		await resumingHost.execute("team_send_message", { targets: ["persisted"],
 			message: "Confirm that your existing runtime survived.",
 		});
 		const turns = await waitForFakePiTurns(temporaryDirectory, 1);
@@ -1093,7 +1197,7 @@ test("team_list reports the live lease and exact dormant expiry", async () => {
 		const teamId = `origin-main-session-id-${teamName}`;
 		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
 		await host.start();
-		await host.execute("team_spawn", { team: teamName, teamPrompt: "List lifecycle.", teammates: [] });
+		await host.execute("team_spawn", { teamName: teamName, startIdle: true, commonPrompt: "List lifecycle.", teammates: [] });
 		const activeTeam = listedTeam(await host.execute("team_list", {}), teamId);
 		assert.deepEqual(
 			{ state: activeTeam?.state, leaseState: activeTeam?.leaseState, expiresAt: activeTeam?.expiresAt },
@@ -1136,11 +1240,11 @@ test("team_list reports each member's live runtime state", async () => {
 		hosts.push(originHost);
 		await originHost.start();
 		await originHost.execute("team_spawn", {
-			team: teamName,
-			teamPrompt: "Expose live runtime state.",
+			teamName: teamName,
+			startIdle: true, commonPrompt: "Expose live runtime state.",
 			teammates: [
-				{ name: "persisted", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
-				{ name: "untouched", prompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+				{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+				{ name: "untouched", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
 			],
 		});
 		const activeList = await originHost.execute("team_list", {});
@@ -1160,7 +1264,7 @@ test("team_list reports each member's live runtime state", async () => {
 		const resumingHost = new ExtensionHost(teamExtension, makeContext("resuming-main-session-id", projectDirectory));
 		hosts.push(resumingHost);
 		await resumingHost.start();
-		await resumingHost.execute("team_resume", { team: teamId, teammates: ["persisted"] });
+		await resumingHost.execute("team_resume", { startIdle: true, team: teamId, teammates: ["persisted"] });
 		const selectiveList = await resumingHost.execute("team_list", {});
 		assert.deepEqual(
 			["persisted", "untouched"].map((name) => ({ name, live: listedMember(selectiveList, teamId, name)?.live })),
@@ -1194,12 +1298,12 @@ test("recovering a stale lease marks the abandoned active manifest dormant", asy
 		const { default: teamExtension } = await import("../index.ts");
 		const teamName = "abandoned-team";
 		const teamId = `origin-main-session-id-${teamName}`;
-		const registryPrefix = path.join(agentDirectory, "pi-simple-team", "teams", encodeURIComponent(teamId));
+		const registryPrefix = path.join(agentDirectory, "pi-simple-team", "teams-v2", encodeURIComponent(teamId));
 		const manifestPath = `${registryPrefix}.json`;
 		const leasePath = `${registryPrefix}.lease`;
 		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
 		await host.start();
-		await host.execute("team_spawn", { team: teamName, teamPrompt: "Recover abandoned ownership.", teammates: [] });
+		await host.execute("team_spawn", { teamName: teamName, startIdle: true, commonPrompt: "Recover abandoned ownership.", teammates: [] });
 		const activeManifest = fs.readFileSync(manifestPath, "utf8");
 		const staleLease = JSON.parse(fs.readFileSync(leasePath, "utf8")) as JsonRecord;
 		await host.execute("team_shutdown", { team: teamName });
@@ -1235,7 +1339,7 @@ test("recovering a stale lease marks the abandoned active manifest dormant", asy
 test("stale lease reclamation cannot unlink a concurrent live lease", () => {
 	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-lease-race-test-"));
 	const agentDirectory = path.join(temporaryDirectory, "agent");
-	const registryDirectory = path.join(agentDirectory, "pi-simple-team", "teams");
+	const registryDirectory = path.join(agentDirectory, "pi-simple-team", "teams-v2");
 	fs.mkdirSync(registryDirectory, { recursive: true });
 	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = agentDirectory;
@@ -1312,9 +1416,9 @@ test("an expired dormant team removes only registry files while an equally old a
 		const dormantTeamName = "expiring-team";
 		const dormantTeamId = `origin-main-session-id-${dormantTeamName}`;
 		await host.execute("team_spawn", {
-			team: dormantTeamName,
-			teamPrompt: "Expiry public-interface test.",
-			teammates: [{ name: "persisted", prompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+			teamName: dormantTeamName,
+			startIdle: true, commonPrompt: "Expiry public-interface test.",
+			teammates: [{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 		});
 		const spawnedTeams = await host.execute("team_list", {});
 		const reportedSessionFile = listedMember(spawnedTeams, dormantTeamId, "persisted")?.sessionFile;
@@ -1329,7 +1433,7 @@ test("an expired dormant team removes only registry files while an equally old a
 			modifiedAt: fs.statSync(sessionFile).mtimeMs,
 		};
 
-		const registryDirectory = path.join(agentDirectory, "pi-simple-team", "teams");
+		const registryDirectory = path.join(agentDirectory, "pi-simple-team", "teams-v2");
 		const dormantRegistryPrefix = path.join(registryDirectory, encodeURIComponent(dormantTeamId));
 		const dormantManifestPath = `${dormantRegistryPrefix}.json`;
 		const dormantLeasePath = `${dormantRegistryPrefix}.lease`;
@@ -1343,8 +1447,8 @@ test("an expired dormant team removes only registry files while an equally old a
 		const activeManifestPath = `${activeRegistryPrefix}.json`;
 		const activeLeasePath = `${activeRegistryPrefix}.lease`;
 		await host.execute("team_spawn", {
-			team: activeTeamName,
-			teamPrompt: "Active manifest retention test.",
+			teamName: activeTeamName,
+			startIdle: true, commonPrompt: "Active manifest retention test.",
 			teammates: [],
 		});
 
@@ -1366,7 +1470,7 @@ test("an expired dormant team removes only registry files while an equally old a
 		);
 		assert.deepEqual(
 			listedTeam(atExpiration, activeTeamId) && {
-				id: listedTeam(atExpiration, activeTeamId)?.id,
+				id: listedTeam(atExpiration, activeTeamId)?.teamId,
 				state: listedTeam(atExpiration, activeTeamId)?.state,
 			},
 			{ id: activeTeamId, state: "active" },
@@ -1414,14 +1518,14 @@ test("team discovery treats a symlink as the same project directory", async () =
 		const teamId = `origin-main-session-id-${teamName}`;
 		originHost = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
 		await originHost.start();
-		await originHost.execute("team_spawn", { team: teamName, teamPrompt: "Canonical project test.", teammates: [] });
+		await originHost.execute("team_spawn", { teamName: teamName, startIdle: true, commonPrompt: "Canonical project test.", teammates: [] });
 		await originHost.execute("team_shutdown", { team: teamName });
 
 		discoveringHost = new ExtensionHost(teamExtension, makeContext("new-main-session-id", projectSymlink));
 		await discoveringHost.start();
 		const result = await discoveringHost.execute("team_list", {});
 		assert.equal(
-			listedTeam(result, teamId)?.id,
+			listedTeam(result, teamId)?.teamId,
 			teamId,
 			`Expected the symlinked project path to discover the same team. Got: ${JSON.stringify(result.details)}`,
 		);
@@ -1452,7 +1556,7 @@ test("a new extension session discovers a shut-down team in the same project", a
 		const teamId = `origin-main-session-id-${teamName}`;
 		originHost = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
 		await originHost.start();
-		await originHost.execute("team_spawn", { team: teamName, teamPrompt: "Registry tracer test.", teammates: [] });
+		await originHost.execute("team_spawn", { teamName: teamName, startIdle: true, commonPrompt: "Registry tracer test.", teammates: [] });
 		await originHost.execute("team_shutdown", { team: teamName });
 
 		discoveringHost = new ExtensionHost(teamExtension, makeContext("new-main-session-id", projectDirectory));
@@ -1465,10 +1569,10 @@ test("a new extension session discovers a shut-down team in the same project", a
 		const listedTeams = Array.isArray(rawTeams)
 			? rawTeams.filter((team): team is JsonRecord => typeof team === "object" && team !== null)
 			: [];
-		const dormantTeam = listedTeams.find((team) => team.id === teamId);
+		const dormantTeam = listedTeams.find((team) => team.teamId === teamId);
 
 		assert.deepEqual(
-			dormantTeam && { id: dormantTeam.id, state: dormantTeam.state },
+			dormantTeam && { id: dormantTeam.teamId, state: dormantTeam.state },
 			{ id: teamId, state: "dormant" },
 			`Expected team_list in a new same-project session to discover the dormant team. Got: ${JSON.stringify(result?.details)}`,
 		);

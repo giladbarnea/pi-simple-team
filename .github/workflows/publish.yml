@@ -30,7 +30,7 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
-      - name: Prepare patch release
+      - name: Prepare release
         id: release
         shell: bash
         run: |
@@ -44,24 +44,14 @@ jobs:
           package_name="$(node -p "require('./package.json').name")"
           local_version="$(node -p "require('./package.json').version")"
           published_version="$(npm view "$package_name" version)"
-          next_version="$(node -e 'const [major, minor, patch] = process.argv[1].split(".").map(Number); console.log(`${major}.${minor}.${patch + 1}`)' "$published_version")"
+          release_version="$(node scripts/release-version.mjs "$local_version" "$published_version")"
 
-          case "$local_version" in
-            "$published_version")
-              npm version patch -m "Release %s [skip ci]"
-              release_version="$(node -p "require('./package.json').version")"
-              git push origin HEAD:main --follow-tags
-              ;;
-            "$next_version")
-              release_version="$local_version"
-              git rev-parse "v$release_version" >/dev/null 2>&1 || git tag -a "v$release_version" -m "Release $release_version"
-              git push origin "v$release_version"
-              ;;
-            *)
-              echo "Expected repository version $published_version or $next_version, found $local_version." >&2
-              exit 1
-              ;;
-          esac
+          if [[ "$local_version" == "$published_version" ]]; then
+            npm version "$release_version" -m "Release %s [skip ci]"
+          else
+            git rev-parse "v$release_version" >/dev/null 2>&1 || git tag -a "v$release_version" -m "Release $release_version"
+          fi
+          git push origin HEAD:main --follow-tags
 
           echo "version=$release_version" >> "$GITHUB_OUTPUT"
 
@@ -110,16 +100,21 @@ jobs:
         run: |
           version="${{ needs.publish.outputs.version }}"
           previous_tag="$(git describe --tags --abbrev=0 HEAD^)"
-          notes="$(
+          notes_file="$(mktemp)"
+          {
             printf 'Published to [npm](https://www.npmjs.com/package/@giladbarnea/pi-simple-team/v/%s).\n\n' "$version"
-            printf '## Changes\n\n'
-            git log \
-              --format="- %s ([%h]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/%H))" \
-              "$previous_tag..HEAD^"
-          )"
+            if [[ -f "releases/$version.md" ]]; then
+              cat "releases/$version.md"
+            else
+              printf '## Changes\n\n'
+              git log \
+                --format="- %s ([%h]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/%H))" \
+                "$previous_tag..HEAD"
+            fi
+          } > "$notes_file"
           gh release create "v$version" \
             --generate-notes \
-            --notes "$notes" \
+            --notes-file "$notes_file" \
             --notes-start-tag "$previous_tag" \
             --title "v$version" \
             --verify-tag

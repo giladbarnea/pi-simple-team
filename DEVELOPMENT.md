@@ -5,7 +5,7 @@ Read all the root docs. Understand the developer’s request. Then dispatch a Lu
 
 ## CICD
 
-This extension is packaged (auto patch-bumped) and published on NPM automatically on push in a GitHub workflow. Publishing to NPM means it is also "published" to Pi.dev extension community (not really published — pi.dev just references the right NPM packages). 
+This extension is published to npm automatically on push to main. If the repository version matches npm, the workflow advances one patch. An explicitly higher version is preserved. An older version fails before publication. Version-specific release notes live in `releases/<version>.md`. Pi.dev references the npm package.
 
 ## Product design
 
@@ -25,6 +25,14 @@ Reproduce / baseline tests run first thing.
 We do high quality TDD. Load related skills.
 Not everything can be tested programmatically, though. We lean on manual tests for that reason.
 
+Run `bun test` for the default suite. Run `PI_SIMPLE_TEAM_TEST_REAL_PI=1 bun test` to include real-Pi checks. The lifecycle and idle-context checks use local model endpoints. The small RPC connectivity check uses `openai-codex/gpt-5.6-luna` with low thinking.
+
+For this API, verify the readiness barrier, `startIdle` on spawn/resume/add, and `resumptionPrompt` without system-prompt changes. Verify that deferred delivery errors reach the sender, and that explicit team-wide Herdr settings override individual choices. The Herdr fixture must match the installed `pane split` / `pane run` contract.
+
+Verify that every teammate selector accepts a name or Pi session ID without changing the call shape. Test two same-named teammates across teams, overlapping targets, invalid interruption subsets, and cross-team log pagination. Lifecycle results must include the complete roster. Idle/no-op resume must report existing and queued work accurately, independently of status prose.
+
+The registrations in `index.ts` and `child-tools.ts` define the tool API. Check the description, promptSnippet, parameter descriptions, and success instructions for all three roles when changing a tool.
+
 **Manual (behavior) testing:**
 Launch Pi in a tmux session and prompt the main agent as your use-case requires.
 
@@ -38,14 +46,14 @@ Basic sanity flow — use it as a skeleton for testing the behavior you want.
 
 ### Recursive team flow
 
-1. Spawn a team with one normal teammate and one teammate with `canOverseeOwnTeams: true`.
+1. Spawn a team with one normal teammate and one teammate with `canManageOwnTeams: true`.
 2. Verify the normal teammate has only parent-team member tools.
-3. Ask the overseeing teammate to create a child team with at least one live teammate.
+3. Ask the managing teammate to create a child team with at least one live teammate.
 4. Verify it can send messages, read statuses and logs, inspect context use, add a teammate, and stop its child team.
 5. Create a dormant parent or sibling team in the same project.
-6. Verify the overseeing teammate cannot list, resume, message, inspect, add to, or stop that foreign team.
+6. Verify the managing teammate cannot list, resume, message, inspect, add to, or stop that foreign team.
 7. Stop the parent team while the child team runs. Verify the child process exits, its manifest becomes dormant, and its lease becomes unclaimed.
-8. Resume the overseeing teammate. Verify `canOverseeOwnTeams` and access to its own dormant teams return.
+8. Resume the managing teammate. Verify `canManageOwnTeams` and access to its own dormant teams return.
 
 ### `/team` dashboard flow
 

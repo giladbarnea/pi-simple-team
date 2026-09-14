@@ -169,19 +169,37 @@ function resolveLimit(limit: number | undefined): number {
 	return Math.min(Math.floor(limit), MAX_LIMIT);
 }
 
-function parseCursor(cursor: string | undefined): number | undefined {
+type LogPosition = [epochMilliseconds: number, team: string, sequence: number];
+
+/** @example logPosition({ epochMilliseconds: 1000, team: "review", sequence: 2 }) // [1000, "review", 2] */
+function logPosition(entry: Pick<TeamLogEntry, "epochMilliseconds" | "team" | "sequence">): LogPosition {
+	return [entry.epochMilliseconds, entry.team, entry.sequence];
+}
+
+/** @example compareLogPositions([1000, "a", 1], [1000, "b", 1]) < 0 // true */
+function compareLogPositions(left: LogPosition, right: LogPosition): number {
+	return left[0] - right[0] || left[1].localeCompare(right[1]) || left[2] - right[2];
+}
+
+function parseCursor(cursor: string | undefined): LogPosition | undefined {
 	if (cursor === undefined) return undefined;
-	const match = /^before:(\d+)$/.exec(cursor);
-	if (!match) throw new Error(`Invalid cursor: ${cursor}`);
-	return Number(match[1]);
+	let position: unknown;
+	try {
+		position = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+	} catch {
+		throw new Error(`Invalid cursor: ${cursor}`);
+	}
+	if (!Array.isArray(position) || position.length !== 3 || !Number.isFinite(position[0]) || typeof position[1] !== "string" || !Number.isSafeInteger(position[2])) throw new Error(`Invalid cursor: ${cursor}`);
+	return position as LogPosition;
 }
 
 export function pageTeamLog(filteredEntries: TeamLogEntry[], params: TeamLogPageParams): TeamLogPage {
 	const limit = resolveLimit(params.limit);
-	const beforeSequence = parseCursor(params.cursor);
+	const before = parseCursor(params.cursor);
 	const totalMatched = filteredEntries.length;
 
-	const eligible = beforeSequence === undefined ? filteredEntries : filteredEntries.filter((entry) => entry.sequence < beforeSequence);
+	const eligible = filteredEntries.filter((entry) => before === undefined || compareLogPositions(logPosition(entry), before) < 0)
+		.sort((left, right) => compareLogPositions(logPosition(left), logPosition(right)));
 
 	const pageEntries = eligible.slice(Math.max(0, eligible.length - limit));
 	const hasOlder = eligible.length > pageEntries.length;
@@ -191,7 +209,7 @@ export function pageTeamLog(filteredEntries: TeamLogEntry[], params: TeamLogPage
 		entries: pageEntries,
 		totalMatched,
 		returned: pageEntries.length,
-		nextCursor: hasOlder && oldestInPage ? `before:${oldestInPage.sequence}` : undefined,
+		nextCursor: hasOlder && oldestInPage ? Buffer.from(JSON.stringify(logPosition(oldestInPage))).toString("base64url") : undefined,
 		limit,
 	};
 }
@@ -230,7 +248,7 @@ export function renderTeamLogPage(view: TeamLogPageView): string {
 }
 
 /** Child team tools always emit a semantic entry (send/main_message/status), so their tool frames would be pure triplication. */
-const TEAM_CHILD_TOOLS = new Set(["teamsend", "teammain", "teamstatus"]);
+const TEAM_CHILD_TOOLS = new Set(["team_send_message", "send_main_message", "team_status"]);
 
 export function normalizeChildEvent(team: string, teammate: string, event: Record<string, unknown>): TeamLogEntryInput | undefined {
 	const type = event.type;

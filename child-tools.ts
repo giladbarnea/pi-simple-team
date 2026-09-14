@@ -3,6 +3,7 @@ import { defineTool, getMarkdownTheme, type ExtensionAPI, type ExtensionContext 
 import { Type } from "typebox";
 import { formatContextWindowReport, requireKnownContextUsage } from "./context-window.ts";
 import { renderTeamMessage } from "./render.ts";
+import { targetDescription, interruptDescription } from "./team-selection.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -17,7 +18,7 @@ export interface ChildRuntimeConfig {
 	teamName: string;
 	teammateName: string;
 	participants: string[];
-	canOverseeOwnTeams: boolean;
+	canManageOwnTeams: boolean;
 	interruptWaitTimeoutMilliseconds?: number;
 }
 
@@ -42,10 +43,10 @@ function readRequiredChildRuntimeConfig(): ChildRuntimeConfig {
 		callbackUrl: requiredEnvironmentVariable("PI_SIMPLE_TEAM_CALLBACK_URL"),
 		callbackToken: requiredEnvironmentVariable("PI_SIMPLE_TEAM_CALLBACK_TOKEN"),
 		teamId,
-		teamName: process.env.PI_SIMPLE_TEAM_TEAM_NAME ?? teamId,
+		teamName: requiredEnvironmentVariable("PI_SIMPLE_TEAM_TEAM_NAME"),
 		teammateName: requiredEnvironmentVariable("PI_SIMPLE_TEAM_MEMBER"),
 		participants: readParticipants(),
-		canOverseeOwnTeams: process.env.PI_SIMPLE_TEAM_CAN_OVERSEE_OWN_TEAMS === "1",
+		canManageOwnTeams: process.env.PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS === "1",
 	};
 }
 
@@ -105,6 +106,7 @@ interface ChildDelivery {
 	message: string;
 	formattedMessage: string;
 	interrupt: boolean;
+	triggerTurn?: boolean;
 }
 
 /** The one live runtime every child gets: a delivery server, parent registration, and lifecycle callbacks. */
@@ -183,7 +185,7 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 						return;
 					}
 
-					if (body.tool === "report_context_window") {
+					if (body.tool === "get_context_window_usage") {
 						writeJson(response, 200, { contextUsage: requireKnownContextUsage(context.getContextUsage()) });
 						return;
 					}
@@ -199,6 +201,7 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 						activeContext.abort();
 						await waitForIdle();
 					}
+					if (delivery.triggerTurn !== false) await notifyParent({ type: "work_queued" });
 
 					pi.sendMessage(
 						{
@@ -213,7 +216,7 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 								message: delivery.message,
 							},
 						},
-						{ deliverAs: "steer", triggerTurn: true },
+						{ deliverAs: "steer", triggerTurn: delivery.triggerTurn !== false },
 					);
 					writeJson(response, 200, { accepted: true, team: config.teamName, from: delivery.from, to: delivery.to, interrupt: delivery.interrupt });
 				} catch (error) {
@@ -279,10 +282,10 @@ export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig)
 
 	pi.registerTool(
 		defineTool({
-			name: "report_context_window",
-			label: "Report Context Window",
-			description: "Report your current context-window use.",
-			parameters: Type.Object({}),
+			name: "get_context_window_usage",
+			label: "Context Window Usage",
+			description: "Get your current context-window use.",
+			parameters: Type.Object({}, { additionalProperties: false }),
 			async execute(_toolCallId, _params, _signal, _onUpdate, context) {
 				const text = formatContextWindowReport("You have", requireKnownContextUsage(context.getContextUsage()));
 				return { content: [{ type: "text" as const, text }], details: {} };
@@ -292,47 +295,46 @@ export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig)
 
 	pi.registerTool(
 		defineTool({
-			name: "teamsend",
+			name: "team_send_message",
 			label: "Team Send",
-			description: "Send a message to teammate(s) (not main). To message the main agent, use teammain. Returns once the runtime accepts the send request, not after recipients reply.",
+			description: "Message teammates in your team. Use send_main_message to message main.",
 			parameters: Type.Object({
-				to: Type.Array(Type.String(), { description: "Recipient teammate names" }),
+				targets: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: targetDescription }),
 				message: Type.String({ description: "Message to send" }),
-				interrupt: Type.Optional(Type.Boolean({ description: "Abort busy recipients before delivering this message." })),
-			}),
+				interrupt: Type.Optional(Type.Union([Type.Boolean(), Type.Array(Type.String({ minLength: 1 }))], { description: interruptDescription })),
+			}, { additionalProperties: false }),
 			async execute(_toolCallId, params, signal) {
-				return toolResult(await callParent(config, "teamsend", params, signal));
+				return toolResult(await callParent(config, "team_send_message", params, signal));
 			},
 		}),
 	);
 
-	// TODO: should be renamed `sendmain` across the project.
 	pi.registerTool(
 		defineTool({
-			name: "teammain",
+			name: "send_main_message",
 			label: "Team Main",
 			description: "Send a message to the main agent.",
 			parameters: Type.Object({
 				message: Type.String({ description: "Message to send to the main agent" }),
-			}),
+			}, { additionalProperties: false }),
 			async execute(_toolCallId, params, signal) {
-				return toolResult(await callParent(config, "teammain", params, signal));
+				return toolResult(await callParent(config, "send_main_message", params, signal));
 			},
 		}),
 	);
 
 	pi.registerTool(
 		defineTool({
-			name: "teamstatus",
+			name: "team_status",
 			label: "Team Status",
 			description: "Set your public status and read everyone's public status.",
 		// TODO: If this typing system supports it, I want gerund and phrase optionality to be a XOR
 			parameters: Type.Object({
 				gerund: Type.Optional(Type.String({ description: "One-word gerund status." })),
 				phrase: Type.Optional(Type.String({ description: "Short status phrase. Verb-oriented." })),
-			}),
+			}, { additionalProperties: false }),
 			async execute(_toolCallId, params, signal) {
-				return toolResult(await callParent(config, "teamstatus", params, signal));
+				return toolResult(await callParent(config, "team_status", params, signal));
 			},
 		}),
 	);

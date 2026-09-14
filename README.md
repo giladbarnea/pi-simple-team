@@ -119,7 +119,7 @@ Teammates publish a one-liner:
 
 > <span style="color:grey">reviewer      </span> Reading implementation, will finalize review in a few minutes.
 
-Your main agent calls `teamstatus` and understands exactly what is going on. Main does not ask teammates for updates or clutter their context.
+Your main agent calls `team_status` and understands exactly what is going on. Main does not ask teammates for updates or clutter their context.
 
 ### 🌡️ Context window self-awareness
 
@@ -143,7 +143,7 @@ You can stop babysitting context windows.
 
 ### 📡 Live, zero-cost observability 
 
-Your main uses `teamlog` when it needs to understand the chain of events in high granularity.
+Your main uses `team_log` when it needs to understand the chain of events in high granularity.
 
 Provides main a timestamped, filterable, append-only record of the team’s messages, tool calls, and lifecycle events.
 
@@ -208,17 +208,29 @@ Kept minimal:
 
 | Role | For | Tools |
 | --- | --- | --- |
-| **Main agent** | Team lifecycle | `team_spawn`, `team_list`, `team_resume`, `team_add`, `team_shutdown` |
-| | With team | `teamsend` |
-| | On team | `teamstatus`, `teamlog` |
-| | On everyone | `report_context_window` |
+| **Main agent** | Team lifecycle | `team_spawn`, `team_list`, `team_resume`, `team_add_teammates`, `team_shutdown` |
+| | With team | `team_send_message` |
+| | On team | `team_status`, `team_log` |
+| | On everyone | `get_context_window_usage` |
 | | On self | `schedule_reminder` |
-| **Overseeing teammate** | On self and own teams | Same tools as the main agent |
-| | With parent team | `teamsend`, `teamstatus`, `teammain` |
-| **Teammates** | With team | `teamsend` |
-| | With main | `teammain` |
-| | On self | `report_context_window` |
-| **Everyone** | For everyone | `teamstatus` |
+| **Managing teammate** | On self and own teams | Same tools as the main agent |
+| | With parent team | `team_send_message`, `team_status`, `send_main_message` |
+| **Teammates** | With team | `team_send_message` |
+| | With main | `send_main_message` |
+| | On self | `get_context_window_usage` |
+| **Everyone** | For everyone | `team_status` |
+
+`team_spawn`, `team_resume`, and `team_add_teammates` start work automatically once every affected teammate is ready. Set `startIdle: true` to leave those teammates idle instead.
+
+On resume, `resumptionPrompt` adds instructions to the conversation without changing saved system prompts. With `startIdle: true`, those instructions wait in context for the next turn.
+
+Existing teammates can be selected by name or Pi session ID in the same input field. Messages, logs, and context usage share a `targets` list. Select a team for all its teammates, or select individual teammates across your teams. Ambiguous names return IDs you can use instead.
+
+Spawn, resume, and add return the complete roster. Results distinguish a live runtime from active work, including work that was already underway before the call.
+
+Set `showOnHerdrPane: true` on individual teammates to open their panes. An explicit `showOnHerdrPanes` value on spawn overrides all individual settings.
+
+Message tools return `published: true` when the extension accepts a message for delivery. If delivery later fails, the sender receives the error automatically.
 
 
 ---

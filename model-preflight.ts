@@ -28,5 +28,5 @@ export function validateTeammateModels(teammates: readonly TeammateModelSpec[], 
 		.map((teammate) => `Model ${JSON.stringify(teammate.model)} for teammate ${JSON.stringify(teammate.name)} is not available.`);
 
 	if (errors.length === 0) return;
-	throw new Error(`Model preflight failed:\n${errors.map((error) => `- ${error}`).join("\n")}`);
+	throw new Error(`Model preflight failed:\n${errors.map((error) => `- ${error}`).join("\n")}\nAvailable model IDs: ${JSON.stringify([...availableModelReferences])}. Choose an available ID for each teammate's model field and retry.`);
 }

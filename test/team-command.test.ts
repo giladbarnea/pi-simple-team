@@ -85,7 +85,7 @@ class TeamCommandHost {
 		assert.ok(tool, "Expected team_spawn to be registered.");
 		await tool.execute(
 			"test-call",
-			{ team: name, teamPrompt: "Team command test.", teammates: [] },
+			{ teamName: name, startIdle: true, commonPrompt: "Team command test.", teammates: [] },
 			new AbortController().signal,
 			undefined,
 			this.context,
@@ -136,7 +136,7 @@ function liveSnapshot(log: TeamLogEntry[], statusPhrase = "Standing by"): TeamSn
 	return {
 		name: "live-team-command-test",
 		created: "August 12, 09:59:00",
-		showOnHerdrPanes: false,
+		transports: ["rpc"],
 		roster: ["reviewer"],
 		statuses: {
 			main: { word: "waiting", phrase: "Watching the team", updated: "August 12, 10:00:00" },
