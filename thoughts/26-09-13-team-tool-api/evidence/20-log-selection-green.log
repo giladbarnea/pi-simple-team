@@ -1,0 +1,9 @@
+bun test v1.3.14 (0d9b296a)
+
+test/team-registry.test.ts:
+(pass) context usage selects same-named teammates by Pi session ID across teams [850.04ms]
+
+ 1 pass
+ 20 filtered out
+ 0 fail
+Ran 1 test across 1 file. [1191.00ms]

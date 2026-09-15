@@ -1,0 +1,30 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+359 | 		const host = new ExtensionHost();
+360 | 		try {
+361 | 			const spawned = await host.execute("team_spawn", { teamName: "message-result", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "probe", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+362 | 			const result = await host.execute("teamsend", { to: ["probe"], message: "Work." });
+363 | 			const content = JSON.parse(result.content[0].text) as JsonRecord;
+364 | 			assert.equal(content.published, true, "The result must truthfully acknowledge publication.");
+                ^
+AssertionError: The result must truthfully acknowledge publication.
++ actual - expected
+
++ undefined
+- true
+
+ generatedMessage: false,
+     actual: undefined,
+   expected: true,
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:364:11
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > message publication and shutdown return explicit identities without redundant fields [77.67ms]
+
+ 0 pass
+ 36 filtered out
+ 1 fail
+Ran 1 test across 1 file. [401.00ms]

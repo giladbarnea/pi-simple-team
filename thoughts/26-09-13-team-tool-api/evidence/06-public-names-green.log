@@ -1,0 +1,22 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > message publication and shutdown return explicit identities without redundant fields [103.14ms]
+(pass) unified child runtime > list returns a complete teammate record without parallel name or session identity fields [65.66ms]
+(pass) unified child runtime > resume and add return affected identities and whole-team statuses consistently [227.62ms]
+(pass) unified child runtime > spawn accepts the reviewed input names and returns one durable teammate identity [65.65ms]
+(pass) unified child runtime > a partial kickoff failure identifies started and failed teammates without losing the team [144.52ms]
+(pass) unified child runtime > a teammate receives its own peer-delivery failure instead of notifying main [1156.54ms]
+(pass) unified child runtime > a delivery failure after publication is pushed to the sending main session [86.20ms]
+(pass) unified child runtime > selective interruption applies only to listed recipients and rejects outsiders [1151.45ms]
+(pass) unified child runtime > add starts only new teammates and can leave a later addition idle [226.54ms]
+(pass) unified child runtime > resume starts stopped teammates by default without restarting already-live members [302.66ms]
+(pass) unified child runtime > resume can record a resumption prompt while keeping the selected teammate idle [159.00ms]
+(pass) unified child runtime > startIdle leaves a ready team idle until an explicit message [89.94ms]
+(pass) unified child runtime > starts every teammate only after the complete team is ready [162.48ms]
+(pass) visible Herdr teammates > individual panes support mixed teams and explicit team settings override them [439.30ms]
+
+ 14 pass
+ 23 filtered out
+ 0 fail
+Ran 14 tests across 1 file. [4.70s]

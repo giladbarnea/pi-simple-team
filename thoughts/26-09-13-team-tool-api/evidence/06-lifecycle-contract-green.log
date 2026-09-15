@@ -1,0 +1,9 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > resume and add return affected identities and whole-team statuses consistently [234.91ms]
+
+ 1 pass
+ 34 filtered out
+ 0 fail
+Ran 1 test across 1 file. [673.00ms]

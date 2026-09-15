@@ -1,0 +1,13 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > add starts only new teammates and can leave a later addition idle [220.57ms]
+(pass) unified child runtime > resume starts stopped teammates by default without restarting already-live members [327.17ms]
+(pass) unified child runtime > resume can record a resumption prompt while keeping the selected teammate idle [164.09ms]
+(pass) unified child runtime > startIdle leaves a ready team idle until an explicit message [1097.53ms]
+(pass) unified child runtime > starts every teammate only after the complete team is ready [169.37ms]
+
+ 5 pass
+ 23 filtered out
+ 0 fail
+Ran 5 tests across 1 file. [2.30s]

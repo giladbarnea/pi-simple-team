@@ -1,0 +1,31 @@
+bun test v1.3.14 (0d9b296a)
+
+test/stderr-lifecycle.test.ts:
+(pass) RPC stderr and conversation lifetime > keeps Pi conversation across follow-up turns, idle resumption, default resumption, and additions [1772.41ms]
+
+test/team-registry.test.ts:
+(pass) idle resume reports the complete team and work that was already active [728.83ms]
+(pass) context usage selects same-named teammates by Pi session ID across teams [732.07ms]
+(pass) team_spawn isolates teammates from conflicting discovered team extensions [352.14ms]
+(pass) team_spawn returns each durable Pi session identity [356.93ms]
+(pass) team_spawn cannot overwrite a dormant team attachment [360.76ms]
+(pass) canonical team IDs distinguish live teams with the same display name [7.36ms]
+(pass) team_resume rejects an ambiguous team name and asks for the persistent team ID [12.13ms]
+(pass) an overseeing teammate can discover and resume only teams it created [18.86ms]
+(pass) team_shutdown waits for every RPC runtime before releasing ownership [705.02ms]
+(pass) team_shutdown gives an overseeing teammate time to stop its own teams [2271.93ms]
+(pass) team_add_teammates accepts a team name and grows the owned running team [1074.16ms]
+(pass) failed team_add_teammates waits for only its newly started processes to exit [1199.91ms]
+(pass) a later same-project session resumes selected and all stopped teammates without losing session identity [1775.41ms]
+(pass) a failed selective resume leaves members that were already running alive [1390.78ms]
+(pass) team_list reports the live lease and exact dormant expiry [6.21ms]
+(pass) team_list reports each member's live runtime state [1051.02ms]
+(pass) recovering a stale lease marks the abandoned active manifest dormant [7.26ms]
+(pass) stale lease reclamation cannot unlink a concurrent live lease [1.13ms]
+(pass) an expired dormant team removes only registry files while an equally old active team remains [363.41ms]
+(pass) team discovery treats a symlink as the same project directory [3.35ms]
+(pass) a new extension session discovers a shut-down team in the same project [6.32ms]
+
+ 22 pass
+ 0 fail
+Ran 22 tests across 2 files. [14.53s]

@@ -1,0 +1,9 @@
+bun test v1.3.14 (0d9b296a)
+
+test/team-registry.test.ts:
+(pass) team_spawn returns each durable Pi session identity [500.22ms]
+
+ 1 pass
+ 20 filtered out
+ 0 fail
+Ran 1 test across 1 file. [855.00ms]

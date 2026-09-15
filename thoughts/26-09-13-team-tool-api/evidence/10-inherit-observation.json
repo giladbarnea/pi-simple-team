@@ -1,0 +1,56 @@
+{
+  "token": "ORCHID-82",
+  "teamId": "01a09cbe-10dc-719e-9360-439425457006-inherit-smoke-fixed",
+  "teammateId": "01a09cd0-9f8d-754a-ac73-70e18df6d1a4",
+  "tokenInConfiguration": false,
+  "tokenInInheritedUserMessage": true,
+  "parentToolErrors": [],
+  "currentChildToolErrors": [],
+  "currentChildCalls": [
+    {
+      "tool": "team_status",
+      "args": {
+        "gerund": "acknowledging",
+        "phrase": "Acknowledged assignment and starting inherited-context smoke"
+      }
+    },
+    {
+      "tool": "read",
+      "args": {
+        "path": "/Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md",
+        "offset": 1,
+        "limit": 2000
+      }
+    },
+    {
+      "tool": "read",
+      "args": {
+        "path": "/Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md",
+        "offset": 1,
+        "limit": 2000
+      }
+    },
+    {
+      "tool": "write",
+      "args": {
+        "path": "inherited-code.txt",
+        "content": "ORCHID-82"
+      }
+    },
+    {
+      "tool": "send_main_message",
+      "args": {
+        "message": "Completed the inherited-context smoke. Wrote inherited-code.txt using only the inherited conversation."
+      }
+    },
+    {
+      "tool": "team_status",
+      "args": {
+        "gerund": "finishing",
+        "phrase": "Created inherited-code.txt and reported completion to main"
+      }
+    }
+  ],
+  "teamStateAfterTest": "dormant",
+  "note": "Counts exclude inherited historical tool errors. The model-written summary used the teammate ID as teamId; the actual tool-result IDs above are authoritative."
+}

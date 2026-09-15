@@ -1,0 +1,22 @@
+bun test v1.3.14 (0d9b296a)
+
+test/team-registry.test.ts:
+375 | 	return names.map((name) => {
+376 | 		const matches = ownedTeams.flatMap((team) => {
+377 | 			const teammate = team.members.get(name);
+378 | 			return teammate ? [teammate] : [];
+379 | 		});
+380 | 		if (matches.length === 0) throw new Error(`Unknown teammate: ${name}`);
+                                            ^
+error: Unknown teammate: reviewer-1
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/index.ts:380:39)
+      at map (1:11)
+      at execute (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/index.ts:1466:23)
+      at execute (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:64:15)
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:408:29)
+(fail) context usage selects same-named teammates by Pi session ID across teams [814.77ms]
+
+ 0 pass
+ 20 filtered out
+ 1 fail
+Ran 1 test across 1 file. [1091.00ms]

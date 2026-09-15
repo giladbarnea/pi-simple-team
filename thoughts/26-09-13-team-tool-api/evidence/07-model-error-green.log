@@ -1,0 +1,14 @@
+bun test v1.3.14 (0d9b296a)
+
+test/preflight-models.test.ts:
+(pass) formatModelReference > formats a canonical provider/model id [0.54ms]
+(pass) formatScopedModelGuidance > explains how to choose when the session has no scoped models [0.07ms]
+(pass) formatScopedModelGuidance > lists every scoped model as optional guidance [0.02ms]
+(pass) validateTeammateModels > unavailable model errors identify the model field and available replacement IDs [0.37ms]
+(pass) validateTeammateModels > accepts an available model that is outside the scoped guidance [0.03ms]
+(pass) validateTeammateModels > rejects a model absent from all available models [0.02ms]
+
+ 6 pass
+ 0 fail
+ 6 expect() calls
+Ran 6 tests across 1 file. [16.00ms]

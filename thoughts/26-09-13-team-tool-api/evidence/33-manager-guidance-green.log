@@ -1,0 +1,42 @@
+bun test v1.3.14 (0d9b296a)
+
+test/session-ownership.test.ts:
+(pass) teammate creation schemas > rejects obsolete optional teammate fields instead of silently starting with defaults [3.58ms]
+(pass) teammate creation schemas > accept opt-in team oversight and default it to false [0.63ms]
+(pass) recursive team oversight > an opted-in teammate receives parent-team tools and manager tools [5.79ms]
+(pass) recursive team oversight > a normal teammate does not receive the manager reminder tool [3.07ms]
+(pass) recursive team oversight > an overseeing teammate keeps its communication tools connected to its parent team [10.71ms]
+(pass) recursive team oversight > spawned teammates receive explicit capability values [141.50ms]
+(pass) team_log input schema > accepts only a non-empty kind list containing non-empty strings [0.99ms]
+(pass) team_log input schema > places scoped model guidance only on the model parameter [0.37ms]
+(pass) team_log input schema > adds environment-based model guidance when the scope is empty [0.22ms]
+(pass) team_log input schema > keeps pane configuration guidance on its parameter [0.20ms]
+(pass) schedule_reminder > returns before waking the manager once with its custom message [202.57ms]
+(pass) schedule_reminder > accepts only a positive delay within the single-timer range [4.10ms]
+(pass) schedule_reminder > offers oversight reminders after team creation instead of in the reminder snippet [96.42ms]
+(pass) schedule_reminder > renders a compact reminder instead of raw result JSON [2.43ms]
+(pass) schedule_reminder > cancels a pending reminder when its session shuts down [202.77ms]
+(pass) bundled skill guidance > team_spawn returns the skill instruction to main [11.03ms]
+(pass) team ownership across in-process AgentSessions > retains the full outgoing message in the team log [71.90ms]
+(pass) team ownership across in-process AgentSessions > the session roster keeps teammate colors consistent across tool renderers [94.33ms]
+(pass) team ownership across in-process AgentSessions > shutting down another session leaves the owner's team available [4.76ms]
+(pass) team ownership across in-process AgentSessions > a session lists only teams it owns [4.20ms]
+(pass) team ownership across in-process AgentSessions > a session cannot explicitly shut down another session's team [4.49ms]
+(pass) team ownership across in-process AgentSessions > send_main_message callbacks are delivered to the AgentSession that owns the team [137.20ms]
+(pass) context-window reports > an overseeing teammate reports itself when no descendant targets are given [5.29ms]
+(pass) context-window reports > a teammate reports its own context window with no arguments [0.22ms]
+(pass) context-window reports > main removes repeated teammate targets, preserves teammate order, then reports itself once [93.09ms]
+
+test/system-prompt.test.ts:
+(pass) composeSystemPrompt participant list > names the same full participant list for every teammate [0.07ms]
+(pass) composeSystemPrompt participant list > instructs every teammate to read the bundled ai-to-leader and ai-to-delegated skills [0.02ms]
+(pass) composeSystemPrompt acknowledgement instructions (review issue 2) > tells the teammate to ack via team_status on wake up, before doing substantive work [0.09ms]
+(pass) composeSystemPrompt acknowledgement instructions (review issue 2) > tells the teammate to ack via team_status before acting on an incoming message [0.03ms]
+(pass) composeSystemPrompt proactive handoff instruction (review issue 3) > tells the teammate to notify the blocking party before setting a waiting status [0.03ms]
+(pass) explains recursive-team tools and their ownership boundary to an overseeing teammate [0.04ms]
+(pass) does not claim that the current main observed work before a resume [0.02ms]
+
+ 32 pass
+ 0 fail
+ 18 expect() calls
+Ran 32 tests across 2 files. [1430.00ms]

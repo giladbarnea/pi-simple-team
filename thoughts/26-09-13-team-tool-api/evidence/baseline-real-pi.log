@@ -1,0 +1,8 @@
+bun test v1.3.14 (0d9b296a)
+
+test/stderr-lifecycle.test.ts:
+(pass) RPC stderr and conversation lifetime > keeps stderr previews and the same Pi conversation across follow-up turns [529.52ms]
+
+ 1 pass
+ 0 fail
+Ran 1 test across 1 file. [871.00ms]

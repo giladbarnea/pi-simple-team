@@ -1,0 +1,21 @@
+bun test v1.3.14 (0d9b296a)
+
+test/team-registry.test.ts:
+342 | 		return team;
+343 | 	}
+344 | 
+345 | 	if (ownedTeams.length === 1) return ownedTeams[0];
+346 | 	if (ownedTeams.length === 0) throw new Error("No active teams are owned by this session. Use team_spawn or team_resume first.");
+347 | 	throw new Error(`Multiple teams exist. Available team IDs by name: ${JSON.stringify(teamChoices(ownedTeams))}. Pass team explicitly using the intended team ID.`);
+                 ^
+error: Multiple teams exist. Available team IDs by name: {"first":["selection-main-first"],"second":["selection-main-second"]}. Pass team explicitly using the intended team ID.
+      at resolveTeam (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/index.ts:347:12)
+      at execute (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/index.ts:1486:18)
+      at execute (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:64:15)
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:422:29)
+(fail) context usage selects same-named teammates by Pi session ID across teams [834.94ms]
+
+ 0 pass
+ 20 filtered out
+ 1 fail
+Ran 1 test across 1 file. [1115.00ms]

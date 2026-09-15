@@ -1,0 +1,44 @@
+ --extensions
+ Packages:
+ - ╭──────────────────────────────────────────────────╮
+ - │╭─ Team: pane-smoke ❯ Team Log ──────────────────╮│
+ - ││ Created 2m ago · 1 team…· Esc back to team view││
+ - │╰────────────────────────────────────────────────╯│
+───│╭─ ❯ Team Log pane-smoke …st 13 rows · 23 events ╮│───
+   ││   #1  23:55:23 visible …odex/gpt-5.6-luna · low││
+   ││   #4  23:55:24 visible …n   · 23s · 20 messages││
+ Th││   #5  23:55:27 visible …knowledged instructions││l
+ ex││   #6  23:55:30 visible …s/ai-to-leader/SKILL.md││
+ na││   #7  23:55:30 visible …i-to-delegated/SKILL.md││
+ th││   #10 23:55:39 visible …der/references/roles.md││ue
+ an││   #11 23:55:39 visible …ences/theory-of-mind.md││
+ au││   #12 23:55:39 visible …der/references/human.md││
+ th││   #13 23:55:39 visible …ted/references/roles.md││
+ id││   #14 23:55:39 visible …ences/theory-of-mind.md││
+ wr││   #15 23:55:39 visible …ted/references/peers.md││
+ cu││   #22 23:55:41 visible …s · visible-started.txt││t
+ co││   #25 23:55:46 visible …g · Smoke task complete││.
+ Af││                                                ││
+ tu││                                                ││
+ do││                                                ││t
+ /t││                                                ││
+   ││                                                ││
+   ││                                                ││
+ Th││                                                ││
+   ││                                                ││
+● T││                                                ││
+  └││                                                ││
+   ││                                                ││
+ Te││                                                ││
+   ││                                                ││
+◆ v││                                                ││
+  ▌││                                                ││
+  ▌││                                                ││
+   ││                                                ││
+ Ac││                                                ││
+   ││                                                ││
+───│╰────────────────────────────────────────────────╯│───
+   ╰──────────────────────────────────────────────────╯
+──────────────────────────────────────────────────────────
+/private/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/...
+↑6.1k ↓142 R2.6k CH83.3% $0.001 (sub) 0.3%/1.0M (auto) ...

@@ -1,0 +1,37 @@
+{
+  "marker": "VISIBLE-OK",
+  "toolResults": [
+    {
+      "tool": "team_spawn",
+      "isError": false
+    },
+    {
+      "tool": "team_shutdown",
+      "isError": false
+    },
+    {
+      "tool": "write",
+      "isError": false
+    }
+  ],
+  "spawnArguments": [
+    {
+      "teamName": "pane-smoke",
+      "commonPrompt": "Perform only the tiny smoke task, report completion, then remain idle.",
+      "teammates": [
+        {
+          "name": "visible",
+          "systemPrompt": "Write visible-started.txt containing VISIBLE-OK in the current directory, then use send_main_message to report completion.",
+          "model": "openai-codex/gpt-5.6-luna",
+          "thinking": "low",
+          "showOnHerdrPane": true
+        }
+      ]
+    }
+  ],
+  "report": {
+    "passed": true,
+    "teamId": "01a09c8d-00f1-76d1-8ba6-2a43a7ce8584-pane-smoke",
+    "stoppedTeammateId": "01a09c8d-a8ca-74d8-8f2e-c8a915a6f2d1"
+  }
+}

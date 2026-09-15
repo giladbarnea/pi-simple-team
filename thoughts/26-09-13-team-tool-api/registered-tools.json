@@ -1,0 +1,877 @@
+{
+  "main": [
+    {
+      "name": "schedule_reminder",
+      "description": "Set a one-shot reminder for yourself. Use it when work needs a later check. For periodic checks, schedule the next reminder after each check.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "delayMinutes",
+          "message"
+        ],
+        "properties": {
+          "delayMinutes": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 35791,
+            "description": "Minutes until the reminder"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Custom message that wakes you"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_list",
+      "description": "List active and dormant teams for the current project.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_resume",
+      "description": "Resume all or selected stopped teammates from a team in the current project. Already-running teammates remain as they are.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "team"
+        ],
+        "properties": {
+          "team": {
+            "type": "string",
+            "description": "Team name or persistent ID"
+          },
+          "teammates": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "description": "Teammate names or Pi session IDs within this team. Omit to resume all stopped teammates."
+          },
+          "showOnHerdrPanes": {
+            "type": "boolean",
+            "default": false,
+            "description": "Open visible Herdr panes for selected teammates. Defaults to false."
+          },
+          "startIdle": {
+            "type": "boolean",
+            "default": false,
+            "description": "Start resumed teammates idle."
+          },
+          "resumptionPrompt": {
+            "type": "string",
+            "description": "Instructions added once to resumed teammates' conversation context. Does not change system prompts or independently start work."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_add_teammates",
+      "description": "Add teammates to an active team you own. Existing teammates continue their work.",
+      "promptSnippet": "Add new teammates to a running team",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "teammates"
+        ],
+        "properties": {
+          "team": {
+            "type": "string",
+            "description": "Team name or persistent ID. Omit when exactly one owned active team exists."
+          },
+          "teammates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "systemPrompt",
+                "model"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Teammate name"
+                },
+                "systemPrompt": {
+                  "type": "string",
+                  "description": "Individual teammate system prompt"
+                },
+                "model": {
+                  "type": "string",
+                  "description": "Canonical provider/model id for this teammate. "
+                },
+                "thinking": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max"
+                  ],
+                  "description": "Thinking level for this teammate. Defaults to xhigh.",
+                  "default": "xhigh"
+                },
+                "inheritMainContext": {
+                  "type": "boolean",
+                  "description": "Start with a clone of your context window rather than start fresh. Defaults to false.",
+                  "default": false
+                },
+                "canManageOwnTeams": {
+                  "type": "boolean",
+                  "description": "Allow this teammate to create and manage teams of its own. Defaults to false.",
+                  "default": false
+                },
+                "showOnHerdrPane": {
+                  "type": "boolean",
+                  "description": "Open a visible Herdr pane for this teammate. Defaults to false.",
+                  "default": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "description": "New teammate definitions to add. Existing Pi sessions cannot yet be attached."
+          },
+          "startIdle": {
+            "type": "boolean",
+            "default": false,
+            "description": "Start added teammates idle."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_send_message",
+      "description": "Message teammates in teams you own.",
+      "promptSnippet": "Message your teammates.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "targets",
+          "message"
+        ],
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "description": "Team or teammate names or IDs. A team selects all its teammates. Names must be unique in your available teams. Use IDs to resolve duplicate names. Overlapping selections count once."
+          },
+          "message": {
+            "type": "string",
+            "description": "Message to send"
+          },
+          "interrupt": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            ],
+            "description": "True interrupts all selected recipients. A list uses the same names or IDs as targets and must select only message recipients. False or omitted interrupts none."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_status",
+      "description": "Set your own status for a team and/or read team statuses.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "team": {
+            "type": "string",
+            "description": "Team name or ID. Omit to read all teams, or to set your status when exactly one owned team exists."
+          },
+          "gerund": {
+            "type": "string",
+            "description": "One-word gerund for your status."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "Short, action-oriented status phrase."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_context_window_usage",
+      "description": "Get context-window use of selected teammates. Your own window's use is always included.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Team or teammate names or IDs. A team selects all its teammates. Names must be unique in your available teams. Use IDs to resolve duplicate names. Overlapping selections count once. Omit or pass an empty list for only your own usage."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_log",
+      "description": "Inspect paged event logs for selected teammates or teams you own.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "description": "Team or teammate names or IDs. A team selects all its teammates. Names must be unique in your available teams. Use IDs to resolve duplicate names. Overlapping selections count once. Omit for all teams you own."
+          },
+          "kind": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "description": "Filter to any of these normalized event kinds"
+          },
+          "search": {
+            "type": "string",
+            "description": "Case-insensitive substring search over summary, teammate, direction, kind, and details"
+          },
+          "since": {
+            "type": "string",
+            "description": "ISO timestamp filter; only entries at or after this time"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Max rows to return, default 20, maximum 100"
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Opaque cursor from the previous response. Keep the same targets and filters when paging."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_shutdown",
+      "description": "Stop a team and kill its teammate processes.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "team": {
+            "type": "string",
+            "description": "Team name or ID. Omit when exactly one owned active team exists."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_spawn",
+      "description": "You are automatically part of the team as main. Do not include yourself in teammates. Use team_resume to continue an existing team, or team_add_teammates to grow one.",
+      "promptSnippet": "Spawn a versatile team of agents.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "teamName",
+          "commonPrompt",
+          "teammates"
+        ],
+        "properties": {
+          "teamName": {
+            "type": "string",
+            "description": "Name for the new team"
+          },
+          "commonPrompt": {
+            "type": "string",
+            "description": "Common system prompt for all teammates"
+          },
+          "teammates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "systemPrompt",
+                "model"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Teammate name"
+                },
+                "systemPrompt": {
+                  "type": "string",
+                  "description": "Individual teammate system prompt"
+                },
+                "model": {
+                  "type": "string",
+                  "description": "Canonical provider/model id for this teammate. You should probably use one of these user-scoped models: provider/model."
+                },
+                "thinking": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max"
+                  ],
+                  "description": "Thinking level for this teammate. Defaults to xhigh.",
+                  "default": "xhigh"
+                },
+                "inheritMainContext": {
+                  "type": "boolean",
+                  "description": "Start with a clone of your context window rather than start fresh. Defaults to false.",
+                  "default": false
+                },
+                "canManageOwnTeams": {
+                  "type": "boolean",
+                  "description": "Allow this teammate to create and manage teams of its own. Defaults to false.",
+                  "default": false
+                },
+                "showOnHerdrPane": {
+                  "type": "boolean",
+                  "description": "Open a visible Herdr pane for this teammate. Defaults to false.",
+                  "default": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "description": "Teammates to spawn"
+          },
+          "showOnHerdrPanes": {
+            "type": "boolean",
+            "description": "Open visible Herdr panes for the team. Overrides individual teammate Herdr settings when explicitly supplied. Defaults to false.",
+            "default": false
+          },
+          "startIdle": {
+            "type": "boolean",
+            "default": false,
+            "description": "Start teammates idle. Otherwise, start work following their common and individual system prompts once everyone is ready. Set true when only a few teammates should start first, then message those teammates."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  ],
+  "manager": [
+    {
+      "name": "get_context_window_usage",
+      "description": "Get context-window use of selected teammates. Your own window's use is always included.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Team or teammate names or IDs. A team selects all its teammates. Names must be unique in your available teams. Use IDs to resolve duplicate names. Overlapping selections count once. Omit or pass an empty list for only your own usage."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_send_message",
+      "description": "Message teammates in your parent team or teams you own.",
+      "promptSnippet": "Message your teammates.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "targets",
+          "message"
+        ],
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "description": "Team or teammate names or IDs. A team selects all its teammates. Names must be unique in your available teams. Use IDs to resolve duplicate names. Overlapping selections count once."
+          },
+          "message": {
+            "type": "string",
+            "description": "Message to send"
+          },
+          "interrupt": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            ],
+            "description": "True interrupts all selected recipients. A list uses the same names or IDs as targets and must select only message recipients. False or omitted interrupts none."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "send_main_message",
+      "description": "Send a message to the main agent.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Message to send to the main agent"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_status",
+      "description": "Omit `team` to set or read parent-team status. Set `team` to set or read an owned team's status.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "team": {
+            "type": "string",
+            "description": "Owned team name or ID. Omit to use the parent team."
+          },
+          "gerund": {
+            "type": "string",
+            "description": "One-word gerund for your status."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "Short, action-oriented status phrase."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "schedule_reminder",
+      "description": "Set a one-shot reminder for yourself. Use it when work needs a later check. For periodic checks, schedule the next reminder after each check.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "delayMinutes",
+          "message"
+        ],
+        "properties": {
+          "delayMinutes": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 35791,
+            "description": "Minutes until the reminder"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Custom message that wakes you"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_list",
+      "description": "List active and dormant teams in the current project that this managing teammate's Pi session created.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_resume",
+      "description": "Resume all or selected stopped teammates from a current-project team created by your Pi session. Already-running teammates remain as they are.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "team"
+        ],
+        "properties": {
+          "team": {
+            "type": "string",
+            "description": "Team name or persistent ID"
+          },
+          "teammates": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "description": "Teammate names or Pi session IDs within this team. Omit to resume all stopped teammates."
+          },
+          "showOnHerdrPanes": {
+            "type": "boolean",
+            "default": false,
+            "description": "Open visible Herdr panes for selected teammates. Defaults to false."
+          },
+          "startIdle": {
+            "type": "boolean",
+            "default": false,
+            "description": "Start resumed teammates idle."
+          },
+          "resumptionPrompt": {
+            "type": "string",
+            "description": "Instructions added once to resumed teammates' conversation context. Does not change system prompts or independently start work."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_add_teammates",
+      "description": "Add teammates to an active team you own. Existing teammates continue their work.",
+      "promptSnippet": "Add new teammates to a running team",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "teammates"
+        ],
+        "properties": {
+          "team": {
+            "type": "string",
+            "description": "Team name or persistent ID. Omit when exactly one owned active team exists."
+          },
+          "teammates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "systemPrompt",
+                "model"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Teammate name"
+                },
+                "systemPrompt": {
+                  "type": "string",
+                  "description": "Individual teammate system prompt"
+                },
+                "model": {
+                  "type": "string",
+                  "description": "Canonical provider/model id for this teammate. "
+                },
+                "thinking": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max"
+                  ],
+                  "description": "Thinking level for this teammate. Defaults to xhigh.",
+                  "default": "xhigh"
+                },
+                "inheritMainContext": {
+                  "type": "boolean",
+                  "description": "Start with a clone of your context window rather than start fresh. Defaults to false.",
+                  "default": false
+                },
+                "canManageOwnTeams": {
+                  "type": "boolean",
+                  "description": "Allow this teammate to create and manage teams of its own. Defaults to false.",
+                  "default": false
+                },
+                "showOnHerdrPane": {
+                  "type": "boolean",
+                  "description": "Open a visible Herdr pane for this teammate. Defaults to false.",
+                  "default": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "description": "New teammate definitions to add. Existing Pi sessions cannot yet be attached."
+          },
+          "startIdle": {
+            "type": "boolean",
+            "default": false,
+            "description": "Start added teammates idle."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_log",
+      "description": "Inspect paged event logs for selected teammates or teams you own.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "description": "Team or teammate names or IDs. A team selects all its teammates. Names must be unique in your available teams. Use IDs to resolve duplicate names. Overlapping selections count once. Omit for all teams you own."
+          },
+          "kind": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "description": "Filter to any of these normalized event kinds"
+          },
+          "search": {
+            "type": "string",
+            "description": "Case-insensitive substring search over summary, teammate, direction, kind, and details"
+          },
+          "since": {
+            "type": "string",
+            "description": "ISO timestamp filter; only entries at or after this time"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Max rows to return, default 20, maximum 100"
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Opaque cursor from the previous response. Keep the same targets and filters when paging."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_shutdown",
+      "description": "Stop a team and kill its teammate processes.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "team": {
+            "type": "string",
+            "description": "Team name or ID. Omit when exactly one owned active team exists."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_spawn",
+      "description": "You are automatically part of the team as main. Do not include yourself in teammates. Use team_resume to continue an existing team, or team_add_teammates to grow one.",
+      "promptSnippet": "Spawn a versatile team of agents.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "teamName",
+          "commonPrompt",
+          "teammates"
+        ],
+        "properties": {
+          "teamName": {
+            "type": "string",
+            "description": "Name for the new team"
+          },
+          "commonPrompt": {
+            "type": "string",
+            "description": "Common system prompt for all teammates"
+          },
+          "teammates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "systemPrompt",
+                "model"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Teammate name"
+                },
+                "systemPrompt": {
+                  "type": "string",
+                  "description": "Individual teammate system prompt"
+                },
+                "model": {
+                  "type": "string",
+                  "description": "Canonical provider/model id for this teammate. You should probably use one of these user-scoped models: provider/model."
+                },
+                "thinking": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max"
+                  ],
+                  "description": "Thinking level for this teammate. Defaults to xhigh.",
+                  "default": "xhigh"
+                },
+                "inheritMainContext": {
+                  "type": "boolean",
+                  "description": "Start with a clone of your context window rather than start fresh. Defaults to false.",
+                  "default": false
+                },
+                "canManageOwnTeams": {
+                  "type": "boolean",
+                  "description": "Allow this teammate to create and manage teams of its own. Defaults to false.",
+                  "default": false
+                },
+                "showOnHerdrPane": {
+                  "type": "boolean",
+                  "description": "Open a visible Herdr pane for this teammate. Defaults to false.",
+                  "default": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "description": "Teammates to spawn"
+          },
+          "showOnHerdrPanes": {
+            "type": "boolean",
+            "description": "Open visible Herdr panes for the team. Overrides individual teammate Herdr settings when explicitly supplied. Defaults to false.",
+            "default": false
+          },
+          "startIdle": {
+            "type": "boolean",
+            "default": false,
+            "description": "Start teammates idle. Otherwise, start work following their common and individual system prompts once everyone is ready. Set true when only a few teammates should start first, then message those teammates."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  ],
+  "member": [
+    {
+      "name": "get_context_window_usage",
+      "description": "Get your current context-window use.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_send_message",
+      "description": "Message teammates in your team. Use send_main_message to message main.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "targets",
+          "message"
+        ],
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "description": "Team or teammate names or IDs. A team selects all its teammates. Names must be unique in your available teams. Use IDs to resolve duplicate names. Overlapping selections count once."
+          },
+          "message": {
+            "type": "string",
+            "description": "Message to send"
+          },
+          "interrupt": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            ],
+            "description": "True interrupts all selected recipients. A list uses the same names or IDs as targets and must select only message recipients. False or omitted interrupts none."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "send_main_message",
+      "description": "Send a message to the main agent.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Message to send to the main agent"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_status",
+      "description": "Set your public status and read everyone's public status.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "gerund": {
+            "type": "string",
+            "description": "One-word gerund status."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "Short status phrase. Verb-oriented."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  ]
+}

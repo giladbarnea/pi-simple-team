@@ -1,0 +1,25 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+378 | 		const spawning = host.execute("team_spawn", { teamName: "cancelled-start", commonPrompt: "Work.", teammates: [{ name: "probe", systemPrompt: "Work.", model: "fake/fake-model" }] }, fakeMainContext, controller.signal);
+379 | 		try {
+380 | 			await waitFor(() => held);
+381 | 			controller.abort();
+382 | 			release();
+383 | 			await assert.rejects(() => spawning, /abort/i, "Cancelling startup must reject instead of starting work.");
+                      ^
+AssertionError: Missing expected rejection: Cancelling startup must reject instead of starting work.
+ generatedMessage: false,
+     actual: undefined,
+   expected: /abort/i,
+   operator: "rejects",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:383:17
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > cancelling startup prevents automatic work and removes the prepared team [113.39ms]
+
+ 0 pass
+ 42 filtered out
+ 1 fail
+Ran 1 test across 1 file. [440.00ms]

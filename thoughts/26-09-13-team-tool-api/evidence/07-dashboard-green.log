@@ -1,0 +1,9 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) visible Herdr teammates > the live team dashboard reports mixed transports from actual members [331.37ms]
+
+ 1 pass
+ 40 filtered out
+ 0 fail
+Ran 1 test across 1 file. [654.00ms]

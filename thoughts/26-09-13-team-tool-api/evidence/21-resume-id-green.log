@@ -1,0 +1,9 @@
+bun test v1.3.14 (0d9b296a)
+
+test/team-registry.test.ts:
+(pass) a later same-project session resumes selected and all stopped teammates without losing session identity [1877.13ms]
+
+ 1 pass
+ 20 filtered out
+ 0 fail
+Ran 1 test across 1 file. [2.22s]

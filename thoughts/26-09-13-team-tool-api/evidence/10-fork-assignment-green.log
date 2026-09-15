@@ -1,0 +1,12 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > automatic kickoff gives an inheriting teammate its own identity and assignment [97.17ms]
+(pass) unified child runtime > resume starts stopped teammates by default without restarting already-live members [306.11ms]
+(pass) unified child runtime > resume can record a resumption prompt while keeping the selected teammate idle [159.21ms]
+(pass) unified child runtime > starts every teammate only after the complete team is ready [162.81ms]
+
+ 4 pass
+ 40 filtered out
+ 0 fail
+Ran 4 tests across 1 file. [1166.00ms]

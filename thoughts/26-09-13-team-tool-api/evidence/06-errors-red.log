@@ -1,0 +1,29 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+362 | 				await host.execute("team_spawn", { teamName: "review", commonPrompt: "Wait.", teammates: [] }, { ...fakeMainContext, sessionManager: { ...fakeMainContext.sessionManager, getSessionId: () => sessionId } });
+363 | 			}
+364 | 			for (const parameters of [{ team: "review" }, { phrase: "Working." }]) {
+365 | 				await assert.rejects(() => host.execute("team_status", parameters), (error: unknown) => {
+366 | 					assert.ok(error instanceof Error, "An ambiguous selection must return an actionable tool error.");
+367 | 					assert.ok(error.message.includes('"review":["first-owner-review","second-owner-review"]'), `The error must map the name to both IDs. Got: ${error.message}`);
+                  ^
+AssertionError: The error must map the name to both IDs. Got: Ambiguous team name: review. Pass the persistent team ID.
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "==",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:367:13
+      at expectedException (node:assert:363:30)
+      at expectsError (node:assert:449:20)
+      at rejects (node:assert:487:15)
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:395:15
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > ambiguous team selection returns names mapped to every available team ID [11.77ms]
+
+ 0 pass
+ 37 filtered out
+ 1 fail
+Ran 1 test across 1 file. [322.00ms]

@@ -1,0 +1,92 @@
+{
+  "markers": {
+    "alpha-started.txt": "alpha",
+    "beta-started.txt": "beta",
+    "gamma-started.txt": "gamma",
+    "alpha-resumed.txt": "CERULEAN-47"
+  },
+  "operations": [
+    {
+      "tool": "team_spawn",
+      "isError": false
+    },
+    {
+      "tool": "bash",
+      "isError": false
+    },
+    {
+      "tool": "team_status",
+      "isError": false
+    },
+    {
+      "tool": "read",
+      "isError": false
+    },
+    {
+      "tool": "read",
+      "isError": false
+    },
+    {
+      "tool": "get_context_window_usage",
+      "isError": false
+    },
+    {
+      "tool": "team_add_teammates",
+      "isError": false
+    },
+    {
+      "tool": "bash",
+      "isError": false
+    },
+    {
+      "tool": "team_send_message",
+      "isError": false
+    },
+    {
+      "tool": "bash",
+      "isError": false
+    },
+    {
+      "tool": "read",
+      "isError": false
+    },
+    {
+      "tool": "team_shutdown",
+      "isError": false
+    },
+    {
+      "tool": "team_resume",
+      "isError": false
+    },
+    {
+      "tool": "team_send_message",
+      "isError": false
+    },
+    {
+      "tool": "bash",
+      "isError": false
+    },
+    {
+      "tool": "read",
+      "isError": false
+    },
+    {
+      "tool": "team_list",
+      "isError": false
+    },
+    {
+      "tool": "team_shutdown",
+      "isError": false
+    },
+    {
+      "tool": "write",
+      "isError": false
+    }
+  ],
+  "toolErrors": [],
+  "modelReport": {
+    "passed": true,
+    "teamId": "01a09c88-558c-70a9-89a5-8678d092c735-api-smoke",
+    "notes": "All smoke steps completed: alpha/beta markers, gamma idle-before-message and marker, alpha-only idle resume with started false, resumed token CERULEAN-47, team listed and stopped."
+  }
+}

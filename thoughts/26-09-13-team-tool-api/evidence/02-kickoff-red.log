@@ -1,0 +1,26 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+257 | }
+258 | 
+259 | async function waitFor(predicate: () => boolean, timeoutMilliseconds = 2_000): Promise<void> {
+260 | 	const deadline = Date.now() + timeoutMilliseconds;
+261 | 	while (!predicate() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+262 | 	assert.ok(predicate(), "Timed out waiting for fake Herdr activity");
+              ^
+AssertionError: Timed out waiting for fake Herdr activity
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "==",
+       code: "ERR_ASSERTION"
+
+      at waitFor (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:262:9)
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:393:5
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > starts every teammate only after the complete team is ready [2165.98ms]
+
+ 0 pass
+ 23 filtered out
+ 1 fail
+Ran 1 test across 1 file. [2.49s]

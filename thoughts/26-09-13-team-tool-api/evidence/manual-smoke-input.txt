@@ -1,0 +1,11 @@
+Run a bounded manual smoke test of the local pi-simple-team extension. All team actions and tiny local file writes below are explicitly authorized. Use openai-codex/gpt-5.6-luna with thinking low for teammates. This directory is an isolated test directory. Do not change the extension's source.
+
+1. Create team api-smoke with teammates alpha and beta. Both have fresh contexts. The common prompt says this is a small extension smoke test and each teammate should complete its individual instructions, report completion to main, then remain idle. Individual instructions: write alpha-started.txt or beta-started.txt (respectively) containing the teammate's name, and report completion through the team tool. Let team_spawn start work automatically. Do not send a separate start message.
+2. Use one bounded bash wait for both marker files, at most 60 seconds. This wait is explicitly permitted for this smoke test. Read both markers. Get the team's statuses and context-window usage for alpha and beta.
+3. Add teammate gamma with startIdle true. Its system prompt says to write gamma-started.txt containing gamma when it is instructed to act, then report completion. Verify gamma-started.txt does not exist immediately after adding gamma.
+4. Send gamma a message to perform its task. Use one bounded bash wait for gamma-started.txt, then read it.
+5. Stop the team. Resume only alpha with startIdle true and resumptionPrompt: "For the next task, the secret test token is CERULEAN-47. Keep the saved system prompts unchanged." Do not issue any action to alpha yet. Verify the resume result says started false and identifies only alpha.
+6. Send alpha a message: "Write the test token from the resumption instructions into alpha-resumed.txt, then report completion." Use a bounded bash wait for that file, then read it and verify CERULEAN-47.
+7. List the team, stop it, and write main-smoke-result.json with fields passed, teamId, and notes. Set passed true only if the observed files and tool results prove every step above. In your final response give a short outcome and the file path.
+
+Use the new tool names the extension provides. Do not ask me questions. Do not schedule reminders for this short test. If a tool fails, investigate the response and record the exact failure in the result file rather than claiming success.

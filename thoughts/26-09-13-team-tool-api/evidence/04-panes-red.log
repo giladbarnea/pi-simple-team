@@ -1,0 +1,28 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+625 | 		try {
+626 | 			await host.execute("team_spawn", { team: "mixed-team", teamPrompt: "Wait.", startIdle: true, teammates: [
+627 | 				{ name: "visible", prompt: "Wait.", model: "fake/fake-model", showOnHerdrPane: true },
+628 | 				{ name: "background", prompt: "Wait.", model: "fake/fake-model" },
+629 | 			] });
+630 | 			assert.equal(lines(fake.logPath).filter((entry) => entry.type === "start").length, 1, "Only the individually selected teammate should open a pane.");
+                ^
+AssertionError: Only the individually selected teammate should open a pane.
+
+0 !== 1
+
+ generatedMessage: false,
+     actual: 0,
+   expected: 1,
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:630:11
+      at processTicksAndRejections (native:7:39)
+(fail) visible Herdr teammates > individual panes support mixed teams and explicit team settings override them [143.74ms]
+
+ 0 pass
+ 28 filtered out
+ 1 fail
+Ran 1 test across 1 file. [645.00ms]

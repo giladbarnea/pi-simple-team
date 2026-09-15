@@ -1,0 +1,9 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > an empty team does not tell main to expect teammate progress [9.59ms]
+
+ 1 pass
+ 39 filtered out
+ 0 fail
+Ran 1 test across 1 file. [454.00ms]

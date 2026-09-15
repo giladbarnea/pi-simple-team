@@ -1,0 +1,9 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > ambiguous team selection returns names mapped to every available team ID [11.42ms]
+
+ 1 pass
+ 37 filtered out
+ 0 fail
+Ran 1 test across 1 file. [458.00ms]

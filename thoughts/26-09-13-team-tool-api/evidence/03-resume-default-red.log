@@ -1,0 +1,32 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+358 | 			] });
+359 | 			await host.execute("team_shutdown", { team: "resume-default" });
+360 | 			const before = lines(fake.eventsPath).filter((entry) => entry.type === "delivery").length;
+361 | 			await host.execute("team_resume", { team: "resume-default", teammates: ["first"] });
+362 | 			const firstResume = lines(fake.eventsPath).filter((entry) => entry.type === "delivery").slice(before);
+363 | 			assert.deepEqual(firstResume.map((entry) => ((entry.body as JsonRecord).args as JsonRecord).to), ["first"], "Selected resume must start the selected teammate without a send call.");
+                ^
+AssertionError: Selected resume must start the selected teammate without a send call.
++ actual - expected
+
++ []
+- [
+-   'first'
+- ]
+
+ generatedMessage: false,
+     actual: [],
+   expected: [ "first" ],
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:363:11
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > resume starts stopped teammates by default without restarting already-live members [223.57ms]
+
+ 0 pass
+ 26 filtered out
+ 1 fail
+Ran 1 test across 1 file. [559.00ms]

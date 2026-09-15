@@ -1,0 +1,27 @@
+bun test v1.3.14 (0d9b296a)
+
+test/idle-context.test.ts:
+75 | 			await deliver(instructions, false);
+76 | 			child.stdin.write(JSON.stringify({ id: "after-staging", type: "get_messages" }) + "\n");
+77 | 			await waitFor(() => responses.some((response) => response.id === "after-staging"), "a real Pi conversation snapshot after staging");
+78 | 			const snapshot = responses.find((response) => response.id === "after-staging");
+79 | 			assert.equal(snapshot?.success, true, `Expected get_messages to succeed. Got: ${JSON.stringify(snapshot)}`);
+80 | 			assert.equal(requests.length, 0, "Recording resumption instructions must not send a model request.");
+               ^
+AssertionError: Recording resumption instructions must not send a model request.
+
+1 !== 0
+
+ generatedMessage: false,
+     actual: 1,
+   expected: 0,
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/idle-context.test.ts:80:11
+      at processTicksAndRejections (native:7:39)
+(fail) idle conversation context > records instructions without a turn and includes them once in the next model request [297.81ms]
+
+ 0 pass
+ 1 fail
+Ran 1 test across 1 file. [315.00ms]

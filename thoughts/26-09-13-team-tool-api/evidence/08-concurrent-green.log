@@ -1,0 +1,10 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > concurrent team creation gives both teams a registered delivery runtime [77.99ms]
+(pass) unified child runtime > starts every teammate only after the complete team is ready [164.73ms]
+
+ 2 pass
+ 40 filtered out
+ 0 fail
+Ran 2 tests across 1 file. [682.00ms]

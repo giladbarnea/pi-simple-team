@@ -1,0 +1,11 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > cancelling startup prevents automatic work and removes the prepared team [85.72ms]
+(pass) unified child runtime > concurrent team creation gives both teams a registered delivery runtime [72.00ms]
+(pass) unified child runtime > starts every teammate only after the complete team is ready [165.05ms]
+
+ 3 pass
+ 40 filtered out
+ 0 fail
+Ran 3 tests across 1 file. [759.00ms]

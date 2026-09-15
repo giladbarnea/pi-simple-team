@@ -1,0 +1,23 @@
+bun test v1.3.14 (0d9b296a)
+
+test/render.test.ts:
+710 | 			{ args: { team: "session-id-demo-team" } },
+711 | 			undefined,
+712 | 			["scout", "reviewer"],
+713 | 		);
+714 | 		const lines = component.render(200);
+715 | 		expect(lines[0]).toContain("2 of 3 resumed");
+                         ^
+error: expect(received).toContain(expected)
+
+Expected to contain: "2 of 3 resumed"
+Received: "«toolBullet:● »«text:Team Resume »«accent:undefined»«dim: · »«muted:0 of 2 resumed»"
+
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/render.test.ts:715:20)
+(fail) renderTeamToolResult > translates Team Resume result details into restored and restarted rows [3.99ms]
+
+ 0 pass
+ 71 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [277.00ms]

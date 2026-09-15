@@ -1,0 +1,34 @@
+{
+  "submittedReview": {
+    "port": 59236,
+    "feedback": "/Users/giladbarnea/dev/pi-extensions/pi-simple-team/thoughts/26-09-13-team-tool-api/feedback.json",
+    "annotations": 86
+  },
+  "submittedRevisionReview": {
+    "port": 60004,
+    "pid": 44116,
+    "result": "/tmp/plannotator-review.iP73I1/result.json",
+    "url": "https://gilads-macbook-pro.taila610c4.ts.net:60004",
+    "feedback": "/Users/giladbarnea/dev/pi-extensions/pi-simple-team/thoughts/26-09-13-team-tool-api/feedback-2026-09-14.json",
+    "annotations": 14
+  },
+  "currentReview": {
+    "port": 64740,
+    "pid": 7738,
+    "result": "/tmp/plannotator-review.4T60dC/result.json",
+    "url": "https://gilads-macbook-pro.taila610c4.ts.net:64740",
+    "file": "/Users/giladbarnea/dev/pi-extensions/pi-simple-team/thoughts/26-09-13-team-tool-api/review.md"
+  },
+  "olderUnsubmittedReview": {
+    "port": 63646,
+    "pid": 51427,
+    "result": "/tmp/plannotator-review.UxXIS0/result.json"
+  },
+  "implementationCheckpoint": {
+    "port": 56568,
+    "pid": 86592,
+    "result": "/tmp/plannotator-review.xVCiC0/result.json",
+    "url": "https://gilads-macbook-pro.taila610c4.ts.net:56568",
+    "file": "/Users/giladbarnea/dev/pi-extensions/pi-simple-team/thoughts/26-09-13-team-tool-api/playbook.md"
+  }
+}

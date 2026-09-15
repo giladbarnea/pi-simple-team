@@ -1,0 +1,37 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+357 | 	test("a partial kickoff failure identifies started and failed teammates without losing the team", async () => {
+358 | 		const fake = installFakeCommands();
+359 | 		const host = new ExtensionHost();
+360 | 		process.env.PI_SIMPLE_TEAM_TEST_REJECT_MEMBER = "broken";
+361 | 		try {
+362 | 			await assert.rejects(() => host.execute("team_spawn", { team: "partial-start", teamPrompt: "Work.", teammates: [
+                      ^
+AssertionError: The error must identify partial effects rather than imply that nothing started.
+ generatedMessage: false,
+   expected: /started.*working[\s\S]*failed.*broken/i,
+   operator: "rejects",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:362:17
+      at processTicksAndRejections (native:7:39)
+
+172 | 				tool: "deliver",
+173 | 				args: { team: team.name, from, to: recipient.name, sentAt: new Date().toISOString(), message, formattedMessage, interrupt, triggerTurn },
+174 | 			}),
+175 | 			signal: controller.signal,
+176 | 		});
+177 | 		if (!response.ok) throw new Error(`Teammate ${recipient.name} rejected delivery: ${response.status} ${await response.text()}`);
+                                    ^
+error: Teammate broken rejected delivery: 503 planned delivery failure
+      at deliverMessage (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/index.ts:177:31)
+      at deliverToTeammate (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/index.ts:1104:4)
+      at execute (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/index.ts:649:42)
+      at processTicksAndRejections (unknown:7:39)
+(fail) unified child runtime > a partial kickoff failure identifies started and failed teammates without losing the team [1147.82ms]
+
+ 0 pass
+ 32 filtered out
+ 1 fail
+Ran 1 test across 1 file. [1474.00ms]

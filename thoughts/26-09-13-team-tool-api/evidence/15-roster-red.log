@@ -1,0 +1,48 @@
+bun test v1.3.14 (0d9b296a)
+
+test/team-registry.test.ts:
+385 | 			teamName: "identity-team",
+386 | 			startIdle: true, commonPrompt: "Expose durable session identities.",
+387 | 			teammates: [{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low", canManageOwnTeams: true }],
+388 | 		});
+389 | 		const invocation = readFakePiInvocations(temporaryDirectory)[0];
+390 | 		assert.deepEqual(
+               ^
+AssertionError: Expected team_spawn to return the reported Pi session identity. Got: {"teamName":"identity-team","teamId":"origin-main-session-id-identity-team","started":false,"teammates":[{"teammateName":"persisted","teammateId":"persisted-1"}],"instruction":"Read the bundled ai-to-leader skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md and the bundled ai-to-delegated skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md in full before continuing, then follow their instructions.\n\nThese teammates are idle. Use team_send_message when you want them to start, with the instructions they need."}
++ actual - expected
+
+  [
+    {
+-     active: false,
+-     canManageOwnTeams: true,
+-     inheritMainContext: false,
+-     live: true,
+-     model: 'fake/fake-model',
+-     name: 'persisted',
+-     sessionFile: '/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-spawn-identity-test-FKDx6u/sessions/persisted-1.jsonl',
+-     showOnHerdrPane: false,
+-     systemPrompt: 'Wait.',
+      teammateId: 'persisted-1',
++     teammateName: 'persisted'
+-     thinking: 'low'
+    }
+  ]
+
+ generatedMessage: false,
+     actual: [
+  [Object ...]
+],
+   expected: [
+  [Object ...]
+],
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:390:10
+      at processTicksAndRejections (native:7:39)
+(fail) team_spawn returns each durable Pi session identity [445.94ms]
+
+ 0 pass
+ 18 filtered out
+ 1 fail
+Ran 1 test across 1 file. [719.00ms]

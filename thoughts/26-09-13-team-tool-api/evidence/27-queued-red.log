@@ -1,0 +1,28 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+374 | 		try {
+375 | 			await host.execute("team_spawn", { teamName: "queued-work", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "probe", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+376 | 			await host.execute("team_send_message", { targets: ["probe"], message: "hold-until-released" });
+377 | 			await waitFor(() => held);
+378 | 			const resumed = await host.execute("team_resume", { team: "queued-work", startIdle: true });
+379 | 			assert.equal(resumed.details?.started, true, "Queued work must not be reported as an idle team just because the model turn has not started.");
+                ^
+AssertionError: Queued work must not be reported as an idle team just because the model turn has not started.
+
+false !== true
+
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:379:11
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > idle resume reports work queued before the child starts its turn [1100.40ms]
+
+ 0 pass
+ 44 filtered out
+ 1 fail
+Ran 1 test across 1 file. [1443.00ms]

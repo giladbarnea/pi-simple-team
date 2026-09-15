@@ -1,0 +1,9 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) visible Herdr teammates > individual panes support mixed teams and explicit team settings override them [586.03ms]
+
+ 1 pass
+ 37 filtered out
+ 0 fail
+Ran 1 test across 1 file. [1028.00ms]

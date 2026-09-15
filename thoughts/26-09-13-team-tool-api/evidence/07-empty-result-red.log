@@ -1,0 +1,25 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+364 | 		const fake = installFakeCommands();
+365 | 		const host = new ExtensionHost();
+366 | 		try {
+367 | 			const result = await host.execute("team_spawn", { teamName: "empty-room", commonPrompt: "No members yet.", teammates: [] });
+368 | 			assert.equal(result.details?.started, false, "An empty team cannot start teammate work.");
+369 | 			assert.doesNotMatch(String(result.details?.instruction), /will message|15 minutes/, "An empty team must not tell main to wait for nonexistent work.");
+                ^
+AssertionError: An empty team must not tell main to wait for nonexistent work.
+ generatedMessage: false,
+     actual: "Read the bundled ai-to-leader skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md and the bundled ai-to-delegated skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md in full before continuing, then follow their instructions.\n\nTeammates will message you with milestones or requests for help. Avoid repeated status polling and shell sleeps. Set your status to explain what you expect from them. If you have no independent work, tell the user and end your turn. Ask the user whether to schedule progress checks every 15 minutes. If they agree, use schedule_reminder. After each check, schedule the next while the team needs oversight.",
+   expected: /will message|15 minutes/,
+   operator: "doesNotMatch",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:369:11
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > an empty team does not tell main to expect teammate progress [12.53ms]
+
+ 0 pass
+ 39 filtered out
+ 1 fail
+Ran 1 test across 1 file. [347.00ms]

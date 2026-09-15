@@ -1,0 +1,22 @@
+bun test v1.3.14 (0d9b296a)
+
+test/render.test.ts:
+248 | 
+249 | export function teamResumeLines(theme: ThemeLike, team: string, resumed: ResumedMemberView[], teammateCount: number, roster: string[] = []): string[] {
+250 | 	const countText = resumed.length === teammateCount ? `${resumed.length} resumed` : `${resumed.length} of ${teammateCount} resumed`;
+251 | 	const header = headerLine(theme, "Team Resume", theme.fg("accent", team), [theme.fg("muted", countText)]);
+252 | 	if (resumed.length === 0) return [header, `${treeConnector(theme, "└")}${theme.fg("muted", "no stopped teammates")}`];
+253 | 	const nameWidth = Math.max(...resumed.map((member) => member.name.length));
+                                                                    ^
+TypeError: undefined is not an object (evaluating 'member.name.length')
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/render.ts:253:63)
+      at map (1:11)
+      at teamResumeLines (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/render.ts:253:40)
+      at renderTeamToolResult (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/render.ts:874:23)
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/render.test.ts:696:21)
+(fail) renderTeamToolResult > translates Team Resume result details into restored and restarted rows [1.99ms]
+
+ 0 pass
+ 71 filtered out
+ 1 fail
+Ran 1 test across 1 file. [287.00ms]

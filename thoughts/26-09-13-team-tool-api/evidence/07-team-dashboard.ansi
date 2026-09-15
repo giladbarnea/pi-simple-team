@@ -1,0 +1,44 @@
+ [0m[38;2;97;175;239m--extensions[0m                                             
+ [0m[38;2;118;118;118mPackages:[0m                                                
+ - @juicesharp/rpiv-todo                                  
+ - @juicesharp/rpiv-btw                                   
+ - @quintinshaw/pi-dynamic-workflows                      
+ - @juicesharp/rpiv-ask-user-question                     
+[0m[38;2;229;192;123m──────────────────────────────────────────────────────────[0m
+
+[0m[48;2;50;56;68m                                                          [0m
+[0m[48;2;50;56;68m This is an authorized, bounded manual test of the local  [0m
+[0m[48;2;50;56;68m extension. Create team pane-smoke with one teammate      [0m
+[0m[48;2;50;56;68m named visible. Use model openai-codex/gpt-5.6-luna and   [0m
+[0m[48;2;50;56;68m thinking low. Set the teammate's showOnHerdrPane to true [0m
+[0m[48;2;50;56;68m and omit the team-wide showOnHerdrPanes field. Use       [0m
+[0m[48;2;50;56;68m automatic kickoff. The common prompt is: "Perform only   [0m
+[0m[48;2;50;56;68m the tiny smoke task, report completion, then remain      [0m
+[0m[48;2;50;56;68m idle." The individual system prompt tells visible to     [0m
+[0m[48;2;50;56;68m write visible-started.txt containing VISIBLE-OK in the   [0m
+[0m[48;2;50;56;68m current directory, then use send_main_message to report  [0m
+[0m[48;2;50;56;68m completion. No extra start message should be necessary.  [0m
+[0m[48;2;50;56;68m After creating the team, leave it alive and end your     [0m
+[0m[48;2;50;56;68m turn. Do not schedule reminders, ask questions, shut     [0m
+[0m[48;2;50;56;68m down the team, or change extension code. I will inspect  [0m
+[0m[48;2;50;56;68m /team next.                                              [0m
+[0m[48;2;50;56;68m                                                          [0m
+
+ [0m[3m[38;2;118;118;118mThinking...[0m                                              
+
+[0m[38;2;97;175;239m● [0m[1mTeam Spawn [0m[38;2;97;175;239mpane-smoke[0m[38;2;74;80;90m · [0m[38;2;118;118;118m1 teammate[0m
+[0m[38;2;118;118;118m  └─ [0m[38;2;86;182;194mvisible[0m  [0m[38;2;118;118;118mopenai-codex/gpt-5.6-luna[0m[38;2;74;80;90m · low[0m
+
+ Team [0m[38;2;86;182;194mpane-smoke[0m created and left alive.                  
+
+[0m[38;2;97;175;239m◆ [0m[1m[38;2;86;182;194mvisible[0m[38;2;118;118;118m → main[0m[38;2;74;80;90m · pane-smoke · just now[0m
+  [0m[38;2;97;175;239m▌[0m Tiny smoke task complete. Wrote visible-started.txt   
+  [0m[38;2;97;175;239m▌[0m containing VISIBLE-OK in the current directory.       
+
+ Acknowledged.                                            
+
+[0m[38;2;86;182;194m──────────────────────────────────────────────────────────[0m
+ [0m[7m [0m                                                        
+[0m[38;2;86;182;194m──────────────────────────────────────────────────────────[0m
+[0m[38;2;74;80;90m/private/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/...[0m
+[0m[38;2;74;80;90m↑6.1k ↓142 R2.6k CH83.3% $0.001 (sub) 0.3%/1.0M (auto) [0m...

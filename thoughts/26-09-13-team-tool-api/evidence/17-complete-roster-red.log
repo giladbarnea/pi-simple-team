@@ -1,0 +1,60 @@
+bun test v1.3.14 (0d9b296a)
+
+test/team-registry.test.ts:
+364 | 		assert.deepEqual(result.details?.alreadyActiveTeammates, [{ name: "persisted", teammateId: "persisted-1" }], "The caller must know which pre-existing teammate is active despite startIdle.");
+365 | 		assert.doesNotMatch(String(result.details?.instruction), /These teammates are idle/, "The success instruction must agree with the actual team state.");
+366 | 		assert.equal(readFakePiInvocations(root).length, 1, "No-op resume must not restart the active Pi session.");
+367 | 		assert.equal(readFakePiTurns(root).length, 1, "No-op resume must not deliver another kickoff.");
+368 | 		const added = await host.execute("team_add_teammates", { team: "activity", startIdle: true, teammates: [{ name: "waiting", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+369 | 		assert.deepEqual(added.details?.teammates, [
+               ^
+AssertionError: Add must return a lightweight complete roster with each teammate's actual state.
++ actual - expected
+
+  [
+    {
+      active: true,
++     canManageOwnTeams: false,
++     inheritMainContext: false,
+      live: true,
++     model: 'fake/fake-model',
+      name: 'persisted',
++     sessionFile: '/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-team-active-resume-XkvVFb/sessions/persisted-1.jsonl',
++     showOnHerdrPane: false,
++     systemPrompt: 'Keep working.',
+      teammateId: 'persisted-1',
++     thinking: 'xhigh'
+    },
+    {
+      active: false,
++     canManageOwnTeams: false,
++     inheritMainContext: false,
+      live: true,
++     model: 'fake/fake-model',
+      name: 'waiting',
++     sessionFile: '/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-team-active-resume-XkvVFb/sessions/waiting-1.jsonl',
++     showOnHerdrPane: false,
++     systemPrompt: 'Wait.',
+      teammateId: 'waiting-1',
++     thinking: 'xhigh'
+    }
+  ]
+
+ generatedMessage: false,
+     actual: [
+  [Object ...], [Object ...]
+],
+   expected: [
+  [Object ...], [Object ...]
+],
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:369:10
+      at processTicksAndRejections (native:7:39)
+(fail) idle resume reports the complete team and work that was already active [852.70ms]
+
+ 0 pass
+ 19 filtered out
+ 1 fail
+Ran 1 test across 1 file. [1129.00ms]

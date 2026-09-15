@@ -1,0 +1,28 @@
+bun test v1.3.14 (0d9b296a)
+
+test/system-prompt.test.ts:
+(pass) composeSystemPrompt participant list > names the same full participant list for every teammate [0.56ms]
+(pass) composeSystemPrompt participant list > instructs every teammate to read the bundled ai-to-leader and ai-to-delegated skills [0.03ms]
+(pass) composeSystemPrompt acknowledgement instructions (review issue 2) > tells the teammate to ack via team_status on wake up, before doing substantive work [0.11ms]
+(pass) composeSystemPrompt acknowledgement instructions (review issue 2) > tells the teammate to ack via team_status before acting on an incoming message [0.03ms]
+(pass) composeSystemPrompt proactive handoff instruction (review issue 3) > tells the teammate to notify the blocking party before setting a waiting status [0.03ms]
+57 | 
+58 | 	expect(text).toContain("create and manage teams of your own");
+59 | 	expect(text).toContain("cannot manage this parent team or teams owned by other sessions");
+60 | 	expect(text).toContain("omit `team` to operate on this parent team");
+61 | 	expect(text).toContain("Set `team` to operate on a team you own");
+62 | 	expect(text).not.toMatch(/team_send_message[^\n]+(?:omit|set) `team`/i);
+                       ^
+error: expect(received).not.toMatch(expected)
+
+Expected substring or pattern: not /team_send_message[^\n]+(?:omit|set) `team`/i
+Received: "Read the bundled ai-to-leader skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md and the bundled ai-to-delegated skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md in full before continuing, then follow their instructions.\n\nTeam goal.\n\nLead role.\n\nYou are Lead, a teammate on team demo-team.\n\nParticipants: main, Lead, Reviewer.\n\nUse team_send_message to talk to teammates, send_main_message to talk to the main agent, and team_status to set/read public statuses.\n\nThe main agent is the current coordinator. Use the team tools and available session history to share relevant context.\n\nYou can create and manage teams of your own with team_spawn, team_list, team_resume, team_add_teammates, team_send_message, team_status, get_context_window_usage, team_log, and team_shutdown.\n\nYour manager tools are scoped to teams created by this Pi session. They cannot manage this parent team or teams owned by other sessions.\n\nFor team_send_message and team_status, omit `team` to operate on this parent team. Set `team` to operate on a team you own.\n\nFor get_context_window_usage, omit `targets` to get your own usage. Set `targets` to inspect teammates in teams you own.\n\nWhen your turn starts, call team_status to acknowledge that you received your instructions before doing substantive work.\n\nWhenever you receive a message from main or a teammate, call team_status first to acknowledge that specific message, then proceed.\n\nNever set a waiting status until after you have sent the teammate you are waiting for a team_send_message describing exactly what you need from them.\n\nIf you are waiting, message the person you are waiting for. Ask them to message you when the condition is met. Set your status to “waiting for X to message me when Y is done”, then stay put.\n\nThere is no inbox to poll and no done button. Coordinate naturally. If the team is done, one teammate should tell main via send_main_message."
+
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/system-prompt.test.ts:62:19)
+(fail) explains recursive-team tools and their ownership boundary to an overseeing teammate [1.56ms]
+(pass) does not claim that the current main observed work before a resume [0.04ms]
+
+ 6 pass
+ 1 fail
+ 18 expect() calls
+Ran 7 tests across 1 file. [14.00ms]

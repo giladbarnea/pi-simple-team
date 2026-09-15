@@ -1,0 +1,30 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+360 | 		const specification = { name: "probe", systemPrompt: "Remember these instructions.", model: "fake/fake-model", thinking: "high", inheritMainContext: false, canManageOwnTeams: true, showOnHerdrPane: false };
+361 | 		try {
+362 | 			const spawned = await host.execute("team_spawn", { teamName: "listed-record", commonPrompt: "Shared instructions.", startIdle: true, teammates: [specification] });
+363 | 			const listed = await host.execute("team_list", {});
+364 | 			const team = (listed.details?.teams as JsonRecord[])?.[0];
+365 | 			assert.equal(team?.teamId, spawned.details?.teamId, "List and spawn must expose the same explicitly named team ID.");
+                ^
+AssertionError: List and spawn must expose the same explicitly named team ID.
++ actual - expected
+
++ undefined
+- 'fake-main-session-id-listed-record'
+
+ generatedMessage: false,
+     actual: undefined,
+   expected: "fake-main-session-id-listed-record",
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:365:11
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > list returns a complete teammate record without parallel name or session identity fields [76.65ms]
+
+ 0 pass
+ 35 filtered out
+ 1 fail
+Ran 1 test across 1 file. [399.00ms]

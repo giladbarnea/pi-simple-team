@@ -1,0 +1,30 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+358 | 		const fake = installFakeCommands();
+359 | 		const host = new ExtensionHost();
+360 | 		try {
+361 | 			const spawned = await host.execute("team_spawn", { teamName: "lifecycle-results", commonPrompt: "Work.", teammates: [{ name: "original", systemPrompt: "Work.", model: "fake/fake-model" }] });
+362 | 			const added = await host.execute("team_add", { teammates: [{ name: "added", systemPrompt: "Work.", model: "fake/fake-model" }] });
+363 | 			assert.equal(added.details?.started, true, "Add must explicitly report that the new teammate started.");
+                ^
+AssertionError: Add must explicitly report that the new teammate started.
++ actual - expected
+
++ undefined
+- true
+
+ generatedMessage: false,
+     actual: undefined,
+   expected: true,
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:363:11
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > resume and add return affected identities and whole-team statuses consistently [171.21ms]
+
+ 0 pass
+ 34 filtered out
+ 1 fail
+Ran 1 test across 1 file. [504.00ms]

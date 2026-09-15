@@ -1,0 +1,9 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > idle resume reports work queued before the child starts its turn [1093.05ms]
+
+ 1 pass
+ 44 filtered out
+ 0 fail
+Ran 1 test across 1 file. [1.54s]

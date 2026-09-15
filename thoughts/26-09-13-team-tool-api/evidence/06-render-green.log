@@ -1,0 +1,10 @@
+bun test v1.3.14 (0d9b296a)
+
+test/render.test.ts:
+(pass) renderTeamToolResult > translates Team Resume result details into restored and restarted rows [3.65ms]
+
+ 1 pass
+ 71 filtered out
+ 0 fail
+ 7 expect() calls
+Ran 1 test across 1 file. [266.00ms]

@@ -1,0 +1,25 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+368 | 		const assignment = "Write the assigned marker yourself, then tell main.";
+369 | 		try {
+370 | 			await host.execute("team_spawn", { teamName: "fork-assignment", commonPrompt: "Main coordinates the work.", teammates: [{ name: "copier", systemPrompt: assignment, model: "fake/fake-model", inheritMainContext: true }] });
+371 | 			const delivery = lines(fake.eventsPath).find((entry) => entry.type === "delivery");
+372 | 			const message = String(((delivery?.body as JsonRecord)?.args as JsonRecord)?.message);
+373 | 			assert.ok(message.includes("copier") && message.includes(assignment), `The latest instruction must identify the teammate and its own assignment. Got: ${message}`);
+                ^
+AssertionError: The latest instruction must identify the teammate and its own assignment. Got: Start work following your common and individual system prompts and existing conversation context.
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "==",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:373:11
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > automatic kickoff gives an inheriting teammate its own identity and assignment [101.09ms]
+
+ 0 pass
+ 43 filtered out
+ 1 fail
+Ran 1 test across 1 file. [427.00ms]

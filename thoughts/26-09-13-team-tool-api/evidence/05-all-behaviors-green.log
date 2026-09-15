@@ -1,0 +1,18 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > a partial kickoff failure identifies started and failed teammates without losing the team [155.75ms]
+(pass) unified child runtime > a teammate receives its own peer-delivery failure instead of notifying main [1153.64ms]
+(pass) unified child runtime > a delivery failure after publication is pushed to the sending main session [93.82ms]
+(pass) unified child runtime > selective interruption applies only to listed recipients and rejects outsiders [145.33ms]
+(pass) unified child runtime > add starts only new teammates and can leave a later addition idle [205.07ms]
+(pass) unified child runtime > resume starts stopped teammates by default without restarting already-live members [310.73ms]
+(pass) unified child runtime > resume can record a resumption prompt while keeping the selected teammate idle [160.18ms]
+(pass) unified child runtime > startIdle leaves a ready team idle until an explicit message [1079.27ms]
+(pass) unified child runtime > starts every teammate only after the complete team is ready [178.81ms]
+(pass) visible Herdr teammates > individual panes support mixed teams and explicit team settings override them [435.66ms]
+
+ 10 pass
+ 23 filtered out
+ 0 fail
+Ran 10 tests across 1 file. [4.36s]

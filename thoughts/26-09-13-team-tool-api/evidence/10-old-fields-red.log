@@ -1,0 +1,27 @@
+bun test v1.3.14 (0d9b296a)
+
+test/session-ownership.test.ts:
+55 | 	test("rejects obsolete optional teammate fields instead of silently starting with defaults", async () => {
+56 | 		const host = new ExtensionHost();
+57 | 		try {
+58 | 			const schema = host.tools.get("team_spawn")?.parameters.properties.teammates.items;
+59 | 			assert.ok(schema, "Spawn must expose the teammate input schema.");
+60 | 			assert.equal(Value.Check(schema, { name: "copier", systemPrompt: "Use inherited context.", model: "fake/fake-model", inheritContext: true }), false, "An obsolete inheritContext flag must not be silently ignored and create a fresh teammate.");
+               ^
+AssertionError: An obsolete inheritContext flag must not be silently ignored and create a fresh teammate.
+
+true !== false
+
+ generatedMessage: false,
+     actual: true,
+   expected: false,
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/session-ownership.test.ts:60:11
+(fail) teammate creation schemas > rejects obsolete optional teammate fields instead of silently starting with defaults [4.04ms]
+
+ 0 pass
+ 24 filtered out
+ 1 fail
+Ran 1 test across 1 file. [327.00ms]

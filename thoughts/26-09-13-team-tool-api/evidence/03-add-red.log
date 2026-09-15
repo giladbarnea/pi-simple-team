@@ -1,0 +1,32 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+354 | 		try {
+355 | 			await host.execute("team_spawn", { team: "add-default", teamPrompt: "Work.", teammates: [{ name: "existing", prompt: "Work.", model: "fake/fake-model" }] });
+356 | 			const before = lines(fake.eventsPath).filter((entry) => entry.type === "delivery").length;
+357 | 			await host.execute("team_add", { team: "add-default", teammates: [{ name: "new", prompt: "Work.", model: "fake/fake-model" }] });
+358 | 			const newDeliveries = lines(fake.eventsPath).filter((entry) => entry.type === "delivery").slice(before);
+359 | 			assert.deepEqual(newDeliveries.map((entry) => ((entry.body as JsonRecord).args as JsonRecord).to), ["new"], "Add must start only the new teammate without a send call.");
+                ^
+AssertionError: Add must start only the new teammate without a send call.
++ actual - expected
+
++ []
+- [
+-   'new'
+- ]
+
+ generatedMessage: false,
+     actual: [],
+   expected: [ "new" ],
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:359:11
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > add starts only new teammates and can leave a later addition idle [149.67ms]
+
+ 0 pass
+ 27 filtered out
+ 1 fail
+Ran 1 test across 1 file. [473.00ms]

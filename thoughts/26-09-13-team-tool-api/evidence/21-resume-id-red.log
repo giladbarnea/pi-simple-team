@@ -1,0 +1,20 @@
+bun test v1.3.14 (0d9b296a)
+
+test/team-registry.test.ts:
+1204 | 				const requestedNames = params.teammates?.map(compactName) ?? manifest.members.map((member) => member.name);
+1205 | 				const duplicateNames = requestedNames.filter((name, index) => requestedNames.indexOf(name) !== index);
+1206 | 				if (duplicateNames.length > 0) throw new Error(`Duplicate teammate name(s): ${[...new Set(duplicateNames)].join(", ")}`);
+1207 | 				const manifestMemberNames = new Set(manifest.members.map((member) => member.name));
+1208 | 				const missingNames = requestedNames.filter((name) => !manifestMemberNames.has(name));
+1209 | 				if (missingNames.length > 0) throw new Error(`Unknown teammate(s) in ${manifest.name}: ${missingNames.join(", ")}`);
+                                                  ^
+error: Unknown teammate(s) in resume-team: persisted-1
+      at execute (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/index.ts:1209:44)
+      at execute (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:64:15)
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:1036:45)
+(fail) a later same-project session resumes selected and all stopped teammates without losing session identity [798.00ms]
+
+ 0 pass
+ 20 filtered out
+ 1 fail
+Ran 1 test across 1 file. [1073.00ms]

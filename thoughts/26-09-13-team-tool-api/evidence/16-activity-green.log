@@ -1,0 +1,10 @@
+bun test v1.3.14 (0d9b296a)
+
+test/team-registry.test.ts:
+(pass) idle resume reports the complete team and work that was already active [604.30ms]
+(pass) team_spawn returns each durable Pi session identity [367.02ms]
+
+ 2 pass
+ 18 filtered out
+ 0 fail
+Ran 2 tests across 1 file. [1.55s]

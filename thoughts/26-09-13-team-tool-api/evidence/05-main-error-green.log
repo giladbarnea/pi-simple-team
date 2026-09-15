@@ -1,0 +1,9 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > a delivery failure after publication is pushed to the sending main session [83.58ms]
+
+ 1 pass
+ 30 filtered out
+ 0 fail
+Ran 1 test across 1 file. [529.00ms]

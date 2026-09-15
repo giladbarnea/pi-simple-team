@@ -1,0 +1,9 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > starts every teammate only after the complete team is ready [181.14ms]
+
+ 1 pass
+ 23 filtered out
+ 0 fail
+Ran 1 test across 1 file. [520.00ms]

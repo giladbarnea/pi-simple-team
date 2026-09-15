@@ -1,0 +1,27 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+359 | 		const host = new ExtensionHost();
+360 | 		const parameters = { teamName: "public-spawn", commonPrompt: "Shared instructions.", startIdle: true, teammates: [{ name: "probe", systemPrompt: "Individual instructions.", model: "fake/fake-model", inheritMainContext: false, canManageOwnTeams: false }] };
+361 | 		try {
+362 | 			const schema = host.tools.get("team_spawn")?.parameters;
+363 | 			assert.ok(schema, "Spawn must be registered.");
+364 | 			assert.equal(Value.Check(schema, parameters), true, "Spawn must accept the reviewed public input names.");
+                ^
+AssertionError: Spawn must accept the reviewed public input names.
+
+false !== true
+
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:364:11
+(fail) unified child runtime > spawn accepts the reviewed input names and returns one durable teammate identity [5.18ms]
+
+ 0 pass
+ 33 filtered out
+ 1 fail
+Ran 1 test across 1 file. [323.00ms]

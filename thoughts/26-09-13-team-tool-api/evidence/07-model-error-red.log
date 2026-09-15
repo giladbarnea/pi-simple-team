@@ -1,0 +1,25 @@
+bun test v1.3.14 (0d9b296a)
+
+test/preflight-models.test.ts:
+21 |       actual: value,
+22 |       expected: !0,
+23 |       message,
+24 |       operator: "==",
+25 |       stackStartFn: fn
+26 |     throw err.generatedMessage = generatedMessage, err;
+                                                           ^
+AssertionError: The caller needs configured model choices. Got: Model preflight failed:
+- Model "missing/model" for teammate "reviewer" is not available.
+      at innerOk (internal:assert/utils:26:55)
+      at ok (node:assert:79:10)
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/preflight-models.test.ts:34:11)
+      at expectedException (node:assert:363:30)
+      at expectsError (node:assert:449:20)
+      at throws (node:assert:484:15)
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/preflight-models.test.ts:32:10)
+(fail) validateTeammateModels > unavailable model errors identify the model field and available replacement IDs [1.28ms]
+
+ 0 pass
+ 5 filtered out
+ 1 fail
+Ran 1 test across 1 file. [17.00ms]

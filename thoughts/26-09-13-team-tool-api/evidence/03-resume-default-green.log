@@ -1,0 +1,10 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > resume starts stopped teammates by default without restarting already-live members [330.49ms]
+(pass) unified child runtime > resume can record a resumption prompt while keeping the selected teammate idle [165.87ms]
+
+ 2 pass
+ 25 filtered out
+ 0 fail
+Ran 2 tests across 1 file. [874.00ms]

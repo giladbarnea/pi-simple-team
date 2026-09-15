@@ -1,0 +1,28 @@
+bun test v1.3.14 (0d9b296a)
+
+test/team-registry.test.ts:
+356 | 		host = new ExtensionHost(teamExtension, makeContext("main-activity", projectDirectory));
+357 | 		await host.start();
+358 | 		await host.execute("team_spawn", { teamName: "activity", commonPrompt: "Work.", teammates: [{ name: "persisted", systemPrompt: "Keep working.", model: "fake/fake-model" }] });
+359 | 		await waitForFakePiTurns(root, 1);
+360 | 		const result = await host.execute("team_resume", { team: "activity", startIdle: true });
+361 | 		assert.equal(result.details?.started, true, "An idle no-op resume must report the work already underway.");
+               ^
+AssertionError: An idle no-op resume must report the work already underway.
+
+false !== true
+
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:361:10
+      at processTicksAndRejections (native:7:39)
+(fail) idle resume reports the complete team and work that was already active [469.09ms]
+
+ 0 pass
+ 19 filtered out
+ 1 fail
+Ran 1 test across 1 file. [891.00ms]

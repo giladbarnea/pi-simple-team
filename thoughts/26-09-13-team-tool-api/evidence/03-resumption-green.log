@@ -1,0 +1,11 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > resume can record a resumption prompt while keeping the selected teammate idle [167.27ms]
+(pass) unified child runtime > startIdle leaves a ready team idle until an explicit message [1082.21ms]
+(pass) unified child runtime > starts every teammate only after the complete team is ready [171.73ms]
+
+ 3 pass
+ 23 filtered out
+ 0 fail
+Ran 3 tests across 1 file. [1.75s]

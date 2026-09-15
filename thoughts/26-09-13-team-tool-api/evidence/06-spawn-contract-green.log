@@ -1,0 +1,9 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > spawn accepts the reviewed input names and returns one durable teammate identity [76.57ms]
+
+ 1 pass
+ 33 filtered out
+ 0 fail
+Ran 1 test across 1 file. [518.00ms]

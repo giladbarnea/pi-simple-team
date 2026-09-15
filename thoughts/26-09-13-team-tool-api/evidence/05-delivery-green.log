@@ -1,0 +1,11 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > a teammate receives its own peer-delivery failure instead of notifying main [1153.32ms]
+(pass) unified child runtime > a delivery failure after publication is pushed to the sending main session [94.75ms]
+(pass) unified child runtime > selective interruption applies only to listed recipients and rejects outsiders [148.25ms]
+
+ 3 pass
+ 29 filtered out
+ 0 fail
+Ran 3 tests across 1 file. [1.72s]

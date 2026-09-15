@@ -1,0 +1,9 @@
+bun test v1.3.14 (0d9b296a)
+
+test/team-registry.test.ts:
+(pass) team_add_teammates accepts a team name and grows the owned running team [1182.44ms]
+
+ 1 pass
+ 18 filtered out
+ 0 fail
+Ran 1 test across 1 file. [1442.00ms]

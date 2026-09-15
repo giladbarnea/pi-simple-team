@@ -1,0 +1,614 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > automatic kickoff gives an inheriting teammate its own identity and assignment [103.94ms]
+(pass) unified child runtime > cancelling startup prevents automatic work and removes the prepared team [81.34ms]
+(pass) unified child runtime > concurrent team creation gives both teams a registered delivery runtime [71.94ms]
+(pass) unified child runtime > an empty team does not tell main to expect teammate progress [6.32ms]
+(pass) unified child runtime > the team log retains complete resumption instructions even when the team starts idle [135.38ms]
+(pass) unified child runtime > ambiguous team selection returns names mapped to every available team ID [7.41ms]
+485 | 		try {
+486 | 			const spawned = await host.execute("team_spawn", { teamName: "message-result", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "probe", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+487 | 			const result = await host.execute("team_send_message", { targets: ["probe"], message: "Work." });
+488 | 			const content = JSON.parse(result.content[0].text) as JsonRecord;
+489 | 			assert.equal(content.published, true, "The result must truthfully acknowledge publication.");
+490 | 			assert.equal(content.teamId, spawned.details?.teamId, "Publication identifies the intended team.");
+                ^
+AssertionError: Publication identifies the intended team.
++ actual - expected
+
++ undefined
+- 'fake-main-session-id-message-result'
+
+ generatedMessage: false,
+     actual: undefined,
+   expected: "fake-main-session-id-message-result",
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:490:11
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > message publication and shutdown return explicit identities without redundant fields [70.72ms]
+(pass) unified child runtime > list returns a complete teammate record without parallel name or session identity fields [69.92ms]
+529 | 		try {
+530 | 			const spawned = await host.execute("team_spawn", { teamName: "lifecycle-results", commonPrompt: "Work.", teammates: [{ name: "original", systemPrompt: "Work.", model: "fake/fake-model" }] });
+531 | 			const added = await host.execute("team_add_teammates", { teammates: [{ name: "added", systemPrompt: "Work.", model: "fake/fake-model" }] });
+532 | 			assert.equal(added.details?.started, true, "Add must explicitly report that the new teammate started.");
+533 | 			assert.equal(added.details?.teamId, spawned.details?.teamId, "Lifecycle results must use the same team identity.");
+534 | 			assert.deepEqual((added.details?.teammates as JsonRecord[])?.map((member) => member.teammateName), ["added"], "Add must return only affected teammate identities.");
+                ^
+AssertionError: Add must return only affected teammate identities.
++ actual - expected
+
+  [
++   undefined,
++   undefined
+-   'added'
+  ]
+
+ generatedMessage: false,
+     actual: [ undefined, undefined ],
+   expected: [ "added" ],
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:534:11
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > resume and add return affected identities and whole-team statuses consistently [168.78ms]
+560 | 			const content = JSON.parse(result.content[0].text) as JsonRecord;
+561 | 			const started = lines(fake.eventsPath).find((entry) => entry.type === "pi_start");
+562 | 			assert.equal(content.teamName, "public-spawn", "The result must identify the team name explicitly.");
+563 | 			assert.equal(content.teamId, "fake-main-session-id-public-spawn", "The result must identify the durable team ID explicitly.");
+564 | 			assert.equal(content.started, false, "The result must not claim work started for an idle spawn.");
+565 | 			assert.deepEqual(content.teammates, [{ teammateName: "probe", teammateId: started?.sessionId }], "The Pi session ID must be returned once, as teammateId.");
+                ^
+AssertionError: The Pi session ID must be returned once, as teammateId.
++ actual - expected
+
+  [
+    {
++     active: false,
++     canManageOwnTeams: false,
++     inheritMainContext: false,
++     live: true,
++     model: 'fake/fake-model',
++     name: 'probe',
++     sessionFile: '/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-herdr-test-Z98S7T/sessions/probe-70672.jsonl',
++     showOnHerdrPane: false,
++     systemPrompt: 'Individual instructions.',
+      teammateId: 'probe-70672',
++     thinking: 'xhigh'
+-     teammateName: 'probe'
+    }
+  ]
+
+ generatedMessage: false,
+     actual: [
+  [Object ...]
+],
+   expected: [
+  [Object ...]
+],
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:565:11
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > spawn accepts the reviewed input names and returns one durable teammate identity [69.19ms]
+(pass) unified child runtime > a partial kickoff failure identifies started and failed teammates without losing the team [151.33ms]
+(pass) unified child runtime > a teammate receives its own peer-delivery failure instead of notifying main [1142.88ms]
+(pass) unified child runtime > a delivery failure after publication is pushed to the sending main session [98.99ms]
+(pass) unified child runtime > selective interruption applies only to listed recipients and rejects outsiders [152.36ms]
+(pass) unified child runtime > add starts only new teammates and can leave a later addition idle [213.84ms]
+(pass) unified child runtime > resume starts stopped teammates by default without restarting already-live members [311.96ms]
+(pass) unified child runtime > resume can record a resumption prompt while keeping the selected teammate idle [159.02ms]
+(pass) unified child runtime > startIdle leaves a ready team idle until an explicit message [91.38ms]
+(pass) unified child runtime > starts every teammate only after the complete team is ready [162.34ms]
+(pass) unified child runtime > a non-visible child starts the same delivery runtime and registers with the parent [8.15ms]
+(pass) unified child runtime > RPC teammates use the parent Pi executable instead of PATH [66.52ms]
+808 | 				startIdle: true, commonPrompt: "test",
+809 | 				teammates: [{ name: "scout", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" }],
+810 | 			});
+811 | 			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "ready"));
+812 | 			const piStart = lines(fake.eventsPath).find((entry) => entry.type === "pi_start");
+813 | 			assert.deepEqual(
+                ^
+AssertionError: Expected the registration to supply the session identity. Got: {"teamName":"rpc-registration-team","teamId":"fake-main-session-id-rpc-registration-team","started":false,"teammates":[{"name":"scout","systemPrompt":"wait","model":"fake/fake-model","thinking":"low","inheritMainContext":false,"canManageOwnTeams":false,"showOnHerdrPane":false,"teammateId":"scout-70791","sessionFile":"/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-herdr-test-4pyoRd/sessions/scout-70791.jsonl","live":true,"active":false}],"instruction":"Read the bundled ai-to-leader skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md and the bundled ai-to-delegated skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md in full before continuing, then follow their instructions.\n\nThese teammates are idle. Use team_send_message when you want them to start, with the instructions they need."}
++ actual - expected
+
+  [
+    {
++     active: false,
++     canManageOwnTeams: false,
++     inheritMainContext: false,
++     live: true,
++     model: 'fake/fake-model',
++     name: 'scout',
++     sessionFile: '/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-herdr-test-4pyoRd/sessions/scout-70791.jsonl',
++     showOnHerdrPane: false,
++     systemPrompt: 'wait',
+      teammateId: 'scout-70791',
++     thinking: 'low'
+-     teammateName: 'scout'
+    }
+  ]
+
+ generatedMessage: false,
+     actual: [
+  [Object ...]
+],
+   expected: [
+  [Object ...]
+],
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:813:11
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > team_spawn takes an RPC teammate's identity from registration, not a state query [76.83ms]
+838 | 			const result = await host.execute(
+839 | 				"get_context_window_usage",
+840 | 				{ targets: ["scout"] },
+841 | 				{ getContextUsage: () => ({ tokens: 43_210, contextWindow: 200_000, percent: 21.605 }) },
+842 | 			);
+843 | 			assert.equal(
+                ^
+AssertionError: Expected the RPC teammate's context report to come from its delivery runtime.
++ actual - expected
+
++ 'Teammate scout (Pi session ID: scout-70793) on team rpc-context-team (team ID: fake-main-session-id-rpc-context-team) has used 87k tokens out of 272k available (32%).\n' +
+- 'Teammate scout has used 87k tokens out of 272k available (32%).\n' +
+    'You have used 43k tokens out of 200k available (22%).'
+
+ generatedMessage: false,
+     actual: "Teammate scout (Pi session ID: scout-70793) on team rpc-context-team (team ID: fake-main-session-id-rpc-context-team) has used 87k tokens out of 272k available (32%).\nYou have used 43k tokens out of 200k available (22%).",
+   expected: "Teammate scout has used 87k tokens out of 272k available (32%).\nYou have used 43k tokens out of 200k available (22%).",
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:843:11
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > main reads an RPC teammate's context window through its delivery runtime [72.16ms]
+(pass) unified child runtime > team_send_message reaches an RPC teammate through its delivery runtime and its events flow back [105.72ms]
+(pass) unified child runtime > an interrupting send carries the interrupt flag to the RPC teammate's runtime [1082.61ms]
+(pass) visible Herdr teammates > the live team dashboard reports mixed transports from actual members [333.21ms]
+(pass) visible Herdr teammates > individual panes support mixed teams and explicit team settings override them [610.85ms]
+(pass) visible Herdr teammates > exposes its current context usage to the parent [7.51ms]
+(pass) visible Herdr teammates > bounds an interrupted delivery when agent_settled never arrives [264.35ms]
+(pass) visible Herdr teammates > resolves an interrupted delivery when session shutdown replaces agent_settled [37.07ms]
+(pass) visible Herdr teammates > retries lifecycle callbacks without reordering events [24.61ms]
+(pass) visible Herdr teammates > fails a later delivery after the final lifecycle callback failure [20.08ms]
+(pass) visible Herdr teammates > defaults to RPC and does not call Herdr when omitted or false [7.09ms]
+(pass) visible Herdr teammates > rejects inherited context for an ephemeral main session [0.63ms]
+(pass) visible Herdr teammates > Herdr teammates use the parent Pi executable instead of PATH [251.34ms]
+(pass) visible Herdr teammates > passes the main session fork only to inheriting visible teammates [439.55ms]
+(pass) visible Herdr teammates > requires the main session Herdr tab before visible spawn [1.39ms]
+1166 | 				"get_context_window_usage",
+1167 | 				{ targets: ["product-head"] },
+1168 | 				{ getContextUsage: () => ({ tokens: 43_210, contextWindow: 200_000, percent: 21.605 }) },
+1169 | 			);
+1170 | 
+1171 | 			assert.equal(
+                 ^
+AssertionError: Expected the visible teammate report before main's report.
++ actual - expected
+
++ 'Teammate product-head (Pi session ID: product-head-71188) on team visible-context-team (team ID: fake-main-session-id-visible-context-team) has used 87k tokens out of 272k available (32%).\n' +
+- 'Teammate product-head has used 87k tokens out of 272k available (32%).\n' +
+    'You have used 43k tokens out of 200k available (22%).'
+
+ generatedMessage: false,
+     actual: "Teammate product-head (Pi session ID: product-head-71188) on team visible-context-team (team ID: fake-main-session-id-visible-context-team) has used 87k tokens out of 272k available (32%).\nYou have used 43k tokens out of 200k available (22%).",
+   expected: "Teammate product-head has used 87k tokens out of 272k available (32%).\nYou have used 43k tokens out of 200k available (22%).",
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:1171:11
+      at processTicksAndRejections (native:7:39)
+(fail) visible Herdr teammates > main reports a visible teammate before itself [247.83ms]
+1191 | 				startIdle: true, commonPrompt: "test",
+1192 | 				showOnHerdrPanes: true,
+1193 | 				teammates: [{ name: "reviewer", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" }],
+1194 | 			});
+1195 | 			const visibleStart = lines(fake.eventsPath).find((entry) => entry.type === "pi_start");
+1196 | 			assert.deepEqual(
+                 ^
+AssertionError: Expected visible spawn to return the Pi session identity. Got: {"teamName":"durable-visible-team","teamId":"fake-main-session-id-durable-visible-team","started":false,"teammates":[{"name":"reviewer","systemPrompt":"wait","model":"fake/fake-model","thinking":"low","inheritMainContext":false,"canManageOwnTeams":false,"showOnHerdrPane":true,"teammateId":"reviewer-71194","sessionFile":"/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-herdr-test-YOi6yE/sessions/reviewer-71194.jsonl","live":true,"active":false}],"instruction":"Read the bundled ai-to-leader skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md and the bundled ai-to-delegated skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md in full before continuing, then follow their instructions.\n\nThese teammates are idle. Use team_send_message when you want them to start, with the instructions they need."}
++ actual - expected
+
+  [
+    {
++     active: false,
++     canManageOwnTeams: false,
++     inheritMainContext: false,
++     live: true,
++     model: 'fake/fake-model',
++     name: 'reviewer',
++     sessionFile: '/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-herdr-test-YOi6yE/sessions/reviewer-71194.jsonl',
++     showOnHerdrPane: true,
++     systemPrompt: 'wait',
+      teammateId: 'reviewer-71194',
++     thinking: 'low'
+-     teammateName: 'reviewer'
+    }
+  ]
+
+ generatedMessage: false,
+     actual: [
+  [Object ...]
+],
+   expected: [
+  [Object ...]
+],
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:1196:11
+      at processTicksAndRejections (native:7:39)
+(fail) visible Herdr teammates > persists visible teammates and resumes them through RPC by default [238.73ms]
+(pass) visible Herdr teammates > resumes a persisted session in visible panes only when explicitly requested [492.53ms]
+(pass) visible Herdr teammates > starts a ready visible teammate, forwards delivery events, and closes the exact pane [277.65ms]
+(pass) visible Herdr teammates > treats an externally closed pane as already closed during team shutdown [235.53ms]
+(pass) visible Herdr teammates > closes a pane when visible-child readiness fails [232.33ms]
+(pass) visible Herdr teammates > rolls back already-created panes after a later Herdr start fails [282.35ms]
+
+test/session-ownership.test.ts:
+(pass) teammate creation schemas > rejects obsolete optional teammate fields instead of silently starting with defaults [0.50ms]
+(pass) teammate creation schemas > accept opt-in team oversight and default it to false [0.40ms]
+(pass) recursive team oversight > an opted-in teammate receives parent-team tools and manager tools [3.78ms]
+(pass) recursive team oversight > a normal teammate does not receive the manager reminder tool [1.72ms]
+30 | 
+31 | /** @example resolveTargets([{ teamName: "review", teamId: "team-1", teammates: [{ name: "scout", teammateId: "session-1" }] }], ["review", "session-1"])[0].teammates.length // 1 */
+32 | export function resolveTargets(teams: readonly SelectableTeam[], identifiers: readonly string[]): TeamSelection[] {
+33 | 	const candidates = teams.flatMap((team) => [
+34 | 		{ name: team.teamName, id: team.teamId, team, teammate: undefined },
+35 | 		...team.teammates.map((teammate) => ({ name: teammate.name, id: teammate.teammateId, team, teammate })),
+               ^
+TypeError: undefined is not an object (evaluating 'team.teammates.map')
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/team-selection.ts:35:11)
+      at resolveTargets (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/team-selection.ts:33:27)
+      at execute (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/index.ts:1345:24)
+(fail) recursive team oversight > an overseeing teammate keeps its communication tools connected to its parent team [5.81ms]
+(pass) recursive team oversight > spawned teammates receive explicit capability values [134.97ms]
+(pass) team_log input schema > accepts only a non-empty kind list containing non-empty strings [0.67ms]
+(pass) team_log input schema > places scoped model guidance only on the model parameter [0.23ms]
+(pass) team_log input schema > adds environment-based model guidance when the scope is empty [0.15ms]
+(pass) team_log input schema > keeps pane configuration guidance on its parameter [0.17ms]
+(pass) schedule_reminder > returns before waking the manager once with its custom message [202.59ms]
+(pass) schedule_reminder > accepts only a positive delay within the single-timer range [0.92ms]
+600 | 			const reminder = host.tools.get("schedule_reminder");
+601 | 			assert.ok(reminder, "Managers must receive the reminder tool.");
+602 | 			assert.equal(reminder.promptSnippet, undefined, "Reminder guidance must not occupy a separate system-prompt snippet.");
+603 | 			assert.match(reminder.description, /one-shot.*next reminder after each check/s, "The tool description must explain one-shot and periodic usage.");
+604 | 			const result = await host.execute("team_spawn", { teamName: "reminder-guidance", commonPrompt: "Work.", teammates: [{ name: "worker", systemPrompt: "Work.", model: "fake/fake-model" }] });
+605 | 			assert.match(String(result.instruction), /Ask the user.*15 minutes/s, "A successful start must offer the user 15-minute oversight checks.");
+                ^
+AssertionError: A successful start must offer the user 15-minute oversight checks.
+ generatedMessage: false,
+     actual: "Read the bundled ai-to-leader skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md and the bundled ai-to-delegated skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md in full before continuing, then follow their instructions.\n\nThese teammates are idle. Use team_send_message when you want them to start, with the instructions they need.",
+   expected: /Ask the user.*15 minutes/s,
+   operator: "match",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/session-ownership.test.ts:605:11
+      at processTicksAndRejections (native:7:39)
+(fail) schedule_reminder > offers oversight reminders after team creation instead of in the reminder snippet [71.10ms]
+(pass) schedule_reminder > renders a compact reminder instead of raw result JSON [1.56ms]
+(pass) schedule_reminder > cancels a pending reminder when its session shuts down [202.44ms]
+(pass) bundled skill guidance > team_spawn returns the skill instruction to main [7.08ms]
+(pass) team ownership across in-process AgentSessions > retains the full outgoing message in the team log [63.88ms]
+(pass) team ownership across in-process AgentSessions > the session roster keeps teammate colors consistent across tool renderers [100.20ms]
+(pass) team ownership across in-process AgentSessions > shutting down another session leaves the owner's team available [4.65ms]
+(pass) team ownership across in-process AgentSessions > a session lists only teams it owns [2.46ms]
+(pass) team ownership across in-process AgentSessions > a session cannot explicitly shut down another session's team [4.22ms]
+(pass) team ownership across in-process AgentSessions > send_main_message callbacks are delivered to the AgentSession that owns the team [135.31ms]
+(pass) context-window reports > an overseeing teammate reports itself when no descendant targets are given [4.20ms]
+(pass) context-window reports > a teammate reports its own context window with no arguments [0.23ms]
+16 | /** @example resolveNamedId([{ name: "scout", id: "session-1" }], "session-1", "teammates").name // "scout" */
+17 | function resolveNamedId<Reference extends { name: string; id: string }>(candidates: readonly Reference[], identifier: string, parameter: string): Reference {
+18 | 	const name = identifier.trim();
+19 | 	const matches = candidates.filter((candidate) => candidate.id === name || candidate.name === name);
+20 | 	const choices = (matches.length > 0 ? matches : candidates).map(({ name, id }) => ({ name, id }));
+21 | 	if (matches.length !== 1) throw new Error(`${matches.length === 0 ? "Unknown" : "Ambiguous"} target ${JSON.stringify(identifier)}. Available choices: ${JSON.stringify(choices)}. Pass the intended ID in ${parameter}.`);
+                                          ^
+error: Unknown target "main". Available choices: [{"name":"context-team","id":"context-team"},{"name":"product-head","id":"pi-simple-team-fake-product-head-71373"},{"name":"reviewer","id":"pi-simple-team-fake-reviewer-71382"}]. Pass the intended ID in targets.
+      at resolveNamedId (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/team-selection.ts:21:38)
+      at resolveTargets (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/team-selection.ts:39:17)
+      at execute (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/index.ts:1409:24)
+      at executeResult (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/session-ownership.test.ts:384:15)
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/session-ownership.test.ts:913:30)
+(fail) context-window reports > main removes repeated self targets, preserves teammate order, then reports itself once [92.70ms]
+
+test/team-command.test.ts:
+(pass) /team > shows an empty state and excludes teams owned by another session [5.27ms]
+(pass) /team > opens the only team without a selection step [3.41ms]
+(pass) /team > selects a team before opening its overview when several teams exist [6.22ms]
+(pass) /team > wraps the team dashboard in an external border [0.97ms]
+(pass) /team > keeps fixed bordered regions and bounds statuses by latest update [0.71ms]
+(pass) /team > aligns status columns and right-aligns relative timestamps of different widths [0.96ms]
+(pass) /team > middle-truncates status, message, and team-log rows [1.19ms]
+(pass) /team > reads fresh team data on every live render [0.41ms]
+(pass) /team > opens a team that appears while the empty overlay is open [0.21ms]
+(pass) /team > shows the selector when several teams appear while the empty overlay is open [0.25ms]
+(pass) /team > falls back to the empty state when the viewed team vanishes [0.23ms]
+(pass) /team > marks the messages widget focused by default and offers widget navigation [0.29ms]
+(pass) /team > moves widget focus with Up and Down, clamped at both ends [0.67ms]
+(pass) /team > zooms the messages widget with Enter and returns to the dashboard with Esc [0.84ms]
+(pass) /team > zooms the team log widget and reaches entries beyond the dashboard cap [2.28ms]
+(pass) /team > zoomed log draws from the full retained log, not a fixed entry cap [6.84ms]
+(pass) /team > honors rebound selection keys for widget focus [0.66ms]
+(pass) /team > zoomed views show a breadcrumb, keep the widget highlighted, and spell out the way back [0.39ms]
+(pass) /team > drops the zoomed view when the viewed team vanishes [0.31ms]
+(pass) /team > shows the newest fitting messages and logs chronologically without scrolling [1.20ms]
+
+test/preflight-models.test.ts:
+(pass) formatModelReference > formats a canonical provider/model id [1.24ms]
+(pass) formatScopedModelGuidance > explains how to choose when the session has no scoped models [0.03ms]
+(pass) formatScopedModelGuidance > lists every scoped model as optional guidance [0.01ms]
+(pass) validateTeammateModels > unavailable model errors identify the model field and available replacement IDs [0.13ms]
+(pass) validateTeammateModels > accepts an available model that is outside the scoped guidance [0.52ms]
+(pass) validateTeammateModels > rejects a model absent from all available models [0.02ms]
+
+test/stderr-lifecycle.test.ts:
+(skip) RPC stderr and conversation lifetime > keeps Pi conversation across follow-up turns, idle resumption, default resumption, and additions
+
+test/team-registry.test.ts:
+(pass) idle resume reports the complete team and work that was already active [780.17ms]
+(pass) context usage selects same-named teammates by Pi session ID across teams [766.23ms]
+(pass) team_spawn isolates teammates from conflicting discovered team extensions [367.12ms]
+(pass) team_spawn returns each durable Pi session identity [362.58ms]
+(pass) team_spawn cannot overwrite a dormant team attachment [362.53ms]
+(pass) canonical team IDs distinguish live teams with the same display name [7.32ms]
+(pass) team_resume rejects an ambiguous team name and asks for the persistent team ID [9.92ms]
+(pass) an overseeing teammate can discover and resume only teams it created [18.66ms]
+(pass) team_shutdown waits for every RPC runtime before releasing ownership [726.05ms]
+(pass) team_shutdown gives an overseeing teammate time to stop its own teams [2290.62ms]
+863 | 			teammates: [
+864 | 				{ name: "security", systemPrompt: "Review security.", model: "fake/fake-model", thinking: "high" },
+865 | 				{ name: "operations", systemPrompt: "Review operations.", model: "fake/fake-model", thinking: "medium" },
+866 | 			],
+867 | 		});
+868 | 		assert.deepEqual(
+               ^
+AssertionError: Expected team_add_teammates to report both new teammates in request order. Got: {"teamName":"growing-team","teamId":"origin-main-session-id-growing-team","started":false,"teammates":[{"name":"original","teammateId":"original-1","live":true,"active":false},{"name":"security","teammateId":"security-1","live":true,"active":false},{"name":"operations","teammateId":"operations-1","live":true,"active":false}],"instruction":"Read the bundled ai-to-leader skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md and the bundled ai-to-delegated skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md in full before continuing, then follow their instructions.\n\nThese teammates are idle. Use team_send_message when you want them to start, with the instructions they need.","status":{"main":{"word":"available","phrase":"Main agent","updated":"2026-09-14T18:12:48.291Z"},"operations":{"word":"idle","phrase":"Spawned","updated":"2026-09-14T18:12:49.359Z"},"original":{"word":"idle","phrase":"Spawned","updated":"2026-09-14T18:12:48.658Z"},"security":{"word":"idle","phrase":"Spawned","updated":"2026-09-14T18:12:48.996Z"}}}
++ actual - expected
+
+  [
++   undefined,
++   undefined,
++   undefined
+-   'security',
+-   'operations'
+  ]
+
+ generatedMessage: false,
+     actual: [ undefined, undefined, undefined ],
+   expected: [ "security", "operations" ],
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:868:10
+      at processTicksAndRejections (native:7:39)
+(fail) team_add_teammates accepts a team name and grows the owned running team [1094.51ms]
+(pass) failed team_add_teammates waits for only its newly started processes to exit [1236.68ms]
+(pass) a later same-project session resumes selected and all stopped teammates without losing session identity [1824.95ms]
+(pass) a failed selective resume leaves members that were already running alive [1426.47ms]
+(pass) team_list reports the live lease and exact dormant expiry [7.61ms]
+(pass) team_list reports each member's live runtime state [1083.35ms]
+(pass) recovering a stale lease marks the abandoned active manifest dormant [7.17ms]
+(pass) stale lease reclamation cannot unlink a concurrent live lease [1.15ms]
+(pass) an expired dormant team removes only registry files while an equally old active team remains [380.61ms]
+(pass) team discovery treats a symlink as the same project directory [3.50ms]
+(pass) a new extension session discovers a shut-down team in the same project [7.04ms]
+
+test/teamlog.test.ts:
+(pass) preview > returns short strings unchanged [0.02ms]
+(pass) preview > collapses and trims internal whitespace
+(pass) preview > truncates strings past the default 160-character limit and reports the original length [0.01ms]
+(pass) preview > respects a custom maxLength
+(pass) preview > stringifies non-string values as compact JSON [0.01ms]
+(pass) preview > falls back to String() instead of throwing on unstringifiable values [1.50ms]
+(pass) timeOfDay > formats just the second-level time from an epoch [0.04ms]
+(pass) relativeTime > shows just now under one minute [0.02ms]
+(pass) relativeTime > shows whole minutes under one hour [0.02ms]
+(pass) relativeTime > shows hours with zero-padded minutes under four hours [0.02ms]
+(pass) relativeTime > shows whole hours under one day
+(pass) relativeTime > shows one day with remainder hours under two days [0.01ms]
+(pass) relativeTime > shows whole days under one week
+(pass) relativeTime > shows weeks under one month [0.01ms]
+(pass) relativeTime > shows months from thirty days on
+(pass) futureTime > scales from minutes through weeks [0.03ms]
+(pass) appendTeamLog > assigns incrementing sequence numbers and returns the created entry [0.33ms]
+(pass) appendTeamLog > stamps an ISO timestamp and epochMilliseconds from the provided now [0.02ms]
+(pass) appendTeamLog > caps retained entries at 1000 and drops the oldest [0.44ms]
+(pass) filterTeamLog > filters by teammate [0.03ms]
+(pass) filterTeamLog > returns zero rows for an unknown teammate rather than throwing
+(pass) filterTeamLog > filters by kind [0.02ms]
+(pass) filterTeamLog > filters by any requested kind [0.02ms]
+(pass) filterTeamLog > returns zero rows for an unknown kind rather than throwing
+(pass) filterTeamLog > search matches summary, teammate, kind, and stringified details case-insensitively [0.05ms]
+(pass) filterTeamLog > filters by since, keeping entries at or after the threshold [0.02ms]
+(pass) filterTeamLog > throws on an unparseable since value [0.02ms]
+(pass) filterTeamLog > combines filters with AND semantics [0.02ms]
+(pass) pageTeamLog > defaults to the latest 20 entries when limit is omitted [0.08ms]
+(pass) pageTeamLog > keeps page entries in chronological (oldest-to-newest) order [0.03ms]
+(pass) pageTeamLog > clamps limit above 100 down to the 100 max [0.09ms]
+(pass) pageTeamLog > floors a fractional limit [0.02ms]
+(pass) pageTeamLog > rejects a limit below 1 [0.03ms]
+(pass) pageTeamLog > rejects a non-finite limit [0.02ms]
+(pass) pageTeamLog > totalMatched reflects the full input set regardless of cursor position [0.03ms]
+270 | 	});
+271 | 
+272 | 	test("nextCursor points to the oldest sequence in the page when older entries remain", () => {
+273 | 		const entries = makeEntries(25);
+274 | 		const page = pageTeamLog(entries, { limit: 20 });
+275 | 		expect(page.nextCursor).toBe("before:6");
+                                ^
+error: expect(received).toBe(expected)
+
+Expected: "before:6"
+Received: "WzEwMDYwMDAsImRlbW8tdGVhbSIsNl0"
+
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/teamlog.test.ts:275:27)
+(fail) pageTeamLog > nextCursor points to the oldest sequence in the page when older entries remain [1.23ms]
+(pass) pageTeamLog > omits nextCursor when the page reaches the oldest entry [0.23ms]
+(pass) pageTeamLog > walks backward through every page via nextCursor until exhausted [0.11ms]
+(pass) pageTeamLog > rejects a malformed cursor [0.06ms]
+(pass) renderTeamLogPage > renders a header with team name and matched/returned counts [0.05ms]
+(pass) renderTeamLogPage > includes a column header naming every field [0.04ms]
+(pass) renderTeamLogPage > renders one row per entry with zero-padded sequence and defaults teammate to main when absent [0.04ms]
+333 | 
+334 | 	test("footer reports counts and appends nextCursor when present", () => {
+335 | 		const entries = makeEntries(25);
+336 | 		const page = pageTeamLog(entries, { limit: 20 });
+337 | 		const text = renderTeamLogPage({ ...page, team: "demo-team" });
+338 | 		expect(text.split("\n").at(-1)).toBe('Showing 20 of 25 matching events. nextCursor="before:6"');
+                                        ^
+error: expect(received).toBe(expected)
+
+Expected: "Showing 20 of 25 matching events. nextCursor="before:6""
+Received: "Showing 20 of 25 matching events. nextCursor="WzEwMDYwMDAsImRlbW8tdGVhbSIsNl0""
+
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/teamlog.test.ts:338:35)
+(fail) renderTeamLogPage > footer reports counts and appends nextCursor when present [0.12ms]
+(pass) renderTeamLogPage > footer omits nextCursor when there is no older page [0.03ms]
+(pass) renderTeamLogPage > renders without crashing on an empty page [0.02ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > maps agent_start to an agent_start entry [0.02ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > maps agent_end to an agent_end entry and mentions the message count when present [0.02ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > maps agent_end without a messages array [0.01ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > maps tool_execution_start to a tool_start entry carrying tool name and args [0.03ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > maps a successful tool_execution_end to a tool_end entry [0.02ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > maps a failed tool_execution_end and surfaces the failure in the summary [0.02ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > skips tool frames for the team child tools, whose semantic entries carry the story [0.02ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > maps extension_error to an error entry [0.01ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > drops noisy event types that should not be logged in MVP [0.02ms]
+
+test/system-prompt.test.ts:
+(pass) composeSystemPrompt participant list > names the same full participant list for every teammate [0.03ms]
+(pass) composeSystemPrompt participant list > instructs every teammate to read the bundled ai-to-leader and ai-to-delegated skills [0.02ms]
+(pass) composeSystemPrompt acknowledgement instructions (review issue 2) > tells the teammate to ack via team_status on wake up, before doing substantive work [0.09ms]
+(pass) composeSystemPrompt acknowledgement instructions (review issue 2) > tells the teammate to ack via team_status before acting on an incoming message [0.03ms]
+(pass) composeSystemPrompt proactive handoff instruction (review issue 3) > tells the teammate to notify the blocking party before setting a waiting status [0.02ms]
+(pass) explains recursive-team tools and their ownership boundary to an overseeing teammate [0.02ms]
+(pass) does not claim that the current main observed work before a resume [0.01ms]
+
+test/real-pi.test.ts:
+(skip) real pi child runtime > an RPC-mode child registers and a delivered message triggers a turn
+
+test/idle-context.test.ts:
+(skip) idle conversation context > records instructions without a turn and includes them once in the next model request
+
+test/render.test.ts:
+(pass) formatCharCount > formats small, thousands, and ten-thousands counts [0.03ms]
+(pass) statusWordToken > maps known status words to semantic tokens [0.02ms]
+(pass) statusWordToken > gives free-form activity words the accent token
+(pass) teamStatusLines > renders a stat-line header and one tree row per member [0.13ms]
+(pass) teamStatusLines > aligns the status word column across rows [0.04ms]
+(pass) teamStatusLines > colors each status word by its semantic token [0.05ms]
+(pass) teamStatusLines > uses the Team Log actor colors for member names [0.03ms]
+(pass) teamStatusLines > renders ISO updated timestamps as relative time and passes legacy strings through [0.05ms]
+(pass) allTeamsStatusLines > groups member rows under accent team rows [0.12ms]
+(pass) allTeamsStatusLines > keeps member colors across teams [0.05ms]
+(pass) teamSpawnLines > lists each teammate with model and thinking level [0.10ms]
+(pass) teamSpawnLines > colors teammate names from the session roster [0.03ms]
+(pass) teamAddLines > summarizes growth and lists each added teammate like Team Spawn [0.05ms]
+(pass) teamAddLines > colors added teammate names from the session roster [0.02ms]
+(pass) teamResumeLines > distinguishes restored history from empty restarts [0.10ms]
+(pass) teamResumeLines > a full resume drops the of-count [0.02ms]
+(pass) teamResumeLines > shows a muted row when nothing was stopped [0.01ms]
+(pass) teamListLines > renders one row per team with relative updated and future expires timestamps [0.18ms]
+(pass) teamListLines > colors the state word, flags a stale lease, and marks overseers [0.05ms]
+(pass) teamListLines > dims stopped members only in active teams [0.03ms]
+(pass) teamListLines > shows an empty state when no teams exist [0.02ms]
+(pass) teamSendLines > renders arrow, recipients, and size in the header [0.10ms]
+(pass) teamSendLines > shows the interrupt stat only when set [0.03ms]
+(pass) teamSendLines > colors each recipient from the session roster [0.02ms]
+(pass) teamSendLines > collapsed body shows a quote-barred preview with an expand hint [0.02ms]
+(pass) teamSendLines > expanded body shows every line without a hint [0.02ms]
+(pass) teamShutdownLines > summarizes the stop and lists teammate names [0.04ms]
+(pass) teamShutdownLines > colors stopped teammate names from the session roster [0.02ms]
+(pass) actorHueToken > main is accent; teammates cycle hue tokens by roster order [0.02ms]
+(pass) actorHueToken > actors outside the roster fall back to plain text
+(pass) teamLogLines > folds a tool pair into one action row with duration and salient arg [0.38ms]
+(pass) teamLogLines > a successful tool colors the chevron with the success token [0.05ms]
+(pass) teamLogLines > a failed tool colors the chevron red and leads details with the exit code [0.11ms]
+(pass) teamLogLines > a failure without an exit code falls back to the first result line [0.06ms]
+(pass) teamLogLines > an unfinished tool stays neutral with an ellipsis in the duration slot [0.03ms]
+(pass) teamLogLines > groups consecutive send frames by sender and message into one message row [0.08ms]
+(pass) teamLogLines > recipients keep their owner's hue inside details [0.04ms]
+(pass) teamLogLines > deliver and ack frames never render in the collapsed view [0.04ms]
+(pass) teamLogLines > interrupt sends carry a warning chip [0.03ms]
+(pass) teamLogLines > a send_main_message report renders as a message to main [0.03ms]
+(pass) teamLogLines > status rows quote word and phrase from details [0.03ms]
+(pass) teamLogLines > a turn opens with an ellipsis and closes in place with duration and message count [0.06ms]
+(pass) teamLogLines > spawn rows carry model and thinking from details [0.03ms]
+(pass) teamLogLines > a repeated actor dims [0.03ms]
+(pass) teamLogLines > header shows action and event counts, humanizes since, and keeps the cursor footer [0.06ms]
+(pass) teamLogLines > colors a teammate filter from the session roster [0.03ms]
+(pass) teamLogLines > renders an empty state row when nothing matched [0.02ms]
+(pass) teamLogLines > log rows carry no tree connectors [0.24ms]
+(pass) teamLogLines > opens with a day divider when the first entry is not from today [0.03ms]
+(pass) teamLogLines > inserts a day divider between rows when the local day changes [0.04ms]
+(pass) teamLogLines > a same-day log renders no day divider [0.03ms]
+(pass) teamMessageLines > renders a speech header and quote-barred full body [0.04ms]
+(pass) teamMessageLines > renders an ISO sentAt as relative time [0.03ms]
+(pass) renderTeamMessage > returns undefined without well-formed details so the default renderer takes over [0.04ms]
+(pass) renderTeamMessage > returns a component for well-formed details [0.37ms]
+(pass) renderTeamMessage > colors the sender from the session roster [2.45ms]
+(pass) renderTeamToolResult > renders the call header with the error in red on failure [0.24ms]
+(pass) renderTeamToolResult > colors Team Send recipients when rendering a Markdown body [0.21ms]
+(pass) renderTeamToolResult > right-aligns Team Status timestamps and truncates phrases to the remaining width [0.34ms]
+248 | 
+249 | export function teamResumeLines(theme: ThemeLike, team: string, resumed: ResumedMemberView[], teammateCount: number, roster: string[] = []): string[] {
+250 | 	const countText = resumed.length === teammateCount ? `${resumed.length} resumed` : `${resumed.length} of ${teammateCount} resumed`;
+251 | 	const header = headerLine(theme, "Team Resume", theme.fg("accent", team), [theme.fg("muted", countText)]);
+252 | 	if (resumed.length === 0) return [header, `${treeConnector(theme, "└")}${theme.fg("muted", "no stopped teammates")}`];
+253 | 	const nameWidth = Math.max(...resumed.map((member) => member.name.length));
+                                                                    ^
+TypeError: undefined is not an object (evaluating 'member.name.length')
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/render.ts:253:63)
+      at map (1:11)
+      at teamResumeLines (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/render.ts:253:40)
+      at renderTeamToolResult (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/render.ts:874:23)
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/render.test.ts:696:21)
+(fail) renderTeamToolResult > translates Team Resume result details into restored and restarted rows [0.14ms]
+(pass) renderTeamToolResult > keeps a teammate color consistent across Team Status and Team Log [0.36ms]
+(pass) renderTeamToolCall > shows a static warning indicator only while the tool is pending [0.25ms]
+(pass) renderTeamToolCall > renders multiple Team Log kinds as one OR filter [0.14ms]
+(pass) renderTeamToolCall > colors a Team Log teammate filter from the session roster [0.12ms]
+(pass) TeamLines > clips each logical line to the render width when collapsed [0.36ms]
+(pass) TeamLines > wraps logical lines when expanded [0.52ms]
+(pass) TeamLines > re-applies the quote-bar prefix to wrapped continuation lines [0.26ms]
+(pass) markdown views in a narrow terminal > a teammate message header is clipped instead of overflowing [0.14ms]
+(pass) markdown views in a narrow terminal > a team send header is clipped instead of overflowing [1.22ms]
+(pass) markdown views in a narrow terminal > team spawn call and result fit a nine-column render width [0.35ms]
+(pass) markdown views in a narrow terminal > shared prefixed rows and message bodies fit a nine-column render width [0.23ms]
+(pass) markdown views in a narrow terminal > keeps the composed in-progress Team Spawn row within a nine-column render width [2.02ms]
+
+3 tests skipped:
+(skip) RPC stderr and conversation lifetime > keeps Pi conversation across follow-up turns, idle resumption, default resumption, and additions
+(skip) real pi child runtime > an RPC-mode child registers and a delivered message triggers a turn
+(skip) idle conversation context > records instructions without a turn and includes them once in the next model request
+
+
+14 tests failed:
+(fail) unified child runtime > message publication and shutdown return explicit identities without redundant fields [70.72ms]
+(fail) unified child runtime > resume and add return affected identities and whole-team statuses consistently [168.78ms]
+(fail) unified child runtime > spawn accepts the reviewed input names and returns one durable teammate identity [69.19ms]
+(fail) unified child runtime > team_spawn takes an RPC teammate's identity from registration, not a state query [76.83ms]
+(fail) unified child runtime > main reads an RPC teammate's context window through its delivery runtime [72.16ms]
+(fail) visible Herdr teammates > main reports a visible teammate before itself [247.83ms]
+(fail) visible Herdr teammates > persists visible teammates and resumes them through RPC by default [238.73ms]
+(fail) recursive team oversight > an overseeing teammate keeps its communication tools connected to its parent team [5.81ms]
+(fail) schedule_reminder > offers oversight reminders after team creation instead of in the reminder snippet [71.10ms]
+(fail) context-window reports > main removes repeated self targets, preserves teammate order, then reports itself once [92.70ms]
+(fail) team_add_teammates accepts a team name and grows the owned running team [1094.51ms]
+(fail) pageTeamLog > nextCursor points to the oldest sequence in the page when older entries remain [1.23ms]
+(fail) renderTeamLogPage > footer reports counts and appends nextCursor when present [0.12ms]
+(fail) renderTeamToolResult > translates Team Resume result details into restored and restarted rows [0.14ms]
+
+ 235 pass
+ 3 skip
+ 14 fail
+ 385 expect() calls
+Ran 252 tests across 11 files. [22.90s]

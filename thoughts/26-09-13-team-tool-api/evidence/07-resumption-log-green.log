@@ -1,0 +1,13 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > the team log retains complete resumption instructions even when the team starts idle [144.86ms]
+(pass) unified child runtime > a partial kickoff failure identifies started and failed teammates without losing the team [144.44ms]
+(pass) unified child runtime > a teammate receives its own peer-delivery failure instead of notifying main [1149.03ms]
+(pass) unified child runtime > a delivery failure after publication is pushed to the sending main session [97.07ms]
+(pass) unified child runtime > starts every teammate only after the complete team is ready [162.40ms]
+
+ 5 pass
+ 34 filtered out
+ 0 fail
+Ran 5 tests across 1 file. [2.42s]

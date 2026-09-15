@@ -1,0 +1,8 @@
+bun test v1.3.14 (0d9b296a)
+
+test/idle-context.test.ts:
+(pass) idle conversation context > records instructions without a turn and includes them once in the next model request [585.87ms]
+
+ 1 pass
+ 0 fail
+Ran 1 test across 1 file. [604.00ms]

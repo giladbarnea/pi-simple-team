@@ -1,0 +1,918 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+(pass) unified child runtime > ambiguous team selection returns names mapped to every available team ID [11.50ms]
+(pass) unified child runtime > message publication and shutdown return explicit identities without redundant fields [95.11ms]
+(pass) unified child runtime > list returns a complete teammate record without parallel name or session identity fields [64.89ms]
+(pass) unified child runtime > resume and add return affected identities and whole-team statuses consistently [222.26ms]
+(pass) unified child runtime > spawn accepts the reviewed input names and returns one durable teammate identity [66.07ms]
+(pass) unified child runtime > a partial kickoff failure identifies started and failed teammates without losing the team [146.00ms]
+(pass) unified child runtime > a teammate receives its own peer-delivery failure instead of notifying main [1154.86ms]
+(pass) unified child runtime > a delivery failure after publication is pushed to the sending main session [87.39ms]
+(pass) unified child runtime > selective interruption applies only to listed recipients and rejects outsiders [1158.16ms]
+(pass) unified child runtime > add starts only new teammates and can leave a later addition idle [225.28ms]
+(pass) unified child runtime > resume starts stopped teammates by default without restarting already-live members [302.27ms]
+(pass) unified child runtime > resume can record a resumption prompt while keeping the selected teammate idle [156.80ms]
+(pass) unified child runtime > startIdle leaves a ready team idle until an explicit message [1089.91ms]
+(pass) unified child runtime > starts every teammate only after the complete team is ready [183.56ms]
+(pass) unified child runtime > a non-visible child starts the same delivery runtime and registers with the parent [8.16ms]
+(pass) unified child runtime > RPC teammates use the parent Pi executable instead of PATH [68.21ms]
+704 | 				startIdle: true, commonPrompt: "test",
+705 | 				teammates: [{ name: "scout", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" }],
+706 | 			});
+707 | 			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "ready"));
+708 | 			const piStart = lines(fake.eventsPath).find((entry) => entry.type === "pi_start");
+709 | 			assert.deepEqual(
+                ^
+AssertionError: Expected the registration to supply the session identity. Got: {"teamName":"rpc-registration-team","teamId":"fake-main-session-id-rpc-registration-team","started":false,"teammates":[{"teammateName":"scout","teammateId":"scout-41301"}],"instruction":"Read the bundled ai-to-leader skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md and the bundled ai-to-delegated skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md in full before continuing, then follow their instructions.\n\nThese teammates are idle. Use team_send_message when you want them to start, with the instructions they need."}
++ actual - expected
+
++ undefined
+- {
+-   scout: {
+-     sessionFile: '/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-herdr-test-2neoQb/sessions/scout-41301.jsonl',
+-     sessionId: 'scout-41301'
+-   }
+- }
+
+ generatedMessage: false,
+     actual: undefined,
+   expected: {
+  scout: [Object ...],
+},
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:709:11
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > team_spawn takes an RPC teammate's identity from registration, not a state query [75.71ms]
+(pass) unified child runtime > main reads an RPC teammate's context window through its delivery runtime [68.38ms]
+(pass) unified child runtime > team_send_message reaches an RPC teammate through its delivery runtime and its events flow back [100.99ms]
+(pass) unified child runtime > an interrupting send carries the interrupt flag to the RPC teammate's runtime [88.64ms]
+(pass) visible Herdr teammates > individual panes support mixed teams and explicit team settings override them [437.85ms]
+(pass) visible Herdr teammates > exposes its current context usage to the parent [7.03ms]
+(pass) visible Herdr teammates > bounds an interrupted delivery when agent_settled never arrives [260.07ms]
+(pass) visible Herdr teammates > resolves an interrupted delivery when session shutdown replaces agent_settled [31.68ms]
+(pass) visible Herdr teammates > retries lifecycle callbacks without reordering events [26.77ms]
+(pass) visible Herdr teammates > fails a later delivery after the final lifecycle callback failure [23.53ms]
+(pass) visible Herdr teammates > defaults to RPC and does not call Herdr when omitted or false [11.09ms]
+(pass) visible Herdr teammates > rejects inherited context for an ephemeral main session [0.55ms]
+(pass) visible Herdr teammates > Herdr teammates use the parent Pi executable instead of PATH [173.55ms]
+(pass) visible Herdr teammates > passes the main session fork only to inheriting visible teammates [285.06ms]
+(pass) visible Herdr teammates > requires the main session Herdr tab before visible spawn [1.22ms]
+(pass) visible Herdr teammates > main reports a visible teammate before itself [165.20ms]
+1064 | 				startIdle: true, commonPrompt: "test",
+1065 | 				showOnHerdrPanes: true,
+1066 | 				teammates: [{ name: "reviewer", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" }],
+1067 | 			});
+1068 | 			const visibleStart = lines(fake.eventsPath).find((entry) => entry.type === "pi_start");
+1069 | 			assert.deepEqual(
+                 ^
+AssertionError: Expected visible spawn to return the Pi session identity. Got: {"teamName":"durable-visible-team","teamId":"fake-main-session-id-durable-visible-team","started":false,"teammates":[{"teammateName":"reviewer","teammateId":"reviewer-41333"}],"instruction":"Read the bundled ai-to-leader skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md and the bundled ai-to-delegated skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md in full before continuing, then follow their instructions.\n\nThese teammates are idle. Use team_send_message when you want them to start, with the instructions they need."}
++ actual - expected
+
++ undefined
+- {
+-   reviewer: {
+-     sessionFile: '/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-herdr-test-aGxUvc/sessions/reviewer-41333.jsonl',
+-     sessionId: 'reviewer-41333'
+-   }
+- }
+
+ generatedMessage: false,
+     actual: undefined,
+   expected: {
+  reviewer: [Object ...],
+},
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:1069:11
+      at processTicksAndRejections (native:7:39)
+(fail) visible Herdr teammates > persists visible teammates and resumes them through RPC by default [159.79ms]
+1095 | 				teamName: teamName,
+1096 | 				startIdle: true, commonPrompt: "test",
+1097 | 				showOnHerdrPanes: true,
+1098 | 				teammates: [{ name: "reviewer", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" }],
+1099 | 			});
+1100 | 			const sessions = spawnResult.details?.sessions as JsonRecord;
+                                                ^
+TypeError: undefined is not an object (evaluating '((await originHost.execute("team_spawn", {
+        teamName: "visible-resume-team",
+        startIdle: !0,
+        commonPrompt: "test",
+        showOnHerdrPanes: !0,
+        teammates: [{ name: "reviewer", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" }]
+      })).details?.sessions).reviewer')
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:1100:42)
+(fail) visible Herdr teammates > resumes a persisted session in visible panes only when explicitly requested [162.48ms]
+(pass) visible Herdr teammates > starts a ready visible teammate, forwards delivery events, and closes the exact pane [204.01ms]
+(pass) visible Herdr teammates > treats an externally closed pane as already closed during team shutdown [161.25ms]
+(pass) visible Herdr teammates > closes a pane when visible-child readiness fails [164.29ms]
+(pass) visible Herdr teammates > rolls back already-created panes after a later Herdr start fails [199.88ms]
+
+test/session-ownership.test.ts:
+(pass) teammate creation schemas > accept opt-in team oversight and default it to false [0.67ms]
+(pass) recursive team oversight > an opted-in teammate receives parent-team tools and manager tools [4.60ms]
+(pass) recursive team oversight > a normal teammate does not receive the manager reminder tool [3.09ms]
+(pass) recursive team oversight > an overseeing teammate keeps its communication tools connected to its parent team [5.23ms]
+(pass) recursive team oversight > spawned teammates receive explicit capability values [132.80ms]
+(pass) team_log input schema > accepts only a non-empty kind list containing non-empty strings [0.66ms]
+277 | 			{ model: { provider: "anthropic", id: "claude-sonnet-4-6" } },
+278 | 		]);
+279 | 		const tool = host.tools.get("team_spawn");
+280 | 		assert.ok(tool);
+281 | 		const guidance = "You should probably use one of these user-scoped models: openai-codex/gpt-5.6-sol, anthropic/claude-sonnet-4-6.";
+282 | 		assert.match(tool.description, new RegExp(guidance.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+               ^
+AssertionError: The input did not match the regular expression /You should probably use one of these user-scoped models: openai-codex\/gpt-5\.6-sol, anthropic\/claude-sonnet-4-6\./. Input:
+
+'You are automatically part of the team as main. Do not include yourself in teammates. Use team_resume to continue an existing team, or team_add_teammates to grow one.'
+
+ generatedMessage: true,
+     actual: "You are automatically part of the team as main. Do not include yourself in teammates. Use team_resume to continue an existing team, or team_add_teammates to grow one.",
+   expected: /You should probably use one of these user-scoped models: openai-codex\/gpt-5\.6-sol, anthropic\/claude-sonnet-4-6\./,
+   operator: "match",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/session-ownership.test.ts:282:10
+(fail) team_log input schema > adds scoped models to team_spawn guidance [0.51ms]
+287 | 	test("adds environment-based model guidance when the scope is empty", async () => {
+288 | 		const host = new ExtensionHost();
+289 | 		const tool = host.tools.get("team_spawn");
+290 | 		assert.ok(tool);
+291 | 		const prose = `${tool.description} ${tool.promptSnippet ?? ""}`;
+292 | 		assert.match(prose, /PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL/);
+               ^
+AssertionError: The input did not match the regular expression /PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL/. Input:
+
+'You are automatically part of the team as main. Do not include yourself in teammates. Use team_resume to continue an existing team, or team_add_teammates to grow one. Spawn a versatile team of agents.'
+
+ generatedMessage: true,
+     actual: "You are automatically part of the team as main. Do not include yourself in teammates. Use team_resume to continue an existing team, or team_add_teammates to grow one. Spawn a versatile team of agents.",
+   expected: /PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL/,
+   operator: "match",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/session-ownership.test.ts:292:10
+(fail) team_log input schema > adds environment-based model guidance when the scope is empty [0.25ms]
+296 | 
+297 | 	test("keeps showOnHerdrPanes guidance only in the team_spawn description", async () => {
+298 | 		const host = new ExtensionHost();
+299 | 		const tool = host.tools.get("team_spawn");
+300 | 		assert.ok(tool);
+301 | 		assert.match(tool.description, /If the user is interested, set `showOnHerdrPanes` to run each teammate in a visible Herdr pane\./);
+               ^
+AssertionError: The input did not match the regular expression /If the user is interested, set `showOnHerdrPanes` to run each teammate in a visible Herdr pane\./. Input:
+
+'You are automatically part of the team as main. Do not include yourself in teammates. Use team_resume to continue an existing team, or team_add_teammates to grow one.'
+
+ generatedMessage: true,
+     actual: "You are automatically part of the team as main. Do not include yourself in teammates. Use team_resume to continue an existing team, or team_add_teammates to grow one.",
+   expected: /If the user is interested, set `showOnHerdrPanes` to run each teammate in a visible Herdr pane\./,
+   operator: "match",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/session-ownership.test.ts:301:10
+(fail) team_log input schema > keeps showOnHerdrPanes guidance only in the team_spawn description [0.25ms]
+(pass) schedule_reminder > returns before waking the manager once with its custom message [201.07ms]
+(pass) schedule_reminder > accepts only a positive delay within the single-timer range [0.63ms]
+586 | 		const host = new ExtensionHost();
+587 | 		const tool = host.tools.get("schedule_reminder");
+588 | 		assert.ok(tool, "Expected managers to receive schedule_reminder guidance.");
+589 | 		const guidance = `${tool.description} ${tool.promptSnippet ?? ""}`;
+590 | 
+591 | 		assert.match(guidance, /wakes you with a custom message/, "Expected the guidance to explain the wake-up behavior.");
+               ^
+AssertionError: Expected the guidance to explain the wake-up behavior.
+ generatedMessage: false,
+     actual: "Set a one-shot reminder for yourself. Use it when work needs a later check. For periodic checks, schedule the next reminder after each check. ",
+   expected: /wakes you with a custom message/,
+   operator: "match",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/session-ownership.test.ts:591:10
+(fail) schedule_reminder > guides the manager to offer reminders as an unattended team safety net [0.48ms]
+(pass) schedule_reminder > renders a compact reminder instead of raw result JSON [2.58ms]
+(pass) schedule_reminder > cancels a pending reminder when its session shuts down [203.00ms]
+643 | 				startIdle: true, commonPrompt: "Skill guidance test.",
+644 | 				teammates: [],
+645 | 			});
+646 | 			const content = JSON.parse(result.content[0]!.text) as JsonRecord;
+647 | 
+648 | 			assert.equal(result.details?.instruction, bundledSkillsInstruction);
+                ^
+AssertionError: Expected values to be strictly equal:
++ actual - expected
+
++ 'Read the bundled ai-to-leader skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md and the bundled ai-to-delegated skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md in full before continuing, then follow their instructions.\n' +
++   '\n' +
++   'These teammates are idle. Use team_send_message when you want them to start, with the instructions they need.'
+- 'Read the bundled ai-to-leader skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md and the bundled ai-to-delegated skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md in full before continuing, then follow their instructions.'
+
+ generatedMessage: true,
+     actual: "Read the bundled ai-to-leader skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md and the bundled ai-to-delegated skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md in full before continuing, then follow their instructions.\n\nThese teammates are idle. Use team_send_message when you want them to start, with the instructions they need.",
+   expected: "Read the bundled ai-to-leader skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md and the bundled ai-to-delegated skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md in full before continuing, then follow their instructions.",
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/session-ownership.test.ts:648:11
+      at processTicksAndRejections (native:7:39)
+(fail) bundled skill guidance > team_spawn returns the skill instruction to main [15.71ms]
+(pass) team ownership across in-process AgentSessions > retains the full outgoing message in the team log [69.40ms]
+(pass) team ownership across in-process AgentSessions > the session roster keeps teammate colors consistent across tool renderers [87.57ms]
+724 | 
+725 | 			let status: { team: string } | undefined;
+726 | 			await assert.doesNotReject(async () => {
+727 | 				status = await owner.execute<{ team: string }>("team_status", { team });
+728 | 			}, "Expected a foreign AgentSession shutdown to leave the owner's team available.");
+729 | 			assert.equal(status?.team, team, `Expected owner to retain ${JSON.stringify(team)} after the foreign session shut down.`);
+                ^
+AssertionError: Expected owner to retain "shutdown-owner-team" after the foreign session shut down.
++ actual - expected
+
++ undefined
+- 'shutdown-owner-team'
+
+ generatedMessage: false,
+     actual: undefined,
+   expected: "shutdown-owner-team",
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/session-ownership.test.ts:729:11
+      at processTicksAndRejections (native:7:39)
+(fail) team ownership across in-process AgentSessions > shutting down another session leaves the owner's team available [5.16ms]
+740 | 		try {
+741 | 			await spawnEmptyTeam(owner, team);
+742 | 			const ownerStatus = await owner.execute<{ teams: Record<string, JsonRecord> }>("team_status", {});
+743 | 			const foreignStatus = await foreignSession.execute<{ teams: Record<string, JsonRecord> }>("team_status", {});
+744 | 
+745 | 			assert.deepEqual(
+                ^
+AssertionError: Expected each AgentSession to see only teams created through its own extension instance.
++ actual - expected
+
+  {
+    foreign: [],
+    owner: [
++     '0'
+-     'status-owner-team'
+    ]
+  }
+
+ generatedMessage: false,
+     actual: {
+  owner: [ "0" ],
+  foreign: [],
+},
+   expected: {
+  owner: [ "status-owner-team" ],
+  foreign: [],
+},
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/session-ownership.test.ts:745:11
+      at processTicksAndRejections (native:7:39)
+(fail) team ownership across in-process AgentSessions > a session lists only teams it owns [2.94ms]
+767 | 				/Unknown team/,
+768 | 				"Expected team_shutdown to reject a team owned by another AgentSession.",
+769 | 			);
+770 | 
+771 | 			const status = await owner.execute<{ team: string }>("team_status", { team });
+772 | 			assert.equal(status.team, team, `Expected rejected foreign shutdown to leave ${JSON.stringify(team)} available to its owner.`);
+                ^
+AssertionError: Expected rejected foreign shutdown to leave "explicit-owner-team" available to its owner.
++ actual - expected
+
++ undefined
+- 'explicit-owner-team'
+
+ generatedMessage: false,
+     actual: undefined,
+   expected: "explicit-owner-team",
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/session-ownership.test.ts:772:11
+      at processTicksAndRejections (native:7:39)
+(fail) team ownership across in-process AgentSessions > a session cannot explicitly shut down another session's team [4.43ms]
+(pass) team ownership across in-process AgentSessions > send_main_message callbacks are delivered to the AgentSession that owns the team [134.29ms]
+(pass) context-window reports > an overseeing teammate reports itself when no descendant targets are given [3.86ms]
+(pass) context-window reports > a teammate reports its own context window with no arguments [0.17ms]
+(pass) context-window reports > main removes repeated self targets, preserves teammate order, then reports itself once [86.89ms]
+
+test/team-command.test.ts:
+(pass) /team > shows an empty state and excludes teams owned by another session [5.51ms]
+(pass) /team > opens the only team without a selection step [28.44ms]
+(pass) /team > selects a team before opening its overview when several teams exist [6.36ms]
+(pass) /team > wraps the team dashboard in an external border [1.09ms]
+(pass) /team > keeps fixed bordered regions and bounds statuses by latest update [0.79ms]
+(pass) /team > aligns status columns and right-aligns relative timestamps of different widths [0.94ms]
+(pass) /team > middle-truncates status, message, and team-log rows [1.19ms]
+(pass) /team > reads fresh team data on every live render [0.42ms]
+(pass) /team > opens a team that appears while the empty overlay is open [0.22ms]
+(pass) /team > shows the selector when several teams appear while the empty overlay is open [0.22ms]
+(pass) /team > falls back to the empty state when the viewed team vanishes [0.22ms]
+(pass) /team > marks the messages widget focused by default and offers widget navigation [0.20ms]
+(pass) /team > moves widget focus with Up and Down, clamped at both ends [0.54ms]
+(pass) /team > zooms the messages widget with Enter and returns to the dashboard with Esc [0.73ms]
+(pass) /team > zooms the team log widget and reaches entries beyond the dashboard cap [2.50ms]
+(pass) /team > zoomed log draws from the full retained log, not a fixed entry cap [6.52ms]
+(pass) /team > honors rebound selection keys for widget focus [0.37ms]
+(pass) /team > zoomed views show a breadcrumb, keep the widget highlighted, and spell out the way back [0.30ms]
+(pass) /team > drops the zoomed view when the viewed team vanishes [0.27ms]
+(pass) /team > shows the newest fitting messages and logs chronologically without scrolling [0.92ms]
+
+test/preflight-models.test.ts:
+(pass) formatModelReference > formats a canonical provider/model id [1.09ms]
+(pass) formatScopedModelGuidance > explains how to choose when the session has no scoped models [0.03ms]
+(pass) formatScopedModelGuidance > lists every scoped model as optional guidance [0.01ms]
+(pass) validateTeammateModels > accepts an available model that is outside the scoped guidance [0.23ms]
+(pass) validateTeammateModels > rejects a model absent from all available models [0.05ms]
+
+test/stderr-lifecycle.test.ts:
+(skip) RPC stderr and conversation lifetime > keeps stderr previews and the same Pi conversation across follow-up turns
+
+test/team-registry.test.ts:
+354 | 		const result = await host.execute("team_spawn", {
+355 | 			teamName: "isolated-team",
+356 | 			startIdle: true, commonPrompt: "Ignore unrelated team extensions.",
+357 | 			teammates: [{ name: "conflict-sensitive", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+358 | 		});
+359 | 		assert.equal(result.details?.accepted, true, `Expected teammate startup to ignore conflicting discovered extensions. Got: ${JSON.stringify(result.details)}`);
+               ^
+AssertionError: Expected teammate startup to ignore conflicting discovered extensions. Got: {"teamName":"isolated-team","teamId":"origin-main-session-id-isolated-team","started":false,"teammates":[{"teammateName":"conflict-sensitive","teammateId":"conflict-sensitive-1"}],"instruction":"Read the bundled ai-to-leader skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md and the bundled ai-to-delegated skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md in full before continuing, then follow their instructions.\n\nThese teammates are idle. Use team_send_message when you want them to start, with the instructions they need."}
++ actual - expected
+
++ undefined
+- true
+
+ generatedMessage: false,
+     actual: undefined,
+   expected: true,
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:359:10
+      at processTicksAndRejections (native:7:39)
+(fail) team_spawn isolates teammates from conflicting discovered team extensions [361.13ms]
+385 | 			teamName: "identity-team",
+386 | 			startIdle: true, commonPrompt: "Expose durable session identities.",
+387 | 			teammates: [{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low", canManageOwnTeams: true }],
+388 | 		});
+389 | 		const invocation = readFakePiInvocations(temporaryDirectory)[0];
+390 | 		assert.deepEqual(
+               ^
+AssertionError: Expected team_spawn to return the reported Pi session identity. Got: {"teamName":"identity-team","teamId":"origin-main-session-id-identity-team","started":false,"teammates":[{"teammateName":"persisted","teammateId":"persisted-1"}],"instruction":"Read the bundled ai-to-leader skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md and the bundled ai-to-delegated skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md in full before continuing, then follow their instructions.\n\nThese teammates are idle. Use team_send_message when you want them to start, with the instructions they need."}
++ actual - expected
+
++ undefined
+- {
+-   persisted: {
+-     sessionFile: '/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-spawn-identity-test-25lG60/sessions/persisted-1.jsonl',
+-     sessionId: 'persisted-1'
+-   }
+- }
+
+ generatedMessage: false,
+     actual: undefined,
+   expected: {
+  persisted: [Object ...],
+},
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:390:10
+      at processTicksAndRejections (native:7:39)
+(fail) team_spawn returns each durable Pi session identity [354.29ms]
+(pass) team_spawn cannot overwrite a dormant team attachment [351.40ms]
+476 | 			const host = new ExtensionHost(teamExtension, makeContext(sessionId, projectDirectory));
+477 | 			hosts.push(host);
+478 | 			await host.start();
+479 | 			await host.execute("team_spawn", { teamName: teamName, startIdle: true, commonPrompt: sessionId, teammates: [] });
+480 | 			const result = await host.execute("team_status", { team: `${sessionId}-${teamName}` });
+481 | 			assert.equal(result.details?.team, teamName, `Expected ${sessionId} to address its live team by canonical ID.`);
+                ^
+AssertionError: Expected first-main to address its live team by canonical ID.
++ actual - expected
+
++ undefined
+- 'shared-name'
+
+ generatedMessage: false,
+     actual: undefined,
+   expected: "shared-name",
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:481:11
+      at processTicksAndRejections (native:7:39)
+(fail) canonical team IDs distinguish live teams with the same display name [6.52ms]
+(pass) team_resume rejects an ambiguous team name and asks for the persistent team ID [10.77ms]
+566 | 			else process.env[name] = value;
+567 | 		}
+568 | 
+569 | 		await overseer.execute("team_spawn", { teamName: "owned-team", startIdle: true, commonPrompt: "Owned scope.", teammates: [] });
+570 | 		const listed = await overseer.execute("team_list", {});
+571 | 		assert.deepEqual(
+               ^
+AssertionError: Expected the overseeing teammate to discover only its own teams. Got: {"teams":[{"teamName":"owned-team","teamId":"lead-session-owned-team","state":"active","leaseState":"claimed","teammates":[],"createdAt":"2026-09-13T20:33:37.611Z","updatedAt":"2026-09-13T20:33:37.611Z"}]}
++ actual - expected
+
+  [
++   undefined
+-   'lead-session-owned-team'
+  ]
+
+ generatedMessage: false,
+     actual: [ undefined ],
+   expected: [ "lead-session-owned-team" ],
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:571:10
+      at processTicksAndRejections (native:7:39)
+(fail) an overseeing teammate can discover and resume only teams it created [16.73ms]
+(pass) team_shutdown waits for every RPC runtime before releasing ownership [716.30ms]
+669 | 		);
+670 | 		const listed = await host.execute("team_list", {});
+671 | 		const descendantTeam = (listed.details?.teams as JsonRecord[] | undefined)?.find(
+672 | 			(team) => team.id === "recursive-slow-stop-1-descendant-team",
+673 | 		);
+674 | 		assert.deepEqual(
+               ^
+AssertionError: Expected recursive shutdown to leave the descendant attachment dormant and unclaimed. Got: undefined
++ actual - expected
+
+  {
++   leaseState: undefined,
++   memberLive: undefined,
++   state: undefined
+-   leaseState: 'unclaimed',
+-   memberLive: false,
+-   state: 'dormant'
+  }
+
+ generatedMessage: false,
+     actual: {
+  state: undefined,
+  leaseState: undefined,
+  memberLive: undefined,
+},
+   expected: {
+  state: "dormant",
+  leaseState: "unclaimed",
+  memberLive: false,
+},
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:674:10
+      at processTicksAndRejections (native:7:39)
+(fail) team_shutdown gives an overseeing teammate time to stop its own teams [2264.69ms]
+755 | 			teammates: [
+756 | 				{ name: "security", systemPrompt: "Review security.", model: "fake/fake-model", thinking: "high" },
+757 | 				{ name: "operations", systemPrompt: "Review operations.", model: "fake/fake-model", thinking: "medium" },
+758 | 			],
+759 | 		});
+760 | 		assert.deepEqual(
+               ^
+AssertionError: Expected team_add_teammates to report both new teammates in request order. Got: {"teamName":"growing-team","teamId":"origin-main-session-id-growing-team","started":false,"teammates":[{"teammateName":"security","teammateId":"security-1"},{"teammateName":"operations","teammateId":"operations-1"}],"instruction":"Read the bundled ai-to-leader skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-leader/SKILL.md and the bundled ai-to-delegated skill at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/skills/ai-to-delegated/SKILL.md in full before continuing, then follow their instructions.\n\nThese teammates are idle. Use team_send_message when you want them to start, with the instructions they need.","status":{"main":{"word":"available","phrase":"Main agent","updated":"2026-09-13T20:33:40.605Z"},"operations":{"word":"idle","phrase":"Spawned","updated":"2026-09-13T20:33:41.628Z"},"original":{"word":"idle","phrase":"Spawned","updated":"2026-09-13T20:33:40.964Z"},"security":{"word":"idle","phrase":"Spawned","updated":"2026-09-13T20:33:41.299Z"}}}
++ actual - expected
+
++ undefined
+- [
+-   'security',
+-   'operations'
+- ]
+
+ generatedMessage: false,
+     actual: undefined,
+   expected: [ "security", "operations" ],
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:760:10
+      at processTicksAndRejections (native:7:39)
+(fail) team_add_teammates accepts a team name and grows the owned running team [1049.69ms]
+864 | 			fs.existsSync(exitsPath),
+865 | 			true,
+866 | 			"Expected team_add_teammates rollback to return only after the newly started slow process exited.",
+867 | 		);
+868 | 		const listed = await host.execute("team_list", {});
+869 | 		assert.deepEqual(
+               ^
+AssertionError: Expected rollback to remove only the requested additions. Got: {"teams":[{"teamName":"add-rollback-team","teamId":"origin-main-session-id-add-rollback-team","state":"active","leaseState":"claimed","teammates":[{"name":"persisted","systemPrompt":"Wait.","model":"fake/fake-model","thinking":"low","inheritMainContext":false,"showOnHerdrPane":false,"live":true,"canManageOwnTeams":false,"teammateId":"persisted-1","sessionFile":"/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-add-rollback-test-pmCu3k/sessions/persisted-1.jsonl"}],"createdAt":"2026-09-13T20:33:42.003Z","updatedAt":"2026-09-13T20:33:42.003Z"}]}
++ actual - expected
+
++ undefined
+- [
+-   'persisted'
+- ]
+
+ generatedMessage: false,
+     actual: undefined,
+   expected: [ "persisted" ],
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:869:10
+      at processTicksAndRejections (native:7:39)
+(fail) failed team_add_teammates waits for only its newly started processes to exit [1179.07ms]
+916 | 		hosts.push(resumingHost);
+917 | 		await resumingHost.start();
+918 | 		const dormantList = await resumingHost.execute("team_list", {});
+919 | 		const persistedBeforeResume = listedMember(dormantList, teamId, "persisted");
+920 | 		const untouchedBeforeResume = listedMember(dormantList, teamId, "untouched");
+921 | 		assert.equal(
+               ^
+AssertionError: Expected team_list to expose the persisted member session file. Got: {"teams":[{"teamName":"resume-team","teamId":"origin-main-session-id-resume-team","state":"dormant","leaseState":"unclaimed","teammates":[{"name":"persisted","systemPrompt":"Wait.","model":"fake/fake-model","thinking":"low","inheritMainContext":false,"showOnHerdrPane":false,"live":false,"canManageOwnTeams":true,"teammateId":"persisted-1","sessionFile":"/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-resume-test-B128Yk/sessions/persisted-1.jsonl"},{"name":"untouched","systemPrompt":"Wait.","model":"fake/fake-model","thinking":"low","inheritMainContext":false,"showOnHerdrPane":false,"live":false,"canManageOwnTeams":false,"teammateId":"untouched-1","sessionFile":"/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-resume-test-B128Yk/sessions/untouched-1.jsonl"}],"createdAt":"2026-09-13T20:33:43.516Z","updatedAt":"2026-09-13T20:33:43.529Z","shutdownAt":"2026-09-13T20:33:43.529Z","expiresAt":"2026-10-13T20:33:43.529Z"}]}
++ actual - expected
+
++ undefined
+- '/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-resume-test-B128Yk/sessions/persisted-1.jsonl'
+
+ generatedMessage: false,
+     actual: undefined,
+   expected: "/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-resume-test-B128Yk/sessions/persisted-1.jsonl",
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:921:10
+      at processTicksAndRejections (native:7:39)
+(fail) a later same-project session resumes selected and all stopped teammates without losing session identity [708.16ms]
+(pass) a failed selective resume leaves members that were already running alive [1368.92ms]
+1093 | 		const teamId = `origin-main-session-id-${teamName}`;
+1094 | 		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
+1095 | 		await host.start();
+1096 | 		await host.execute("team_spawn", { teamName: teamName, startIdle: true, commonPrompt: "List lifecycle.", teammates: [] });
+1097 | 		const activeTeam = listedTeam(await host.execute("team_list", {}), teamId);
+1098 | 		assert.deepEqual(
+                ^
+AssertionError: Expected team_list to expose active ownership without an expiry. Got: undefined
++ actual - expected
+
+  {
+    expiresAt: undefined,
++   leaseState: undefined,
++   state: undefined
+-   leaseState: 'claimed',
+-   state: 'active'
+  }
+
+ generatedMessage: false,
+     actual: {
+  state: undefined,
+  leaseState: undefined,
+  expiresAt: undefined,
+},
+   expected: {
+  state: "active",
+  leaseState: "claimed",
+  expiresAt: undefined,
+},
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:1098:10
+      at processTicksAndRejections (native:7:39)
+(fail) team_list reports the live lease and exact dormant expiry [6.49ms]
+1142 | 				{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+1143 | 				{ name: "untouched", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+1144 | 			],
+1145 | 		});
+1146 | 		const activeList = await originHost.execute("team_list", {});
+1147 | 		assert.deepEqual(
+                ^
+AssertionError: Expected spawned members to report live runtimes. Got: {"teams":[{"teamName":"listed-member-state-team","teamId":"origin-main-session-id-listed-member-state-team","state":"active","leaseState":"claimed","teammates":[{"name":"persisted","systemPrompt":"Wait.","model":"fake/fake-model","thinking":"low","inheritMainContext":false,"showOnHerdrPane":false,"live":true,"canManageOwnTeams":false,"teammateId":"persisted-1","sessionFile":"/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-list-member-state-test-ueF2NT/sessions/persisted-1.jsonl"},{"name":"untouched","systemPrompt":"Wait.","model":"fake/fake-model","thinking":"low","inheritMainContext":false,"showOnHerdrPane":false,"live":true,"canManageOwnTeams":false,"teammateId":"untouched-1","sessionFile":"/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-list-member-state-test-ueF2NT/sessions/untouched-1.jsonl"}],"createdAt":"2026-09-13T20:33:45.587Z","updatedAt":"2026-09-13T20:33:45.587Z"}]}
++ actual - expected
+
+  [
+    {
++     live: undefined,
+-     live: true,
+      name: 'persisted'
+    },
+    {
++     live: undefined,
+-     live: true,
+      name: 'untouched'
+    }
+  ]
+
+ generatedMessage: false,
+     actual: [
+  [Object ...], [Object ...]
+],
+   expected: [
+  [Object ...], [Object ...]
+],
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:1147:10
+      at processTicksAndRejections (native:7:39)
+(fail) team_list reports each member's live runtime state [695.35ms]
+(pass) recovering a stale lease marks the abandoned active manifest dormant [7.12ms]
+(pass) stale lease reclamation cannot unlink a concurrent live lease [2.10ms]
+1316 | 			startIdle: true, commonPrompt: "Expiry public-interface test.",
+1317 | 			teammates: [{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+1318 | 		});
+1319 | 		const spawnedTeams = await host.execute("team_list", {});
+1320 | 		const reportedSessionFile = listedMember(spawnedTeams, dormantTeamId, "persisted")?.sessionFile;
+1321 | 		assert.equal(
+                ^
+AssertionError: Expected team_list to expose the teammate Pi session file. Got: {"teams":[{"teamName":"expiring-team","teamId":"origin-main-session-id-expiring-team","state":"active","leaseState":"claimed","teammates":[{"name":"persisted","systemPrompt":"Wait.","model":"fake/fake-model","thinking":"low","inheritMainContext":false,"showOnHerdrPane":false,"live":true,"canManageOwnTeams":false,"teammateId":"persisted-1","sessionFile":"/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-simple-team-expiry-test-5cL4Re/sessions/persisted-1.jsonl"}],"createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"}]}
++ actual - expected
+
++ 'undefined'
+- 'string'
+
+ generatedMessage: false,
+     actual: "undefined",
+   expected: "string",
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:1321:10
+      at processTicksAndRejections (native:7:39)
+(fail) an expired dormant team removes only registry files while an equally old active team remains [361.13ms]
+1418 | 		await originHost.execute("team_shutdown", { team: teamName });
+1419 | 
+1420 | 		discoveringHost = new ExtensionHost(teamExtension, makeContext("new-main-session-id", projectSymlink));
+1421 | 		await discoveringHost.start();
+1422 | 		const result = await discoveringHost.execute("team_list", {});
+1423 | 		assert.equal(
+                ^
+AssertionError: Expected the symlinked project path to discover the same team. Got: {"teams":[{"teamName":"canonical-project-team","teamId":"origin-main-session-id-canonical-project-team","state":"dormant","leaseState":"unclaimed","teammates":[],"createdAt":"2026-09-13T20:33:45.978Z","updatedAt":"2026-09-13T20:33:45.978Z","shutdownAt":"2026-09-13T20:33:45.978Z","expiresAt":"2026-10-13T20:33:45.978Z"}]}
++ actual - expected
+
++ undefined
+- 'origin-main-session-id-canonical-project-team'
+
+ generatedMessage: false,
+     actual: undefined,
+   expected: "origin-main-session-id-canonical-project-team",
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:1423:10
+      at processTicksAndRejections (native:7:39)
+(fail) team discovery treats a symlink as the same project directory [6.98ms]
+1465 | 		const listedTeams = Array.isArray(rawTeams)
+1466 | 			? rawTeams.filter((team): team is JsonRecord => typeof team === "object" && team !== null)
+1467 | 			: [];
+1468 | 		const dormantTeam = listedTeams.find((team) => team.id === teamId);
+1469 | 
+1470 | 		assert.deepEqual(
+                ^
+AssertionError: Expected team_list in a new same-project session to discover the dormant team. Got: {"teams":[{"teamName":"dormant-discovery-team","teamId":"origin-main-session-id-dormant-discovery-team","state":"dormant","leaseState":"unclaimed","teammates":[],"createdAt":"2026-09-13T20:33:45.982Z","updatedAt":"2026-09-13T20:33:45.982Z","shutdownAt":"2026-09-13T20:33:45.982Z","expiresAt":"2026-10-13T20:33:45.982Z"}]}
++ actual - expected
+
++ undefined
+- {
+-   id: 'origin-main-session-id-dormant-discovery-team',
+-   state: 'dormant'
+- }
+
+ generatedMessage: false,
+     actual: undefined,
+   expected: {
+  id: "origin-main-session-id-dormant-discovery-team",
+  state: "dormant",
+},
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:1470:10
+      at processTicksAndRejections (native:7:39)
+(fail) a new extension session discovers a shut-down team in the same project [4.37ms]
+
+test/teamlog.test.ts:
+(pass) preview > returns short strings unchanged [0.01ms]
+(pass) preview > collapses and trims internal whitespace [0.01ms]
+(pass) preview > truncates strings past the default 160-character limit and reports the original length [0.02ms]
+(pass) preview > respects a custom maxLength
+(pass) preview > stringifies non-string values as compact JSON [0.02ms]
+(pass) preview > falls back to String() instead of throwing on unstringifiable values [1.50ms]
+(pass) timeOfDay > formats just the second-level time from an epoch [0.05ms]
+(pass) relativeTime > shows just now under one minute [0.02ms]
+(pass) relativeTime > shows whole minutes under one hour [0.02ms]
+(pass) relativeTime > shows hours with zero-padded minutes under four hours [0.01ms]
+(pass) relativeTime > shows whole hours under one day
+(pass) relativeTime > shows one day with remainder hours under two days [0.01ms]
+(pass) relativeTime > shows whole days under one week
+(pass) relativeTime > shows weeks under one month
+(pass) relativeTime > shows months from thirty days on
+(pass) futureTime > scales from minutes through weeks [0.03ms]
+(pass) appendTeamLog > assigns incrementing sequence numbers and returns the created entry [0.33ms]
+(pass) appendTeamLog > stamps an ISO timestamp and epochMilliseconds from the provided now [0.03ms]
+(pass) appendTeamLog > caps retained entries at 1000 and drops the oldest [0.45ms]
+(pass) filterTeamLog > filters by teammate [0.03ms]
+(pass) filterTeamLog > returns zero rows for an unknown teammate rather than throwing
+(pass) filterTeamLog > filters by kind [0.02ms]
+(pass) filterTeamLog > filters by any requested kind [0.02ms]
+(pass) filterTeamLog > returns zero rows for an unknown kind rather than throwing
+(pass) filterTeamLog > search matches summary, teammate, kind, and stringified details case-insensitively [0.07ms]
+(pass) filterTeamLog > filters by since, keeping entries at or after the threshold [0.03ms]
+(pass) filterTeamLog > throws on an unparseable since value [0.02ms]
+(pass) filterTeamLog > combines filters with AND semantics [0.02ms]
+(pass) pageTeamLog > defaults to the latest 20 entries when limit is omitted [0.05ms]
+(pass) pageTeamLog > keeps page entries in chronological (oldest-to-newest) order [0.02ms]
+(pass) pageTeamLog > clamps limit above 100 down to the 100 max [0.06ms]
+(pass) pageTeamLog > floors a fractional limit [0.01ms]
+(pass) pageTeamLog > rejects a limit below 1 [0.03ms]
+(pass) pageTeamLog > rejects a non-finite limit [0.02ms]
+(pass) pageTeamLog > totalMatched reflects the full input set regardless of cursor position [0.05ms]
+(pass) pageTeamLog > nextCursor points to the oldest sequence in the page when older entries remain [0.02ms]
+(pass) pageTeamLog > omits nextCursor when the page reaches the oldest entry [0.25ms]
+(pass) pageTeamLog > walks backward through every page via nextCursor until exhausted [0.07ms]
+(pass) pageTeamLog > rejects a malformed cursor [0.02ms]
+(pass) renderTeamLogPage > renders a header with team name and matched/returned counts [0.04ms]
+(pass) renderTeamLogPage > includes a column header naming every field [0.03ms]
+(pass) renderTeamLogPage > renders one row per entry with zero-padded sequence and defaults teammate to main when absent [0.04ms]
+(pass) renderTeamLogPage > footer reports counts and appends nextCursor when present [0.05ms]
+(pass) renderTeamLogPage > footer omits nextCursor when there is no older page [0.03ms]
+(pass) renderTeamLogPage > renders without crashing on an empty page [0.01ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > maps agent_start to an agent_start entry [0.02ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > maps agent_end to an agent_end entry and mentions the message count when present [0.02ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > maps agent_end without a messages array [0.01ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > maps tool_execution_start to a tool_start entry carrying tool name and args [0.02ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > maps a successful tool_execution_end to a tool_end entry [0.02ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > maps a failed tool_execution_end and surfaces the failure in the summary [0.02ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > skips tool frames for the team child tools, whose semantic entries carry the story [0.02ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > maps extension_error to an error entry [0.01ms]
+(pass) normalizeChildEvent (child agent/tool lifecycle normalization) > drops noisy event types that should not be logged in MVP [0.02ms]
+
+test/system-prompt.test.ts:
+(pass) composeSystemPrompt participant list > names the same full participant list for every teammate [0.04ms]
+(pass) composeSystemPrompt participant list > instructs every teammate to read the bundled ai-to-leader and ai-to-delegated skills [0.02ms]
+(pass) composeSystemPrompt acknowledgement instructions (review issue 2) > tells the teammate to ack via team_status on wake up, before doing substantive work [0.07ms]
+(pass) composeSystemPrompt acknowledgement instructions (review issue 2) > tells the teammate to ack via team_status before acting on an incoming message [0.03ms]
+(pass) composeSystemPrompt proactive handoff instruction (review issue 3) > tells the teammate to notify the blocking party before setting a waiting status [0.02ms]
+(pass) explains recursive-team tools and their ownership boundary to an overseeing teammate [0.02ms]
+(pass) does not claim that the current main observed work before a resume [0.01ms]
+
+test/real-pi.test.ts:
+(skip) real pi child runtime > an RPC-mode child registers and a delivered message triggers a turn
+
+test/idle-context.test.ts:
+(skip) idle conversation context > records instructions without a turn and includes them once in the next model request
+
+test/render.test.ts:
+(pass) formatCharCount > formats small, thousands, and ten-thousands counts [0.02ms]
+(pass) statusWordToken > maps known status words to semantic tokens [0.02ms]
+(pass) statusWordToken > gives free-form activity words the accent token
+(pass) teamStatusLines > renders a stat-line header and one tree row per member [0.11ms]
+(pass) teamStatusLines > aligns the status word column across rows [0.04ms]
+(pass) teamStatusLines > colors each status word by its semantic token [0.04ms]
+(pass) teamStatusLines > uses the Team Log actor colors for member names [0.04ms]
+(pass) teamStatusLines > renders ISO updated timestamps as relative time and passes legacy strings through [0.03ms]
+203 | 	return [headerLine(theme, "Team Status", theme.fg("accent", team), stats), ...memberRows(theme, statuses, roster)];
+204 | }
+205 | 
+206 | export function allTeamsStatusLines(theme: ThemeLike, teams: Array<{ teamName: string; status: Record<string, TeamStatusView> }>, roster: string[] = []): TeamLine[] {
+207 | 	const lines: TeamLine[] = [headerLine(theme, "Team Status", theme.fg("muted", plural(teams.length, "team")))];
+208 | 	teams.forEach((team, index) => {
+             ^
+TypeError: teams.forEach is not a function. (In 'teams.forEach((team, index) => {
+    const branch = index === teams.length - 1 ? "\u2514" : "\u251C";
+    lines.push(`${treeConnector(theme, branch)}${theme.fg("accent", team.teamName)}`);
+    lines.push(...memberRows(theme, team.status, roster, treeStem(theme, branch)));
+  })', 'teams.forEach' is undefined)
+      at allTeamsStatusLines (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/render.ts:208:8)
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/render.test.ts:130:17)
+(fail) allTeamsStatusLines > groups member rows under accent team rows [0.12ms]
+203 | 	return [headerLine(theme, "Team Status", theme.fg("accent", team), stats), ...memberRows(theme, statuses, roster)];
+204 | }
+205 | 
+206 | export function allTeamsStatusLines(theme: ThemeLike, teams: Array<{ teamName: string; status: Record<string, TeamStatusView> }>, roster: string[] = []): TeamLine[] {
+207 | 	const lines: TeamLine[] = [headerLine(theme, "Team Status", theme.fg("muted", plural(teams.length, "team")))];
+208 | 	teams.forEach((team, index) => {
+             ^
+TypeError: teams.forEach is not a function. (In 'teams.forEach((team, index) => {
+    const branch = index === teams.length - 1 ? "\u2514" : "\u251C";
+    lines.push(`${treeConnector(theme, branch)}${theme.fg("accent", team.teamName)}`);
+    lines.push(...memberRows(theme, team.status, roster, treeStem(theme, branch)));
+  })', 'teams.forEach' is undefined)
+      at allTeamsStatusLines (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/render.ts:208:8)
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/render.test.ts:142:17)
+(fail) allTeamsStatusLines > keeps member colors across teams [0.06ms]
+(pass) teamSpawnLines > lists each teammate with model and thinking level [0.10ms]
+(pass) teamSpawnLines > colors teammate names from the session roster [0.02ms]
+(pass) teamAddLines > summarizes growth and lists each added teammate like Team Spawn [0.05ms]
+(pass) teamAddLines > colors added teammate names from the session roster [0.02ms]
+(pass) teamResumeLines > distinguishes restored history from empty restarts [0.10ms]
+(pass) teamResumeLines > a full resume drops the of-count [0.02ms]
+(pass) teamResumeLines > shows a muted row when nothing was stopped [0.01ms]
+(pass) teamListLines > renders one row per team with relative updated and future expires timestamps [0.17ms]
+(pass) teamListLines > colors the state word, flags a stale lease, and marks overseers [0.04ms]
+(pass) teamListLines > dims stopped members only in active teams [0.03ms]
+(pass) teamListLines > shows an empty state when no teams exist [0.02ms]
+(pass) teamSendLines > renders arrow, recipients, and size in the header [0.08ms]
+(pass) teamSendLines > shows the interrupt stat only when set [0.02ms]
+(pass) teamSendLines > colors each recipient from the session roster [0.03ms]
+(pass) teamSendLines > collapsed body shows a quote-barred preview with an expand hint [0.02ms]
+(pass) teamSendLines > expanded body shows every line without a hint [0.02ms]
+(pass) teamShutdownLines > summarizes the stop and lists teammate names [0.04ms]
+(pass) teamShutdownLines > colors stopped teammate names from the session roster [0.02ms]
+(pass) actorHueToken > main is accent; teammates cycle hue tokens by roster order [0.02ms]
+(pass) actorHueToken > actors outside the roster fall back to plain text
+(pass) teamLogLines > folds a tool pair into one action row with duration and salient arg [0.37ms]
+(pass) teamLogLines > a successful tool colors the chevron with the success token [0.05ms]
+(pass) teamLogLines > a failed tool colors the chevron red and leads details with the exit code [0.10ms]
+(pass) teamLogLines > a failure without an exit code falls back to the first result line [0.06ms]
+(pass) teamLogLines > an unfinished tool stays neutral with an ellipsis in the duration slot [0.03ms]
+(pass) teamLogLines > groups consecutive send frames by sender and message into one message row [0.08ms]
+(pass) teamLogLines > recipients keep their owner's hue inside details [0.04ms]
+(pass) teamLogLines > deliver and ack frames never render in the collapsed view [0.05ms]
+(pass) teamLogLines > interrupt sends carry a warning chip [0.03ms]
+(pass) teamLogLines > a send_main_message report renders as a message to main [0.03ms]
+(pass) teamLogLines > status rows quote word and phrase from details [0.03ms]
+(pass) teamLogLines > a turn opens with an ellipsis and closes in place with duration and message count [0.06ms]
+(pass) teamLogLines > spawn rows carry model and thinking from details [0.03ms]
+(pass) teamLogLines > a repeated actor dims [0.03ms]
+(pass) teamLogLines > header shows action and event counts, humanizes since, and keeps the cursor footer [0.05ms]
+(pass) teamLogLines > colors a teammate filter from the session roster [0.03ms]
+(pass) teamLogLines > renders an empty state row when nothing matched [0.02ms]
+(pass) teamLogLines > log rows carry no tree connectors [0.24ms]
+(pass) teamLogLines > opens with a day divider when the first entry is not from today [0.06ms]
+(pass) teamLogLines > inserts a day divider between rows when the local day changes [0.05ms]
+(pass) teamLogLines > a same-day log renders no day divider [0.03ms]
+(pass) teamMessageLines > renders a speech header and quote-barred full body [0.04ms]
+(pass) teamMessageLines > renders an ISO sentAt as relative time [0.03ms]
+(pass) renderTeamMessage > returns undefined without well-formed details so the default renderer takes over [0.04ms]
+(pass) renderTeamMessage > returns a component for well-formed details [0.32ms]
+(pass) renderTeamMessage > colors the sender from the session roster [2.29ms]
+(pass) renderTeamToolResult > renders the call header with the error in red on failure [0.22ms]
+652 | 			{ args: { message: "Please review." } },
+653 | 			identityMarkdownTheme,
+654 | 			["implementer", "reviewer"],
+655 | 		);
+656 | 		const header = component.render(200)[0];
+657 | 		expect(header).toContain("«mdCode:implementer»");
+                       ^
+error: expect(received).toContain(expected)
+
+Expected to contain: "«mdCode:implementer»"
+Received: "«toolBullet:● »«text:Team Send »«muted:→ »«dim: · »«muted:14 chars»"
+
+      at <anonymous> (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/render.test.ts:657:18)
+(fail) renderTeamToolResult > colors Team Send recipients when rendering a Markdown body [0.25ms]
+(pass) renderTeamToolResult > right-aligns Team Status timestamps and truncates phrases to the remaining width [0.32ms]
+(pass) renderTeamToolResult > translates Team Resume result details into restored and restarted rows [0.17ms]
+(pass) renderTeamToolResult > keeps a teammate color consistent across Team Status and Team Log [0.32ms]
+(pass) renderTeamToolCall > shows a static warning indicator only while the tool is pending [0.23ms]
+(pass) renderTeamToolCall > renders multiple Team Log kinds as one OR filter [0.13ms]
+(pass) renderTeamToolCall > colors a Team Log teammate filter from the session roster [0.09ms]
+(pass) TeamLines > clips each logical line to the render width when collapsed [0.29ms]
+(pass) TeamLines > wraps logical lines when expanded [0.46ms]
+(pass) TeamLines > re-applies the quote-bar prefix to wrapped continuation lines [0.20ms]
+(pass) markdown views in a narrow terminal > a teammate message header is clipped instead of overflowing [0.12ms]
+(pass) markdown views in a narrow terminal > a team send header is clipped instead of overflowing [1.18ms]
+(pass) markdown views in a narrow terminal > team spawn call and result fit a nine-column render width [0.26ms]
+(pass) markdown views in a narrow terminal > shared prefixed rows and message bodies fit a nine-column render width [0.20ms]
+(pass) markdown views in a narrow terminal > keeps the composed in-progress Team Spawn row within a nine-column render width [1.95ms]
+
+3 tests skipped:
+(skip) RPC stderr and conversation lifetime > keeps stderr previews and the same Pi conversation across follow-up turns
+(skip) real pi child runtime > an RPC-mode child registers and a delivered message triggers a turn
+(skip) idle conversation context > records instructions without a turn and includes them once in the next model request
+
+
+27 tests failed:
+(fail) unified child runtime > team_spawn takes an RPC teammate's identity from registration, not a state query [75.71ms]
+(fail) visible Herdr teammates > persists visible teammates and resumes them through RPC by default [159.79ms]
+(fail) visible Herdr teammates > resumes a persisted session in visible panes only when explicitly requested [162.48ms]
+(fail) team_log input schema > adds scoped models to team_spawn guidance [0.51ms]
+(fail) team_log input schema > adds environment-based model guidance when the scope is empty [0.25ms]
+(fail) team_log input schema > keeps showOnHerdrPanes guidance only in the team_spawn description [0.25ms]
+(fail) schedule_reminder > guides the manager to offer reminders as an unattended team safety net [0.48ms]
+(fail) bundled skill guidance > team_spawn returns the skill instruction to main [15.71ms]
+(fail) team ownership across in-process AgentSessions > shutting down another session leaves the owner's team available [5.16ms]
+(fail) team ownership across in-process AgentSessions > a session lists only teams it owns [2.94ms]
+(fail) team ownership across in-process AgentSessions > a session cannot explicitly shut down another session's team [4.43ms]
+(fail) team_spawn isolates teammates from conflicting discovered team extensions [361.13ms]
+(fail) team_spawn returns each durable Pi session identity [354.29ms]
+(fail) canonical team IDs distinguish live teams with the same display name [6.52ms]
+(fail) an overseeing teammate can discover and resume only teams it created [16.73ms]
+(fail) team_shutdown gives an overseeing teammate time to stop its own teams [2264.69ms]
+(fail) team_add_teammates accepts a team name and grows the owned running team [1049.69ms]
+(fail) failed team_add_teammates waits for only its newly started processes to exit [1179.07ms]
+(fail) a later same-project session resumes selected and all stopped teammates without losing session identity [708.16ms]
+(fail) team_list reports the live lease and exact dormant expiry [6.49ms]
+(fail) team_list reports each member's live runtime state [695.35ms]
+(fail) an expired dormant team removes only registry files while an equally old active team remains [361.13ms]
+(fail) team discovery treats a symlink as the same project directory [6.98ms]
+(fail) a new extension session discovers a shut-down team in the same project [4.37ms]
+(fail) allTeamsStatusLines > groups member rows under accent team rows [0.12ms]
+(fail) allTeamsStatusLines > keeps member colors across teams [0.06ms]
+(fail) renderTeamToolResult > colors Team Send recipients when rendering a Markdown body [0.25ms]
+
+ 212 pass
+ 3 skip
+ 27 fail
+ 382 expect() calls
+Ran 242 tests across 11 files. [18.83s]

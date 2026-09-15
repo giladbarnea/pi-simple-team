@@ -1,0 +1,51 @@
+{
+  "verdict": "VERIFIED",
+  "toolCompletions": 17,
+  "expectedAmbiguousErrors": 1,
+  "unexpectedErrors": 0,
+  "teamIds": [
+    "01a0a12a-a5a5-743b-8cf4-8384fd464f75-first",
+    "01a0a12a-a5a5-743b-8cf4-8384fd464f75-second"
+  ],
+  "teammateIds": [
+    "01a0a12a-d2a0-767d-a8d2-30eab9bb87b6",
+    "01a0a12a-d2b3-72cd-b2fb-f6948a494ddb"
+  ],
+  "markers": {
+    "first.txt": "FIRST",
+    "second.txt": "SECOND"
+  },
+  "nativeTeammateWrites": [
+    {
+      "teammateId": "01a0a12a-d2a0-767d-a8d2-30eab9bb87b6",
+      "path": "/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-team-revision-smoke-77qetu4k/first.txt",
+      "content": "FIRST"
+    },
+    {
+      "teammateId": "01a0a12a-d2b3-72cd-b2fb-f6948a494ddb",
+      "path": "/var/folders/28/9x0yw2vs4bzd8s3p7pyfs1kc0000gn/T/pi-team-revision-smoke-77qetu4k/second.txt",
+      "content": "SECOND"
+    }
+  ],
+  "pagedTeamIds": [
+    "01a0a12a-a5a5-743b-8cf4-8384fd464f75-second",
+    "01a0a12a-a5a5-743b-8cf4-8384fd464f75-first"
+  ],
+  "resumeStarted": false,
+  "resumeAlreadyActive": [],
+  "addRoster": [
+    {
+      "name": "reviewer",
+      "teammateId": "01a0a12a-d2a0-767d-a8d2-30eab9bb87b6",
+      "live": true,
+      "active": false
+    },
+    {
+      "name": "helper",
+      "teammateId": "01a0a12b-7a80-70c9-9068-1419dc6fbc4f",
+      "live": true,
+      "active": false
+    }
+  ],
+  "allTeamsDormant": true
+}

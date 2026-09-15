@@ -1,0 +1,28 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+346 | 	test("startIdle leaves a ready team idle until an explicit message", async () => {
+347 | 		const fake = installFakeCommands();
+348 | 		const host = new ExtensionHost();
+349 | 		try {
+350 | 			await host.execute("team_spawn", { team: "idle-team", teamPrompt: "Wait.", startIdle: true, teammates: [{ name: "probe", prompt: "Wait.", model: "fake/fake-model" }] });
+351 | 			assert.equal(lines(fake.eventsPath).filter((entry) => entry.type === "delivery").length, 0, "startIdle must suppress all initial deliveries.");
+                ^
+AssertionError: startIdle must suppress all initial deliveries.
+
+1 !== 0
+
+ generatedMessage: false,
+     actual: 1,
+   expected: 0,
+   operator: "strictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:351:11
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > startIdle leaves a ready team idle until an explicit message [102.86ms]
+
+ 0 pass
+ 24 filtered out
+ 1 fail
+Ran 1 test across 1 file. [438.00ms]

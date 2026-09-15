@@ -1,0 +1,32 @@
+bun test v1.3.14 (0d9b296a)
+
+test/child-transport.test.ts:
+369 | 			const outcomes = await Promise.allSettled(["first-room", "second-room"].map((teamName) => host.execute("team_spawn", {
+370 | 				teamName, commonPrompt: "Wait.", startIdle: true,
+371 | 				teammates: [{ name: teamName, systemPrompt: "Wait.", model: "fake/fake-model" }],
+372 | 			})));
+373 | 			const failures = outcomes.flatMap((outcome) => outcome.status === "rejected" ? [String(outcome.reason)] : []);
+374 | 			assert.deepEqual(failures, [], "Concurrent spawns must both receive a usable parent delivery address.");
+                ^
+AssertionError: Concurrent spawns must both receive a usable parent delivery address.
++ actual - expected
+
++ [
++   'Error: second-room exited (code=1, signal=null)'
++ ]
+- []
+
+ generatedMessage: false,
+     actual: [ "Error: second-room exited (code=1, signal=null)" ],
+   expected: [],
+   operator: "deepStrictEqual",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/child-transport.test.ts:374:11
+      at processTicksAndRejections (native:7:39)
+(fail) unified child runtime > concurrent team creation gives both teams a registered delivery runtime [75.20ms]
+
+ 0 pass
+ 41 filtered out
+ 1 fail
+Ran 1 test across 1 file. [402.00ms]

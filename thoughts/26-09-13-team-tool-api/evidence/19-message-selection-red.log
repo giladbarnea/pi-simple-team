@@ -1,0 +1,40 @@
+bun test v1.3.14 (0d9b296a)
+
+test/team-registry.test.ts:
+410 | 		assert.match(text, /reviewer.*reviewer-1.*first.*87k/, "The first report must identify the first Pi session and its team.");
+411 | 		assert.match(text, /reviewer.*reviewer-2.*second.*87k/, "The second report must identify the other same-named Pi session and its team.");
+412 | 		assert.equal(text.match(/87k/g)?.length, 2, "Overlapping team and teammate selections must query each session once.");
+413 | 		assert.match(text, /You have used 43k/, "The caller's own usage remains included.");
+414 | 		await assert.rejects(() => host!.execute("get_context_window_usage", { targets: ["reviewer"] }), /Ambiguous target.*reviewer-1.*reviewer-2/s, "Ambiguous names must supply both usable IDs.");
+415 | 		await assert.rejects(() => host!.execute("team_send_message", { targets: ["first", "reviewer"], message: "Must not publish." }), /Ambiguous target.*reviewer-1.*reviewer-2/s, "The whole recipient list must resolve before any message is published.");
+                     ^
+AssertionError: The whole recipient list must resolve before any message is published.
+ generatedMessage: false,
+   expected: /Ambiguous target.*reviewer-1.*reviewer-2/s,
+   operator: "rejects",
+       code: "ERR_ASSERTION"
+
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:415:16
+      at processTicksAndRejections (native:7:39)
+
+342 | 		return team;
+343 | 	}
+344 | 
+345 | 	if (ownedTeams.length === 1) return ownedTeams[0];
+346 | 	if (ownedTeams.length === 0) throw new Error("No active teams are owned by this session. Use team_spawn or team_resume first.");
+347 | 	throw new Error(`Multiple teams exist. Available team IDs by name: ${JSON.stringify(teamChoices(ownedTeams))}. Pass team explicitly using the intended team ID.`);
+                 ^
+error: Multiple teams exist. Available team IDs by name: {"first":["selection-main-first"],"second":["selection-main-second"]}. Pass team explicitly using the intended team ID.
+      at resolveTeam (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/index.ts:347:12)
+      at execute (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/index.ts:1404:18)
+      at execute (/Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:86:4)
+      at waitForActual (node:assert:406:34)
+      at rejects (node:assert:487:44)
+      at /Users/giladbarnea/dev/pi-extensions/pi-simple-team/test/team-registry.test.ts:473:11
+      at processTicksAndRejections (unknown:7:39)
+(fail) context usage selects same-named teammates by Pi session ID across teams [809.97ms]
+
+ 0 pass
+ 20 filtered out
+ 1 fail
+Ran 1 test across 1 file. [1078.00ms]
