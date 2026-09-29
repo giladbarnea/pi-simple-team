@@ -292,7 +292,11 @@ class TeamOverviewOverlay implements Component {
 			const message = teamMessage(entry);
 			return message ? [message] : [];
 		});
-		const messageGroups = allMessages.map((message) => teamMessageLines(this.theme, message, team.roster).map(teamLineText));
+		const messageGroups = allMessages.map((message) => teamMessageLines(this.theme, message, team.roster).map((line) =>
+			teamLineText(typeof line === "object" && "prefix" in line
+				? { ...line, prefix: `${this.theme.fg("dim", glyphs().codeBar)} ` }
+				: line),
+		));
 		const selectedMessages = selectNewestMessageLines(messageGroups, Math.max(0, contentHeight));
 		const lines = selectedMessages.lines.length > 0 ? selectedMessages.lines : [this.theme.fg("muted", "No recent messages.")];
 		return { title: `Messages · latest ${selectedMessages.messageCount} of ${allMessages.length}`, lines };
@@ -306,7 +310,7 @@ class TeamOverviewOverlay implements Component {
 			entries: allLogEntries,
 			totalMatched: allLogEntries.length,
 			returned: allLogEntries.length,
-		}).slice(1);
+		}).slice(1).map((line) => sliceByColumn(line, 2, visibleWidth(line)));
 		const lines = renderedLogLines.slice(-Math.max(0, contentHeight));
 		return { title: `Team Log ${team.name} · latest ${lines.length} rows · ${allLogEntries.length} events`, lines };
 	}
