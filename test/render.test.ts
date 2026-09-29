@@ -1,10 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Container, type TUI } from "@earendil-works/pi-tui";
 import { initTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import type { MarkdownTheme } from "@earendil-works/pi-tui";
 
 import { stableRenderWidth, stripAnsi, visibleLength } from "../render-support/ansi.ts";
-import { glyphs } from "../render-support/glyphs.ts";
+import { GLYPHS } from "../render-support/glyphs.ts";
 import {
 	TeamLines,
 	actorHueToken,
@@ -28,7 +31,23 @@ import {
 } from "../render.ts";
 import { monthDay, timeOfDay, type TeamLogEntry } from "../teamlog.ts";
 
-initTheme("dark");
+const previousDirectory = process.cwd();
+const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+let testDirectory: string;
+
+beforeAll(() => {
+	testDirectory = mkdtempSync(join(tmpdir(), "pi-team-render-"));
+	process.env.PI_CODING_AGENT_DIR = testDirectory;
+	process.chdir(testDirectory);
+	initTheme("dark");
+});
+
+afterAll(() => {
+	process.chdir(previousDirectory);
+	if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+	else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+	rmSync(testDirectory, { recursive: true, force: true });
+});
 
 const identityTheme: ThemeLike = {
 	bold: (text: string) => text,
@@ -40,7 +59,7 @@ const taggingTheme: ThemeLike = {
 	fg: (token: string, text: string) => `«${token}:${text}»`,
 };
 
-const g = glyphs();
+const g = GLYPHS.unicode;
 
 const markdownThemeKeys = ["heading", "link", "linkUrl", "code", "codeBlock", "codeBlockBorder", "quote", "quoteBorder", "hr", "listBullet", "bold", "italic", "strikethrough", "underline"] as const;
 const identityMarkdownTheme = Object.fromEntries(markdownThemeKeys.map((key) => [key, (text: string) => text])) as MarkdownTheme;
