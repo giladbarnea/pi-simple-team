@@ -209,10 +209,15 @@ class TeamOverviewOverlay implements Component {
 			this.tui.requestRender();
 			return;
 		}
-		if (!this.selectedTeamName || this.zoomedWidget) return;
+		if (!this.selectedTeamName) return;
+		if (keybindings.matches(data, "tui.select.confirm")) {
+			this.zoomedWidget = this.zoomedWidget ? undefined : this.focusedWidget;
+			this.tui.requestRender();
+			return;
+		}
+		if (this.zoomedWidget) return;
 		if (keybindings.matches(data, "tui.select.up")) this.focusedWidget = "messages";
 		else if (keybindings.matches(data, "tui.select.down")) this.focusedWidget = "log";
-		else if (keybindings.matches(data, "tui.select.confirm")) this.zoomedWidget = this.focusedWidget;
 		else return;
 		this.tui.requestRender();
 	}
@@ -349,7 +354,7 @@ class TeamOverviewOverlay implements Component {
 		const view = widget === "messages" ? this.messageWidget(team, widgetHeight - 2) : this.logWidget(team, widgetHeight - 2);
 		const breadcrumb = widget === "messages" ? "Messages" : "Team Log";
 		const content = [
-			...this.headerRegion(team, "Esc back to team view", contentWidth, headerHeight, breadcrumb),
+			...this.headerRegion(team, "Enter/Esc back to team view", contentWidth, headerHeight, breadcrumb),
 			...this.region(view.title, view.lines, contentWidth, widgetHeight, true),
 		];
 		return this.frame(content, width, height);

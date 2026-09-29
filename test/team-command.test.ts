@@ -440,6 +440,28 @@ describe("/team", () => {
 		}
 	});
 
+	test.each(["Messages", "Team Log"])("Enter toggles zoom for %s and preserves focus", async (widget) => {
+		const host = new TeamCommandHost();
+		try {
+			await host.openSnapshots(() => [liveSnapshot([])], (component) => {
+				component.render(90);
+				if (widget === "Team Log") component.handleInput?.("\u001b[B");
+				component.handleInput?.("\r");
+				assert.doesNotMatch(component.render(90).join("\n"), /Team Status/, "Expected Enter to zoom the widget.");
+				component.handleInput?.("\r");
+				const text = component.render(90).join("\n");
+				assert.match(text, /Team Status/, "Expected Enter to return to the dashboard.");
+				assert.match(text, new RegExp(`${glyphs().chevron} ${widget}`), "Expected the same widget to keep focus.");
+				component.handleInput?.("\r");
+				assert.doesNotMatch(component.render(90).join("\n"), /Team Status/, "Expected Enter to zoom again.");
+				component.handleInput?.("\u001b");
+				close(component);
+			});
+		} finally {
+			await host.shutdown();
+		}
+	});
+
 	test("zooms the messages widget with Enter and returns to the dashboard with Esc", async () => {
 		const host = new TeamCommandHost(24);
 		const messages = Array.from({ length: 6 }, (_, index) =>
@@ -531,7 +553,7 @@ describe("/team", () => {
 
 	test("honors rebound selection keys for widget focus", async () => {
 		const previousKeybindings = getKeybindings();
-		setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, { "tui.select.down": "j" }));
+		setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, { "tui.select.down": "j", "tui.select.confirm": "z" }));
 		const host = new TeamCommandHost();
 		try {
 			await host.openSnapshots(() => [liveSnapshot([])], (component) => {
@@ -539,6 +561,10 @@ describe("/team", () => {
 				component.handleInput?.("j");
 				const text = component.render(90).join("\n");
 				assert.match(text, new RegExp(`${glyphs().chevron} Team Log`), "Expected the rebound down key to move widget focus.");
+				component.handleInput?.("z");
+				assert.doesNotMatch(component.render(90).join("\n"), /Team Status/, "Expected the rebound confirm key to zoom.");
+				component.handleInput?.("z");
+				assert.match(component.render(90).join("\n"), /Team Status/, "Expected the rebound confirm key to return to the dashboard.");
 				close(component);
 			});
 		} finally {
@@ -557,7 +583,7 @@ describe("/team", () => {
 				const messagesText = component.render(90).join("\n");
 				assert.match(messagesText, new RegExp(`Team: live-team-command-test ${chevron} Messages`), "Expected a breadcrumb path in the zoomed header.");
 				assert.match(messagesText, new RegExp(`${chevron} Messages · latest`), "Expected the zoomed widget to keep its focus marker.");
-				assert.match(messagesText, /Esc back to team view/, "Expected the hint to name the way back.");
+				assert.match(messagesText, /Enter\/Esc back to team view/, "Expected the hint to name both ways back.");
 
 				component.handleInput?.("\u001b");
 				component.handleInput?.("\u001b[B");
