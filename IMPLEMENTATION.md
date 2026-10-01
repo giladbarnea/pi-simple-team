@@ -1,5 +1,5 @@
 ---
-updated: 2026-09-14
+updated: 2026-10-01
 status: working
 ---
 
@@ -45,7 +45,7 @@ The process-local `team_log` is not durable. The extension persists no separate 
 
 Herdr creates a pane through `pane split`, labels it, then starts the exact parent Pi executable through `pane run`. Command arguments are shell-quoted independently. This matches Herdr's current separation between pane creation and agent startup.
 
-Child Pi processes use `--no-extensions` and explicitly load `pi-simple-team`. This prevents unrelated discovered extensions from conflicting with the team runtime.
+Child Pi processes use `--no-extensions` and explicitly load `pi-simple-team` plus saved `extensionPaths`. RPC and Herdr use the same paths. This keeps requested runtime dependencies without loading unrelated discovered extensions.
 
 A normal child stops registration after the parent-team tools. An managing child continues through manager registration in the same extension runtime.
 

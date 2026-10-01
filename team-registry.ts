@@ -76,7 +76,8 @@ function isManifestMember(value: unknown): value is TeamManifestMember {
 		typeof member.active === "boolean" &&
 		typeof member.teammateId === "string" &&
 		typeof member.sessionFile === "string" &&
-		typeof member.sessionMaterialized === "boolean"
+		typeof member.sessionMaterialized === "boolean" &&
+		(member.extensionPaths === undefined || (Array.isArray(member.extensionPaths) && member.extensionPaths.every((value) => typeof value === "string" && path.isAbsolute(value))))
 	);
 }
 

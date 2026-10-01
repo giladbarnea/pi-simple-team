@@ -8,9 +8,11 @@ export interface Teammate {
 	inheritMainContext?: boolean;
 	canManageOwnTeams?: boolean;
 	showOnHerdrPane?: boolean;
+	extensionPaths?: string[];
 }
 
-export type TeammateRecord = Required<Teammate> & {
+export type TeammateRecord = Required<Omit<Teammate, "extensionPaths">> & {
+	extensionPaths?: string[];
 	teammateId: string;
 	sessionFile: string;
 	live: boolean;

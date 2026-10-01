@@ -48,6 +48,7 @@ interface TeammateState {
 	thinking: ThinkingLevel;
 	inheritMainContext: boolean;
 	canManageOwnTeams: boolean;
+	extensionPaths: string[];
 	transport: TeammateTransport;
 	sessionId?: string;
 	sessionFile?: string;
@@ -138,6 +139,7 @@ function teammateRecord(teammate: TeammateState): TeammateRecord {
 		canManageOwnTeams: teammate.canManageOwnTeams,
 		showOnHerdrPane: teammate.transport === "herdr",
 		sessionFile: teammate.sessionFile!,
+		...(teammate.extensionPaths.length > 0 ? { extensionPaths: teammate.extensionPaths } : {}),
 	};
 }
 
@@ -412,6 +414,10 @@ function logStatusDeclaration(team: TeamState, participant: string, word?: strin
 function createTeammateState(teammateSpec: Teammate): TeammateState {
 	const teammateName = compactName(teammateSpec.name);
 	const thinking = teammateSpec.thinking ?? defaultThinkingLevel;
+	const extensionPaths = teammateSpec.extensionPaths ?? [];
+	for (const extensionPath of extensionPaths) {
+		if (!path.isAbsolute(extensionPath) || !fs.existsSync(extensionPath)) throw new Error(`Teammate extension must be an existing absolute path: ${extensionPath}`);
+	}
 	let resolveReady: (() => void) | undefined;
 	let rejectReady: ((error: Error) => void) | undefined;
 	const ready = new Promise<void>((resolve, reject) => {
@@ -426,6 +432,7 @@ function createTeammateState(teammateSpec: Teammate): TeammateState {
 		thinking,
 		inheritMainContext: Boolean(teammateSpec.inheritMainContext),
 		canManageOwnTeams: Boolean(teammateSpec.canManageOwnTeams),
+		extensionPaths,
 		transport: teammateSpec.showOnHerdrPane ? "herdr" : "rpc",
 		sessionMaterialized: false,
 		ready,
@@ -482,6 +489,7 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 		"--no-extensions",
 		"-e",
 		teamLiteExtensionPath,
+		...teammate.extensionPaths.flatMap(extensionPath => ["-e", extensionPath]),
 		"--no-prompt-templates",
 		"--no-themes",
 		...modelArgs,
@@ -549,6 +557,7 @@ async function attachHerdrTeammate(
 		"--no-extensions",
 		"-e",
 		teamLiteExtensionPath,
+		...teammate.extensionPaths.flatMap(extensionPath => ["-e", extensionPath]),
 		...modelArgs,
 		"--system-prompt",
 		systemPrompt,
@@ -880,6 +889,7 @@ function teammateSchema(modelGuidance: string) {
 		inheritMainContext: Type.Optional(Type.Boolean({ description: "Start with a clone of your context window rather than start fresh. Defaults to false.", default: false })),
 		canManageOwnTeams: Type.Optional(Type.Boolean({ description: "Allow this teammate to create and manage teams of its own. Defaults to false.", default: false })),
 		showOnHerdrPane: Type.Optional(Type.Boolean({ description: "Open a visible Herdr pane for this teammate. Defaults to false.", default: false })),
+		extensionPaths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true, description: "Trusted extension files or directories to load alongside the team runtime. Use existing absolute paths. Saved for later resume; discovered extensions stay disabled." })),
 	}, { additionalProperties: false });
 }
 

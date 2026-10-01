@@ -1,5 +1,5 @@
 ---
-updated: 2026-09-14
+updated: 2026-10-01
 status: current
 audience: AI agents and maintainers
 ---
@@ -37,7 +37,7 @@ A team ID has this form:
 
 The manifest stores the team ID, display name, canonical project directory, prompts, transport settings, member session identities, and each member's team-management capability. It also stores lifecycle timestamps and whether each session file has ever materialized.
 
-Version-2 manifests store the current teammate fields directly: `systemPrompt`, `inheritMainContext`, `canManageOwnTeams`, and `teammateId`. The new directory separates the current format from old manifests. There are no old-name aliases or storage adapters. Pi session files remain untouched. A `teammateId` is the Pi session ID.
+Version-2 manifests store the current teammate fields directly: `systemPrompt`, `inheritMainContext`, `canManageOwnTeams`, `teammateId`, and optional `extensionPaths`. The new directory separates the current format from old manifests. There are no old-name aliases or storage adapters. Pi session files remain untouched. A `teammateId` is the Pi session ID.
 
 `team_list` reads only manifests whose canonical project directory matches the current project. Symlinked paths resolve to the same project.
 
@@ -63,7 +63,7 @@ The lease protects extension-managed runtimes. Users must still avoid opening a 
 
 RPC is the default transport. Each teammate can request `showOnHerdrPane`. An explicitly supplied team-wide `showOnHerdrPanes` value overrides individual choices; omission preserves them.
 
-RPC teammates start with `pi --mode rpc`. Children disable discovered extensions and load only the explicit `pi-simple-team` extension path.
+RPC teammates start with `pi --mode rpc`. Children disable discovered extensions and load `pi-simple-team` plus their explicit `extensionPaths`. Those paths must exist and be absolute. They persist with the member attachment and load on every RPC or Herdr resume.
 
 A normal child registers only parent-team member tools. A child with `canManageOwnTeams: true` also registers manager tools in the same runtime.
 

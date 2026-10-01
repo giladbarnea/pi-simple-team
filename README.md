@@ -230,6 +230,8 @@ Spawn, resume, and add return the complete roster. Results distinguish a live ru
 
 Set `showOnHerdrPane: true` on individual teammates to open their panes. An explicit `showOnHerdrPanes` value on spawn overrides all individual settings.
 
+`extensionPaths` lists trusted, existing absolute extension paths for one teammate. RPC and Herdr launches load them alongside the team runtime, and resume keeps them. Discovered extensions remain disabled. These modules run with the same permissions as Pi.
+
 Message tools return `published: true` when the extension accepts a message for delivery. If delivery later fails, the sender receives the error automatically.
 
 

@@ -1584,3 +1584,37 @@ test("a new extension session discovers a shut-down team in the same project", a
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
+
+test("explicit teammate extensions survive shutdown and resume without enabling discovered extensions", async () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-team-explicit-extensions-"));
+	const agentDirectory = path.join(root, "agent");
+	const projectDirectory = path.join(root, "project");
+	fs.mkdirSync(agentDirectory);
+	fs.mkdirSync(projectDirectory);
+	const extensionPath = path.join(root, "replay hook.ts");
+	fs.writeFileSync(extensionPath, "export default function () {}\n");
+	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreFakePi = installFakePi(root);
+	let host: ExtensionHost | undefined;
+	try {
+		const { default: teamExtension } = await import("../index.ts");
+		host = new ExtensionHost(teamExtension, makeContext("main-extensions", projectDirectory));
+		await host.start();
+		await host.execute("team_spawn", { teamName: "replay", commonPrompt: "Wait.", startIdle: true,
+			teammates: [{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", extensionPaths: [extensionPath] }] });
+		await host.execute("team_shutdown", { team: "replay" });
+		assert.deepEqual(listedMember(await host.execute("team_list", {}), "main-extensions-replay", "persisted")?.extensionPaths, [extensionPath], "The dormant attachment must retain its explicit runtime dependency.");
+		await host.execute("team_resume", { team: "replay", startIdle: true });
+		for (const invocation of readFakePiInvocations(root)) {
+			assert.equal(invocation.args.includes("--no-extensions"), true, "Discovered extensions must remain disabled.");
+			assert.equal(invocation.args[invocation.args.indexOf(extensionPath) - 1], "-e", "Each runtime must explicitly load the saved replay extension.");
+		}
+	} finally {
+		await host?.shutdown();
+		restoreFakePi();
+		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});

@@ -970,14 +970,17 @@ describe("visible Herdr teammates", () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();
 		const commonPrompt = "Quoted 'text', $NOT_A_VARIABLE, and `not-a-command`.\nSecond line.";
+		const extensionPath = path.join(path.dirname(fake.logPath), "replay 'hook'.ts");
+		fs.writeFileSync(extensionPath, "export default function () {}\n");
 		try {
 			await host.execute("team_spawn", { teamName: "mixed-team", commonPrompt, startIdle: true, teammates: [
-				{ name: "visible", systemPrompt: "Wait.", model: "fake/fake-model", showOnHerdrPane: true },
+				{ name: "visible", systemPrompt: "Wait.", model: "fake/fake-model", showOnHerdrPane: true, extensionPaths: [extensionPath] },
 				{ name: "background", systemPrompt: "Wait.", model: "fake/fake-model" },
 			] });
 			assert.equal(lines(fake.logPath).filter((entry) => entry.type === "start").length, 1, "Only the individually selected teammate should open a pane.");
 			const visibleArguments = lines(fake.eventsPath).find((entry) => entry.type === "pi_start")?.args as string[];
 			assert.ok(visibleArguments[visibleArguments.indexOf("--system-prompt") + 1]?.includes(commonPrompt), "Herdr launch must preserve shell-sensitive prompt text exactly.");
+			assert.equal(visibleArguments[visibleArguments.indexOf(extensionPath) - 1], "-e", "Herdr must preserve and load the explicit extension path without shell corruption.");
 			await host.execute("team_spawn", { teamName: "override-team", commonPrompt: "Wait.", startIdle: true, showOnHerdrPanes: false, teammates: [{ name: "overridden", systemPrompt: "Wait.", model: "fake/fake-model", showOnHerdrPane: true }] });
 			assert.equal(lines(fake.logPath).filter((entry) => entry.type === "start").length, 1, "Explicit false must override an individual pane request.");
 			await host.execute("team_add_teammates", { team: "mixed-team", startIdle: true, teammates: [{ name: "added-visible", systemPrompt: "Wait.", model: "fake/fake-model", showOnHerdrPane: true }] });
