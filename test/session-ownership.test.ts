@@ -611,7 +611,8 @@ describe("schedule_reminder", () => {
 			assert.equal(reminder.promptSnippet, undefined, "Reminder guidance must not occupy a separate system-prompt snippet.");
 			assert.match(reminder.description, /one-shot.*next reminder after each check/s, "The tool description must explain one-shot and periodic usage.");
 			const result = await host.execute("team_spawn", { teamName: "reminder-guidance", commonPrompt: "Work.", teammates: [{ name: "worker", systemPrompt: "Work.", model: "fake/fake-model" }] });
-			assert.match(String(result.instruction), /Ask the user.*15 minutes/s, "A successful start must offer the user 15-minute oversight checks.");
+			assert.match(String(result.instruction), /Ask the user/, "A successful start must offer the user oversight checks.");
+			assert.match(String(result.instruction), /minutes/, "The oversight offer must suggest an interval in minutes.");
 			assert.doesNotMatch(host.tools.get("team_spawn")?.description ?? "", /15 minutes|polling/, "Post-start guidance must not remain in the invocation description.");
 		} finally {
 			await host.shutdown();

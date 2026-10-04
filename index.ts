@@ -145,9 +145,10 @@ function teammateRecord(teammate: TeammateState): TeammateRecord {
 
 /** @example lifecycleInstruction(true).includes("idle") // true */
 function lifecycleInstruction(startIdle: boolean): string {
+	const reminderOffer = "Ask the user whether to schedule recurring team progress checks, and at which interval. Suggest an interval proportional to the task: every 30-60 minutes for a multi-hour task, or every 15 minutes for a task of 1 hour or less. If they agree, use `schedule_reminder`. After each check, schedule the next while the team needs oversight.";
 	const nextAction = startIdle
-		? "No teammates have active work. Use team_send_message to start idle teammates, or team_resume for stopped teammates."
-		: "Teammates will message you with milestones or requests for help. Avoid repeated status polling and shell sleeps. Set your status to explain what you expect from them. If you have no independent work, tell the user and end your turn. Ask the user whether to schedule progress checks every 15 minutes. If they agree, use schedule_reminder. After each check, schedule the next while the team needs oversight.";
+		? `All teammates are currently idle. Use \`team_send_message\` to start idle teammates, or \`team_resume\` for stopped teammates. After the team starts work: ${reminderOffer}`
+		: `Teammates will message you with milestones or requests for help. Avoid repeated status polling and shell sleeps. Set your status to explain what you expect from them. If you have no independent work, tell the user and end your turn. ${reminderOffer}`;
 	return `${bundledSkillsInstruction}\n\n${nextAction}`;
 }
 
