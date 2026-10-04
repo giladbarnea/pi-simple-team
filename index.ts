@@ -979,8 +979,7 @@ export default function (pi: ExtensionAPI) {
 			defineTool({
 				name: "team_spawn",
 				label: "Team Spawn",
-				description: "You are automatically part of the team as main. Do not include yourself in teammates. Use team_resume to continue an existing team, or team_add_teammates to grow one.",
-				promptSnippet: "Spawn a versatile team of agents.",
+				description: "Spawn a versatile team of agents. You are automatically part of the team as main. Do not include yourself in teammates. Use `team_resume` to continue an existing team, or `team_add_teammates` to grow one.",
 				renderShell: "self",
 				renderCall: (args, theme, context) => renderTeamToolCall("team_spawn", args, theme, context, sessionTeammateRoster),
 				renderResult: (result, options, theme, context) => renderTeamToolResult("team_spawn", result, options, theme, context, undefined, sessionTeammateRoster),
@@ -1274,7 +1273,6 @@ export default function (pi: ExtensionAPI) {
 			name: "team_add_teammates",
 			label: "Team Add",
 			description: "Add teammates to an active team you own. Existing teammates continue their work.",
-			promptSnippet: "Add new teammates to a running team",
 			renderShell: "self",
 			renderCall: (args, theme, context) => renderTeamToolCall("team_add_teammates", args, theme, context, sessionTeammateRoster),
 			renderResult: (result, options, theme, context) => renderTeamToolResult("team_add_teammates", result, options, theme, context, undefined, sessionTeammateRoster),
