@@ -258,7 +258,7 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 }
 
 export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
-	pi.registerMessageRenderer(teamMessageType, (message, _options, theme) => renderTeamMessage(message, theme, getMarkdownTheme(), config.participants));
+	pi.registerMessageRenderer(teamMessageType, (message, options, theme) => renderTeamMessage(message, options, theme, getMarkdownTheme(), config.participants));
 	const startupRosterInstruction = `Participants: main, ${config.participants.join(", ")}.`;
 	pi.on("before_agent_start", async (event, context) => {
 		const teamContext = await callParent(config, "team_context", {}, context.signal);

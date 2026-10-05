@@ -954,7 +954,7 @@ export default function (pi: ExtensionAPI) {
 	const owner = Symbol("pi-simple-team-owner");
 	const reminderTimers = new Set<ReturnType<typeof setTimeout>>();
 	const sessionTeammateRoster = childRuntimeConfig?.participants ?? [];
-	pi.registerMessageRenderer(teamMessageType, (message, _options, theme) => renderTeamMessage(message, theme, getMarkdownTheme(), sessionTeammateRoster));
+	pi.registerMessageRenderer(teamMessageType, (message, options, theme) => renderTeamMessage(message, options, theme, getMarkdownTheme(), sessionTeammateRoster));
 
 	pi.registerCommand("team", {
 		description: "Open a read-only team overview",

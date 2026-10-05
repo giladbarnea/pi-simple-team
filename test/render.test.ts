@@ -628,23 +628,46 @@ describe("teamMessageLines", () => {
 
 describe("renderTeamMessage", () => {
 	test("returns undefined without well-formed details so the default renderer takes over", () => {
-		expect(renderTeamMessage({ details: undefined }, identityTheme)).toBeUndefined();
-		expect(renderTeamMessage({ details: { team: "demo" } }, identityTheme)).toBeUndefined();
+		expect(renderTeamMessage({ details: undefined }, { expanded: false }, identityTheme)).toBeUndefined();
+		expect(renderTeamMessage({ details: { team: "demo" } }, { expanded: false }, identityTheme)).toBeUndefined();
 	});
 
 	test("returns a component for well-formed details", () => {
-		const component = renderTeamMessage({ details: { team: "demo", from: "reviewer", sentAt: "July 16, 22:49:46", message: "hi" } }, identityTheme);
+		const component = renderTeamMessage({ details: { team: "demo", from: "reviewer", sentAt: "July 16, 22:49:46", message: "hi" } }, { expanded: false }, identityTheme);
 		expect(component?.render(80)[0]).toContain("reviewer");
 	});
 
 	test("colors the sender from the session roster", () => {
 		const component = renderTeamMessage(
 			{ details: { team: "demo", from: "reviewer", sentAt: "July 16, 22:49:46", message: "hi" } },
+			{ expanded: false },
 			taggingTheme,
 			identityMarkdownTheme,
 			["implementer", "reviewer"],
 		);
 		expect(component?.render(80)[0]).toContain("«customMessageLabel:reviewer»");
+	});
+
+	const longDetails = { team: "demo", from: "reviewer", sentAt: "July 16, 22:49:46", message: "one\ntwo\nthree\nfour\nfive" };
+
+	test.each([
+		["markdown", identityMarkdownTheme],
+		["plain", undefined],
+	])("collapsed %s view previews three body lines with an expand hint", (_label, markdownTheme) => {
+		const lines = renderTeamMessage({ details: longDetails }, { expanded: false }, identityTheme, markdownTheme)!.render(80);
+		expect(lines).toHaveLength(5);
+		expect(lines.join("\n")).not.toContain("four");
+		expect(lines[4]).toContain("2 more lines");
+		expect(lines[4]).toContain("ctrl+o to expand");
+	});
+
+	test.each([
+		["markdown", identityMarkdownTheme],
+		["plain", undefined],
+	])("expanded %s view shows the full body without a hint", (_label, markdownTheme) => {
+		const lines = renderTeamMessage({ details: longDetails }, { expanded: true }, identityTheme, markdownTheme)!.render(80);
+		expect(lines.join("\n")).toContain("five");
+		expect(lines.join("\n")).not.toContain("ctrl+o");
 	});
 });
 
@@ -842,6 +865,7 @@ describe("markdown views in a narrow terminal", () => {
 	test("a teammate message header is clipped instead of overflowing", () => {
 		const component = renderTeamMessage(
 			{ details: { team: "narrow-terminal-repro", from: "navigator", sentAt: "July 31, 01:39:01", message: "Working directory report." } },
+			{ expanded: false },
 			identityTheme,
 			identityMarkdownTheme,
 		)!;
@@ -873,7 +897,7 @@ describe("markdown views in a narrow terminal", () => {
 	test("shared prefixed rows and message bodies fit a nine-column render width", () => {
 		assertLinesFit(new TeamLines([{ prefix: `  ${g.codeBar} `, text: "hello" }], "wrap").render(VERY_NARROW), VERY_NARROW);
 		const send = renderTeamToolResult("team_send_message", { details: { published: true } }, { expanded: false }, identityTheme, { args: { targets: ["reviewer"], message: "hello" } }, identityMarkdownTheme);
-		const message = renderTeamMessage({ details: { team: "team", from: "reviewer", sentAt: "12:00:00", message: "hello" } }, identityTheme, identityMarkdownTheme);
+		const message = renderTeamMessage({ details: { team: "team", from: "reviewer", sentAt: "12:00:00", message: "hello" } }, { expanded: false }, identityTheme, identityMarkdownTheme);
 		assertLinesFit(send.render(VERY_NARROW), VERY_NARROW);
 		assertLinesFit(message!.render(VERY_NARROW), VERY_NARROW);
 	});

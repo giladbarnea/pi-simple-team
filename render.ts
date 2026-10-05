@@ -308,14 +308,19 @@ export function teamListLines(theme: ThemeLike, teamViews: TeamListTeamView[], r
 	return [header, ...rows];
 }
 
-function quotedBody(theme: ThemeLike, message: string, options: { lineLimit: number; barToken: string }): TeamLine[] {
+/** The dim "N more lines · ctrl+o to expand" footer under a collapsed body. */
+function expandHint(theme: ThemeLike, hidden: number): string {
 	const g = glyphs();
-	const bar = `  ${theme.fg(options.barToken, g.codeBar)} `;
+	return theme.fg("dim", `${g.ellipsis} ${hidden} more line${hidden === 1 ? "" : "s"}${g.dot}ctrl+o to expand`);
+}
+
+function quotedBody(theme: ThemeLike, message: string, options: { lineLimit: number; barToken: string }): TeamLine[] {
+	const bar = `  ${theme.fg(options.barToken, glyphs().codeBar)} `;
 	const lines = message.replace(/\r\n/g, "\n").split("\n");
 	const shown = lines.slice(0, options.lineLimit);
 	const body: TeamLine[] = shown.map((line) => ({ prefix: bar, text: line }));
 	const hidden = lines.length - shown.length;
-	if (hidden > 0) body.push({ prefix: bar, text: theme.fg("dim", `${g.ellipsis} ${hidden} more line${hidden === 1 ? "" : "s"}${g.dot}ctrl+o to expand`) });
+	if (hidden > 0) body.push({ prefix: bar, text: expandHint(theme, hidden) });
 	return body;
 }
 
@@ -339,8 +344,12 @@ function hasInterruption(interrupt: unknown): boolean {
 	return interrupt === true || (Array.isArray(interrupt) && interrupt.length > 0);
 }
 
+function teamSendHeader(theme: ThemeLike, targets: string[], message: string, interrupt: boolean, roster: string[]): string {
+	return headerLine(theme, "Team Send", sendTarget(theme, targets, roster), sendStats(theme, message, interrupt));
+}
+
 export function teamSendLines(theme: ThemeLike, options: { targets: string[]; message: string; interrupt: boolean; expanded: boolean }, roster: string[] = []): TeamLine[] {
-	const header = headerLine(theme, "Team Send", sendTarget(theme, options.targets, roster), sendStats(theme, options.message, options.interrupt));
+	const header = teamSendHeader(theme, options.targets, options.message, options.interrupt, roster);
 	const lineLimit = options.expanded ? Number.POSITIVE_INFINITY : SEND_PREVIEW_LINES;
 	return [header, ...quotedBody(theme, options.message, { lineLimit, barToken: "muted" })];
 }
@@ -662,8 +671,8 @@ export function teamLogLines(theme: ThemeLike, view: TeamLogRenderView): string[
 	return [header, ...rows, ...(footer ? [footer] : [])];
 }
 
-export function teamMessageLines(theme: ThemeLike, details: TeamMessageDetails, roster: string[] = []): TeamLine[] {
-	return [teamMessageHeader(theme, details, roster), ...quotedBody(theme, details.message, { lineLimit: Number.POSITIVE_INFINITY, barToken: "accent" })];
+export function teamMessageLines(theme: ThemeLike, details: TeamMessageDetails, roster: string[] = [], lineLimit = Number.POSITIVE_INFINITY): TeamLine[] {
+	return [teamMessageHeader(theme, details, roster), ...quotedBody(theme, details.message, { lineLimit, barToken: "accent" })];
 }
 
 function teamMessageHeader(theme: ThemeLike, details: TeamMessageDetails, roster: string[]): string {
@@ -676,23 +685,23 @@ function teamMessageHeader(theme: ThemeLike, details: TeamMessageDetails, roster
 	].join("");
 }
 
-class TeamSendView {
+/** A header over a quote-barred Markdown body, previewing SEND_PREVIEW_LINES body lines unless expanded. */
+class QuotedMarkdownView {
 	private md: Markdown;
-	private headerStr: string;
-	private barStr: string;
 	private barWidth: number;
-	private expanded: boolean;
-	private theme: ThemeLike;
 	private cachedWidth?: number;
 	private cachedLines?: string[];
 
-	constructor(headerStr: string, messageText: string, barStr: string, mdTheme: MarkdownTheme, expanded: boolean, theme: ThemeLike) {
-		this.headerStr = headerStr;
-		this.barStr = barStr;
+	constructor(
+		private readonly headerStr: string,
+		messageText: string,
+		private readonly barStr: string,
+		mdTheme: MarkdownTheme,
+		private readonly expanded: boolean,
+		private readonly theme: ThemeLike,
+	) {
 		this.barWidth = visibleLength(barStr);
 		this.md = new Markdown(messageText, 0, 0, mdTheme);
-		this.expanded = expanded;
-		this.theme = theme;
 	}
 
 	invalidate(): void {
@@ -705,51 +714,11 @@ class TeamSendView {
 		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
 		const header = clipToWidth(this.headerStr, width);
 		const bodyWidth = Math.max(1, width - this.barWidth);
-		const bodyLines = this.md.render(bodyWidth);
-		const barred = bodyLines.map((line) => clipToWidth(`${this.barStr}${line}`, width));
-		if (this.expanded) {
-			this.cachedLines = [header, ...barred];
-			this.cachedWidth = width;
-			return this.cachedLines;
-		}
-		const shown = barred.slice(0, SEND_PREVIEW_LINES);
-		const hidden = barred.length - SEND_PREVIEW_LINES;
-		if (hidden > 0) {
-			const g = glyphs();
-			shown.push(clipToWidth(`${this.barStr}${this.theme.fg("dim", `${g.ellipsis} ${hidden} more line${hidden === 1 ? "" : "s"}${g.dot}ctrl+o to expand`)}`, width));
-		}
+		const barred = this.md.render(bodyWidth).map((line) => clipToWidth(`${this.barStr}${line}`, width));
+		const shown = this.expanded ? barred : barred.slice(0, SEND_PREVIEW_LINES);
+		const hidden = barred.length - shown.length;
+		if (hidden > 0) shown.push(clipToWidth(`${this.barStr}${expandHint(this.theme, hidden)}`, width));
 		this.cachedLines = [header, ...shown];
-		this.cachedWidth = width;
-		return this.cachedLines;
-	}
-}
-
-class TeamMessageView {
-	private md: Markdown;
-	private headerLine: string;
-	private barStr: string;
-	private barWidth: number;
-	private cachedWidth?: number;
-	private cachedLines?: string[];
-
-	constructor(headerLine: string, messageText: string, barStr: string, mdTheme: MarkdownTheme) {
-		this.headerLine = headerLine;
-		this.barStr = barStr;
-		this.barWidth = visibleLength(barStr);
-		this.md = new Markdown(messageText, 0, 0, mdTheme);
-	}
-
-	invalidate(): void {
-		this.md.invalidate();
-		this.cachedWidth = undefined;
-		this.cachedLines = undefined;
-	}
-
-	render(width: number): string[] {
-		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
-		const bodyWidth = Math.max(1, width - this.barWidth);
-		const bodyLines = this.md.render(bodyWidth);
-		this.cachedLines = [clipToWidth(this.headerLine, width), ...bodyLines.map((line) => clipToWidth(`${this.barStr}${line}`, width))];
 		this.cachedWidth = width;
 		return this.cachedLines;
 	}
@@ -859,7 +828,7 @@ export function renderTeamToolResult(
 	context: ToolRenderContextLike,
 	markdownTheme?: MarkdownTheme,
 	roster: string[] = [],
-): TeamSendView | TeamLines {
+): QuotedMarkdownView | TeamLines {
 	const args = (context?.args ?? {}) as Record<string, unknown>;
 	if (context?.isError || result?.isError) {
 		return new TeamLines(errorLines(theme, callBodyFor(tool, theme, args, roster), textContent(result)), options.expanded ? "wrap" : "clip");
@@ -867,9 +836,9 @@ export function renderTeamToolResult(
 	const details = (result?.details ?? {}) as Record<string, unknown>;
 	if (markdownTheme && tool === "team_send_message") {
 		const message = String(args.message ?? "");
-		const header = headerLine(theme, "Team Send", sendTarget(theme, (args.targets ?? []) as string[], roster), sendStats(theme, message, hasInterruption(args.interrupt)));
+		const header = teamSendHeader(theme, (args.targets ?? []) as string[], message, hasInterruption(args.interrupt), roster);
 		const bar = `  ${theme.fg("muted", glyphs().codeBar)} `;
-		return new TeamSendView(header, message, bar, markdownTheme, options.expanded, theme);
+		return new QuotedMarkdownView(header, message, bar, markdownTheme, options.expanded, theme);
 	}
 	return new TeamLines(resultLinesFor(tool, theme, args, details, options.expanded, roster), options.expanded ? "wrap" : "clip");
 }
@@ -898,13 +867,13 @@ export function renderReminderToolResult(
 	);
 }
 
-export function renderTeamMessage(message: { details?: unknown }, theme: ThemeLike, markdownTheme?: MarkdownTheme, roster: string[] = []): TeamMessageView | TeamLines | undefined {
+export function renderTeamMessage(message: { details?: unknown }, options: { expanded: boolean }, theme: ThemeLike, markdownTheme?: MarkdownTheme, roster: string[] = []): QuotedMarkdownView | TeamLines | undefined {
 	const details = message.details as TeamMessageDetails | undefined;
 	if (!details?.from || !details?.team || typeof details.message !== "string") return undefined;
 	if (markdownTheme) {
-		const g = glyphs();
-		const bar = `  ${theme.fg("accent", g.codeBar)} `;
-		return new TeamMessageView(teamMessageHeader(theme, details, roster), details.message, bar, markdownTheme);
+		const bar = `  ${theme.fg("accent", glyphs().codeBar)} `;
+		return new QuotedMarkdownView(teamMessageHeader(theme, details, roster), details.message, bar, markdownTheme, options.expanded, theme);
 	}
-	return new TeamLines(teamMessageLines(theme, details, roster), "wrap");
+	const lineLimit = options.expanded ? Number.POSITIVE_INFINITY : SEND_PREVIEW_LINES;
+	return new TeamLines(teamMessageLines(theme, details, roster, lineLimit), options.expanded ? "wrap" : "clip");
 }
