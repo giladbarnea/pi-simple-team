@@ -54,15 +54,22 @@ export function relativeTimeText(timestamp: string): string {
 }
 
 /** A rendered line with optional wrapping or right-aligned layout metadata. */
-export type TeamLine = string | { prefix: string; text: string } | { left: string; right: string };
+type MarkdownTeamLine = { prefix: string; markdown: string; markdownTheme: MarkdownTheme };
+
+export type TeamLine = string | { prefix: string; text: string } | { left: string; right: string } | MarkdownTeamLine;
 
 function isRightAlignedTeamLine(line: TeamLine): line is { left: string; right: string } {
 	return typeof line !== "string" && "right" in line;
 }
 
+function isMarkdownTeamLine(line: TeamLine): line is MarkdownTeamLine {
+	return typeof line !== "string" && "markdown" in line;
+}
+
 export function teamLineText(line: TeamLine): string {
 	if (typeof line === "string") return line;
 	if (isRightAlignedTeamLine(line)) return `${line.left}${line.right}`.trimEnd();
+	if (isMarkdownTeamLine(line)) return `${line.prefix}${line.markdown}`.trimEnd();
 	return `${line.prefix}${line.text}`.trimEnd();
 }
 
@@ -80,7 +87,7 @@ function wrapTeamLine(line: TeamLine, width: number): string[] {
 		return wrapped.length > 0 ? wrapped : [""];
 	}
 	const contentWidth = Math.max(1, width - visibleLength(line.prefix));
-	const wrapped = wrapTextWithAnsi(line.text, contentWidth);
+	const wrapped = isMarkdownTeamLine(line) ? new Markdown(line.markdown, 0, 0, line.markdownTheme).render(contentWidth) : wrapTextWithAnsi(line.text, contentWidth);
 	const parts = wrapped.length > 0 ? wrapped : [""];
 	return parts.map((part) => clipToWidth(`${line.prefix}${part}`.trimEnd(), width));
 }
@@ -215,28 +222,55 @@ interface TeammateSpecView {
 	name: string;
 	model: string;
 	thinking?: string;
+	systemPrompt: string;
+	inheritMainContext?: boolean;
+	canManageOwnTeams?: boolean;
+	showOnHerdrPane?: boolean;
 }
 
-function teammateSpecRows(theme: ThemeLike, teammates: TeammateSpecView[], roster: string[]): string[] {
+const TEAMMATE_FLAG_LABELS = {
+	inheritMainContext: "inherits context",
+	canManageOwnTeams: "manages teams",
+	showOnHerdrPane: "herdr pane",
+} as const;
+
+function teammateFlags(theme: ThemeLike, teammate: TeammateSpecView): string[] {
+	return (Object.keys(TEAMMATE_FLAG_LABELS) as Array<keyof typeof TEAMMATE_FLAG_LABELS>)
+		.filter((flag) => teammate[flag])
+		.map((flag) => theme.fg("dim", TEAMMATE_FLAG_LABELS[flag]));
+}
+
+/** A full quote-barred Markdown text nested under a tree row. */
+function treeQuote(theme: ThemeLike, branch: "├" | "└", markdown: string, markdownTheme: MarkdownTheme): MarkdownTeamLine {
+	return { prefix: `${treeStem(theme, branch)}${theme.fg("muted", glyphs().codeBar)} `, markdown, markdownTheme };
+}
+
+/** One row per teammate. Expanded rows (given a Markdown theme) add set flags and the full system prompt. */
+function teammateSpecRows(theme: ThemeLike, teammates: TeammateSpecView[], roster: string[], expandedMarkdownTheme?: MarkdownTheme): TeamLine[] {
 	const nameWidth = Math.max(...teammates.map((teammate) => teammate.name.length));
-	return teammates.map((teammate, index) => {
+	return teammates.flatMap((teammate, index) => {
 		const branch = index === teammates.length - 1 ? "└" : "├";
 		const spec = statLine(theme, [theme.fg("muted", teammate.model), theme.fg("dim", teammate.thinking ?? "")]);
-		return `${treeConnector(theme, branch)}${theme.fg(actorHueToken(teammate.name, roster), padVisible(teammate.name, nameWidth))}  ${spec}`;
+		const row = `${treeConnector(theme, branch)}${theme.fg(actorHueToken(teammate.name, roster), padVisible(teammate.name, nameWidth))}  ${spec}`;
+		if (!expandedMarkdownTheme) return [row];
+		const flags = statLine(theme, teammateFlags(theme, teammate));
+		const flagRows = flags ? [{ prefix: treeStem(theme, branch), text: flags }] : [];
+		return [{ prefix: treeStem(theme, "├"), text: "" }, row, ...flagRows, treeQuote(theme, branch, teammate.systemPrompt, expandedMarkdownTheme)];
 	});
 }
 
-export function teamSpawnLines(theme: ThemeLike, team: string, teammates: TeammateSpecView[], roster: string[] = []): string[] {
+export function teamSpawnLines(theme: ThemeLike, team: string, teammates: TeammateSpecView[], roster: string[] = [], expansion?: { commonPrompt: string; markdownTheme: MarkdownTheme }): TeamLine[] {
 	const header = headerLine(theme, "Team Spawn", theme.fg("accent", team), [theme.fg("muted", plural(teammates.length, "teammate"))]);
-	return [header, ...teammateSpecRows(theme, teammates, roster)];
+	const commonPromptRows = expansion ? [`${treeConnector(theme, "├")}${theme.fg("accent", "common prompt")}`, treeQuote(theme, "├", expansion.commonPrompt, expansion.markdownTheme)] : [];
+	return [header, ...commonPromptRows, ...teammateSpecRows(theme, teammates, roster, expansion?.markdownTheme)];
 }
 
-export function teamAddLines(theme: ThemeLike, team: string, teammates: TeammateSpecView[], memberCount: number, roster: string[] = []): string[] {
+export function teamAddLines(theme: ThemeLike, team: string, teammates: TeammateSpecView[], memberCount: number, roster: string[] = [], expandedMarkdownTheme?: MarkdownTheme): TeamLine[] {
 	const header = headerLine(theme, "Team Add", theme.fg("accent", team), [
 		theme.fg("muted", `${teammates.length} added`),
 		theme.fg("muted", plural(memberCount, "member")),
 	]);
-	return [header, ...teammateSpecRows(theme, teammates, roster)];
+	return [header, ...teammateSpecRows(theme, teammates, roster, expandedMarkdownTheme)];
 }
 
 export interface ResumedMemberView {
@@ -766,9 +800,10 @@ function callBodyFor(tool: TeamToolName, theme: ThemeLike, args: Record<string, 
 	return callBody(theme, "Team Shutdown", accentTeam(theme, args.team));
 }
 
-function resultLinesFor(tool: TeamToolName, theme: ThemeLike, args: Record<string, unknown>, details: Record<string, unknown>, expanded: boolean, roster: string[]): TeamLine[] {
+function resultLinesFor(tool: TeamToolName, theme: ThemeLike, args: Record<string, unknown>, details: Record<string, unknown>, expanded: boolean, roster: string[], markdownTheme?: MarkdownTheme): TeamLine[] {
 	if (tool === "team_spawn") {
-		return teamSpawnLines(theme, String(details.teamName), details.teammates as TeammateSpecView[], roster);
+		const expansion = expanded ? { commonPrompt: args.commonPrompt as string, markdownTheme: markdownTheme! } : undefined;
+		return teamSpawnLines(theme, String(details.teamName), details.teammates as TeammateSpecView[], roster, expansion);
 	}
 	if (tool === "team_list") {
 		const teamViews = ((details.teams ?? []) as Array<Record<string, unknown>>).map((entry) => ({
@@ -787,7 +822,7 @@ function resultLinesFor(tool: TeamToolName, theme: ThemeLike, args: Record<strin
 	}
 	if (tool === "team_add_teammates") {
 		const memberCount = Object.keys((details.status ?? {}) as Record<string, unknown>).length;
-		return teamAddLines(theme, String(details.teamName), (args.teammates ?? []) as TeammateSpecView[], memberCount, roster);
+		return teamAddLines(theme, String(details.teamName), (args.teammates ?? []) as TeammateSpecView[], memberCount, roster, expanded ? markdownTheme! : undefined);
 	}
 	if (tool === "team_send_message") {
 		return teamSendLines(theme, {
@@ -840,7 +875,7 @@ export function renderTeamToolResult(
 		const bar = `  ${theme.fg("muted", glyphs().codeBar)} `;
 		return new QuotedMarkdownView(header, message, bar, markdownTheme, options.expanded, theme);
 	}
-	return new TeamLines(resultLinesFor(tool, theme, args, details, options.expanded, roster), options.expanded ? "wrap" : "clip");
+	return new TeamLines(resultLinesFor(tool, theme, args, details, options.expanded, roster, markdownTheme), options.expanded ? "wrap" : "clip");
 }
 
 export function renderReminderToolCall(args: Record<string, unknown>, theme: ThemeLike, context: ToolRenderContextLike) {

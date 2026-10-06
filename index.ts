@@ -982,7 +982,7 @@ export default function (pi: ExtensionAPI) {
 				description: "Spawn a versatile team of agents. You are automatically part of the team as main. Do not include yourself in teammates. Use `team_resume` to continue an existing team, or `team_add_teammates` to grow one.",
 				renderShell: "self",
 				renderCall: (args, theme, context) => renderTeamToolCall("team_spawn", args, theme, context, sessionTeammateRoster),
-				renderResult: (result, options, theme, context) => renderTeamToolResult("team_spawn", result, options, theme, context, undefined, sessionTeammateRoster),
+				renderResult: (result, options, theme, context) => renderTeamToolResult("team_spawn", result, options, theme, context, getMarkdownTheme(), sessionTeammateRoster),
 				parameters: Type.Object({
 					teamName: Type.String({ description: "Name for the new team" }),
 					commonPrompt: Type.String({ description: "Common system prompt for all teammates" }),
@@ -1275,7 +1275,7 @@ export default function (pi: ExtensionAPI) {
 			description: "Add teammates to an active team you own. Existing teammates continue their work.",
 			renderShell: "self",
 			renderCall: (args, theme, context) => renderTeamToolCall("team_add_teammates", args, theme, context, sessionTeammateRoster),
-			renderResult: (result, options, theme, context) => renderTeamToolResult("team_add_teammates", result, options, theme, context, undefined, sessionTeammateRoster),
+			renderResult: (result, options, theme, context) => renderTeamToolResult("team_add_teammates", result, options, theme, context, getMarkdownTheme(), sessionTeammateRoster),
 			parameters: Type.Object({
 				team: Type.Optional(Type.String({ description: "Team name or persistent ID. Omit when exactly one owned active team exists." })),
 				// TODO: Accept existing current-project Pi session IDs as well as new teammate definitions.

@@ -195,6 +195,81 @@ describe("teamSpawnLines", () => {
 	});
 });
 
+describe("Team Spawn result", () => {
+	const teammates = [
+		{ name: "implementer", model: "model-a", thinking: "high", systemPrompt: "Build it.\nTest it.", inheritMainContext: false, canManageOwnTeams: true, showOnHerdrPane: true },
+		{ name: "reviewer", model: "model-b", thinking: "low", systemPrompt: "Review it.", inheritMainContext: false, canManageOwnTeams: false, showOnHerdrPane: false },
+	];
+	const args = { teamName: "demo-team", commonPrompt: "Be kind.", teammates };
+	const render = (expanded: boolean) =>
+		renderTeamToolResult("team_spawn", { details: { teamName: "demo-team", teammates } }, { expanded }, identityTheme, { args }, identityMarkdownTheme).render(80);
+
+	test("expanded renders prompts as Markdown", () => {
+		const boldMarkdownTheme = { ...identityMarkdownTheme, bold: (text: string) => `<b>${text}</b>` };
+		const markdownTeammates = [{ ...teammates[1], systemPrompt: "**Review** it." }];
+		const markdownArgs = { teamName: "demo-team", commonPrompt: "Be **kind**.", teammates: markdownTeammates };
+		const text = renderTeamToolResult("team_spawn", { details: { teamName: "demo-team", teammates: markdownTeammates } }, { expanded: true }, identityTheme, { args: markdownArgs }, boldMarkdownTheme)
+			.render(80)
+			.join("\n");
+		expect(text).toContain("<b>kind</b>");
+		expect(text).toContain("<b>Review</b> it.");
+		expect(text).not.toContain("**");
+	});
+
+	test("expanded shows each teammate's full system prompt under its row", () => {
+		const lines = render(true);
+		const implementerRow = lines.findIndex((line) => line.includes("implementer"));
+		expect(lines.slice(implementerRow + 1).join("\n")).toContain("Build it.");
+		expect(lines.join("\n")).toContain("Test it.");
+		expect(lines.at(-1)).toContain("Review it.");
+	});
+
+	test("expanded shows the common prompt as the first tree entry", () => {
+		const lines = render(true);
+		expect(lines[1]).toContain("common prompt");
+		expect(lines[2]).toContain("Be kind.");
+	});
+
+	test("labels the common prompt in the team name's accent color", () => {
+		const lines = renderTeamToolResult("team_spawn", { details: { teamName: "demo-team", teammates } }, { expanded: true }, taggingTheme, { args }, identityMarkdownTheme).render(200);
+		expect(lines[1]).toContain("\u00abaccent:common prompt\u00bb");
+	});
+
+	test("expanded separates each teammate with an empty tree row", () => {
+		const lines = render(true);
+		const implementerRow = lines.findIndex((line) => line.includes("implementer"));
+		const reviewerRow = lines.findIndex((line) => line.includes("reviewer"));
+		expect(lines[implementerRow - 1]).toBe("  \u2502");
+		expect(lines[reviewerRow - 1]).toBe("  \u2502");
+	});
+
+	test("expanded names only the flags a teammate has set", () => {
+		const lines = render(true);
+		const implementerFlags = lines[lines.findIndex((line) => line.includes("implementer")) + 1];
+		expect(implementerFlags).toContain("manages teams");
+		expect(implementerFlags).toContain("herdr pane");
+		const text = lines.join("\n");
+		expect(text).not.toContain("inherits context");
+		const reviewerRow = lines.findIndex((line) => line.includes("reviewer"));
+		expect(lines[reviewerRow + 1]).toContain("Review it.");
+	});
+
+	test("collapsed keeps one row per teammate and hides prompts", () => {
+		const lines = render(false);
+		expect(lines).toHaveLength(3);
+		expect(lines.join("\n")).not.toContain("Be kind.");
+		expect(lines.join("\n")).not.toContain("Build it.");
+	});
+
+	test("Team Add expands the same way for the added teammates", () => {
+		const addArgs = { team: "demo-team", teammates: [teammates[0]] };
+		const details = { teamName: "demo-team", status: { implementer: {}, reviewer: {} } };
+		const lines = renderTeamToolResult("team_add_teammates", { details }, { expanded: true }, identityTheme, { args: addArgs }, identityMarkdownTheme).render(80);
+		expect(lines[lines.findIndex((line) => line.includes("implementer")) + 1]).toContain("manages teams");
+		expect(lines.join("\n")).toContain("Test it.");
+	});
+});
+
 describe("teamAddLines", () => {
 	test("summarizes growth and lists each added teammate like Team Spawn", () => {
 		const lines = teamAddLines(identityTheme, "demo-team", [
