@@ -10,14 +10,15 @@ type JsonRecord = Record<string, unknown>;
 type ModelMessage = { role: string; content: unknown };
 
 describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("idle conversation context", () => {
-	test("records instructions without a turn and includes them once in the next model request", async () => {
+	test("records instructions without a turn, reports the new context usage, and includes them once in the next model request", async () => {
 		const executable = Bun.which("pi");
 		assert.ok(executable, "The real-Pi check requires pi on PATH.");
 		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-team-idle-context-"));
 		const instructions = `resumption-${crypto.randomUUID()}`;
 		const commonPrompt = `common-${crypto.randomUUID()}`;
 		const requests: Array<{ messages: ModelMessage[] }> = [];
-		let deliveryUrl = "";
+		let registration: JsonRecord | undefined;
+		const events: JsonRecord[] = [];
 		let settled = false;
 		const provider = Bun.serve({
 			hostname: "127.0.0.1", port: 0,
@@ -31,7 +32,8 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("idle conversat
 			hostname: "127.0.0.1", port: 0,
 			async fetch(request: Request): Promise<Response> {
 				const body = await request.json() as { tool: string; args: JsonRecord };
-				if (body.tool === "register") deliveryUrl = String(body.args.url);
+				if (body.tool === "register") registration = body.args;
+				if (body.tool === "event") events.push(body.args.event as JsonRecord);
 				if (body.tool === "event" && (body.args.event as JsonRecord).type === "agent_settled") settled = true;
 				return Response.json(body.tool === "team_context" ? { participants: ["probe"], status: {} } : { accepted: true });
 			},
@@ -67,12 +69,19 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("idle conversat
 			assert.ok(predicate(), `Expected ${label}. Child stderr: ${stderr}`);
 		};
 		const deliver = async (message: string, triggerTurn: boolean): Promise<void> => {
-			const response = await fetch(deliveryUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: "idle-token", tool: "deliver", args: { team: "idle-team", from: "main", to: "probe", sentAt: new Date().toISOString(), message, formattedMessage: message, interrupt: false, triggerTurn } }) });
+			const response = await fetch(String(registration!.url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: "idle-token", tool: "deliver", args: { team: "idle-team", from: "main", to: "probe", sentAt: new Date().toISOString(), message, formattedMessage: message, interrupt: false, triggerTurn } }) });
 			assert.equal(response.status, 200, `Expected delivery to succeed: ${await response.text()}`);
 		};
 		try {
-			await waitFor(() => deliveryUrl !== "", "child registration");
+			await waitFor(() => registration !== undefined, "child registration");
+			assert.equal(registration!.model, "local-probe/probe", `Registration must report the model the child runs. Got: ${JSON.stringify(registration)}`);
+			assert.equal(registration!.thinking, "off", `A non-reasoning model runs at off even when launched with --thinking low. Got: ${JSON.stringify(registration)}`);
 			await deliver(instructions, false);
+			const reportedFacts = events.filter((event) => event.type === "runtime_facts").at(-1);
+			assert.ok(
+				typeof reportedFacts?.contextPercent === "number" && reportedFacts.contextPercent > Number(registration!.contextPercent),
+				`An idle delivery adds to the context without a turn, so the child must report its new usage before it acknowledges the delivery. Registration: ${JSON.stringify(registration)}. Events: ${JSON.stringify(events)}`,
+			);
 			child.stdin.write(JSON.stringify({ id: "after-staging", type: "get_messages" }) + "\n");
 			await waitFor(() => responses.some((response) => response.id === "after-staging"), "a real Pi conversation snapshot after staging");
 			const snapshot = responses.find((response) => response.id === "after-staging");

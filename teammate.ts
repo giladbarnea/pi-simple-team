@@ -1,4 +1,5 @@
-export type ThinkingLevel = "low" | "medium" | "high" | "xhigh" | "max";
+/** Main requests one of `low` to `max`. Pi can run a teammate at `off` or `minimal` when the model supports less. */
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface Teammate {
 	name: string;

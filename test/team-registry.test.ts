@@ -169,9 +169,18 @@ const extensionApi = {
 const { default: teamExtension } = await import(extensionPath);
 teamExtension(extensionApi);
 
+// Like Pi, a resumed session keeps the model and thinking level it ran with.
+const settingsPath = sessionFile + ".settings.json";
+const launchSettings = () => {
+	const model = process.argv[process.argv.indexOf("--model") + 1].split("/");
+	return { model: { provider: model[0], id: model[1] }, thinkingLevel: process.argv[process.argv.indexOf("--thinking") + 1] };
+};
+const runtimeSettings = requestedSessionFile ? JSON.parse(fs.readFileSync(settingsPath, "utf8")) : launchSettings();
+fs.writeFileSync(settingsPath, JSON.stringify(runtimeSettings));
 const extensionContext = {
 	cwd: process.cwd(),
 	shutdown: () => process.exit(1),
+	...runtimeSettings,
 	getContextUsage: () => ({ tokens: 87_000, contextWindow: 272_000, percent: 31.985 }),
 	modelRegistry: { getAvailable: () => [{ provider: "fake", id: "fake-model" }] },
 	sessionManager: {

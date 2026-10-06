@@ -487,7 +487,7 @@ server.listen(0, "127.0.0.1", () => {
 		team: process.env.PI_SIMPLE_TEAM_TEAM,
 		from: process.env.PI_SIMPLE_TEAM_MEMBER,
 		tool: "register",
-		args: { url: "http://127.0.0.1:" + server.address().port + "/deliver", sessionId, sessionFile },
+		args: { url: "http://127.0.0.1:" + server.address().port + "/deliver", sessionId, sessionFile, model: process.argv[process.argv.indexOf("--model") + 1], thinking: process.argv[process.argv.indexOf("--thinking") + 1], contextPercent: null },
 	});
 	const request = http.request(process.env.PI_SIMPLE_TEAM_CALLBACK_URL, {
 		method: "POST",

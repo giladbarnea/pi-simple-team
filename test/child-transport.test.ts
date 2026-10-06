@@ -75,6 +75,12 @@ const sessionFile = sessionArgumentIndex === -1
   ? path.join(process.env.PI_SIMPLE_TEAM_TEST_HERDR_SESSIONS, process.env.PI_SIMPLE_TEAM_MEMBER + "-" + process.pid + ".jsonl")
   : args[sessionArgumentIndex + 1];
 const sessionId = path.basename(sessionFile, ".jsonl");
+// Like Pi, a resumed session keeps the model and thinking level it ran with.
+const settingsPath = sessionFile + ".settings.json";
+const runtimeFacts = sessionArgumentIndex === -1
+  ? { model: args[args.indexOf("--model") + 1], thinking: args[args.indexOf("--thinking") + 1], contextPercent: null }
+  : JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+fs.writeFileSync(settingsPath, JSON.stringify(runtimeFacts));
 record({ type: "pi_start", executable: process.argv[1], args, sessionId, sessionFile });
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -120,8 +126,8 @@ const server = http.createServer(async (request, response) => {
     response.writeHead(503); response.end("planned delivery failure"); return;
   }
   if (body.args.message === "publish-failure-to-peer") await parent("team_send_message", { targets: ["recipient"], message: "reject-this-message" });
-  if (body.args.message === "report-context-usage") {
-    await parent("event", { event: { type: "context_usage", percent: 57.4 } });
+  if (body.args.message === "report-runtime-facts") {
+    await parent("event", { event: { type: "runtime_facts", model: "fake/fake-model", thinking: "off", contextPercent: 57.4 } });
     response.end(JSON.stringify({ accepted: true }));
     return;
   }
@@ -142,7 +148,7 @@ server.listen(0, "127.0.0.1", async () => {
   const url = process.env.PI_SIMPLE_TEAM_TEST_CHILD_BAD_REGISTER ? "http://localhost:1234/deliver" : "http://127.0.0.1:" + address.port + "/deliver";
   try {
     if (process.env.PI_SIMPLE_TEAM_TEST_REGISTRATION_GATE) await fetch(process.env.PI_SIMPLE_TEAM_TEST_REGISTRATION_GATE + "?name=" + process.env.PI_SIMPLE_TEAM_MEMBER);
-    await parent("register", { url, sessionId, sessionFile });
+    await parent("register", { url, sessionId, sessionFile, ...runtimeFacts });
     record({ type: "ready", url });
   } catch (error) {
     record({ type: "register_error", error: String(error) });
@@ -346,6 +352,8 @@ async function startChildRuntimeForTest(failingLifecycleEvents: number): Promise
 	registerChildTools(api as unknown as ExtensionAPI, config);
 	await handlers.get("session_start")?.({}, {
 		shutdown: () => undefined,
+		model: { provider: "fake", id: "fake-model" },
+		thinkingLevel: "high",
 		getContextUsage: () => ({ tokens: 87_000, contextWindow: 272_000, percent: 31.985 }),
 		sessionManager: {
 			getSessionId: () => "visible-child-test-session-id",
@@ -887,7 +895,7 @@ describe("unified child runtime", () => {
 		}
 	});
 
-	test("main keeps each teammate's latest reported context usage for every view", async () => {
+	test("main keeps each teammate's latest reported runtime facts for every view", async () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();
 		try {
@@ -896,14 +904,24 @@ describe("unified child runtime", () => {
 				startIdle: true, commonPrompt: "test",
 				teammates: [{ name: "scout", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" }],
 			});
-			await host.execute("team_send_message", { targets: ["scout"], message: "report-context-usage" });
+			await host.execute("team_send_message", { targets: ["scout"], message: "report-runtime-facts" });
 			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "parent" && entry.tool === "event"));
 			await new Promise((resolve) => setTimeout(resolve, 25));
 			const listed = await host.execute("team_list", {});
 			const team = (listed.details?.teams as JsonRecord[]).find((candidate) => candidate.teamName === "rpc-context-stream")!;
-			assert.equal((team.teammates as JsonRecord[])[0]?.contextPercent, 57.4);
+			const listedTeammate = (team.teammates as JsonRecord[])[0];
+			assert.deepEqual(
+				{ thinking: listedTeammate?.thinking, contextPercent: listedTeammate?.contextPercent },
+				{ thinking: "off", contextPercent: 57.4 },
+				"The teammate record must show the thinking level the teammate runs at, not the requested one.",
+			);
 			const status = await host.execute("team_status", { team: "rpc-context-stream" });
-			assert.equal(((status.details?.teammates as JsonRecord).scout as JsonRecord).contextPercent, 57.4, "Team Status renders from the same teammate facts.");
+			const statusTeammate = (status.details?.teammates as JsonRecord).scout as JsonRecord;
+			assert.deepEqual(
+				{ thinking: statusTeammate.thinking, contextPercent: statusTeammate.contextPercent },
+				{ thinking: "off", contextPercent: 57.4 },
+				"Team Status renders from the same teammate facts.",
+			);
 			assert.doesNotMatch(status.content[0]!.text, /contextPercent/, "The view-only facts must stay out of the model-facing status.");
 		} finally {
 			await host.shutdown();
@@ -1020,17 +1038,42 @@ describe("visible Herdr teammates", () => {
 		}
 	});
 
-	test("reports its context usage with registration and after every turn and compaction", async () => {
+	test("reports its runtime facts with registration and after every change", async () => {
 		const child = await startChildRuntimeForTest(0);
+		const runningWith = (model: string, thinkingLevel: string, percent: number | null) => ({
+			model: { provider: "fake", id: model },
+			thinkingLevel,
+			getContextUsage: () => ({ tokens: percent === null ? null : 1, contextWindow: 272_000, percent }),
+		});
 		try {
 			const register = child.requests.find((request) => request.tool === "register");
-			assert.equal(register?.args.contextPercent, 31.985, "Registration must carry the starting context usage.");
-			await child.handlers.get("turn_end")?.({}, { getContextUsage: () => ({ tokens: 109_000, contextWindow: 272_000, percent: 40.2 }) });
-			await child.handlers.get("session_compact")?.({}, { getContextUsage: () => ({ tokens: null, contextWindow: 272_000, percent: null }) });
-			await waitFor(() => child.requests.filter((request) => request.tool === "event").length === 2);
+			assert.deepEqual(
+				{ model: register?.args.model, thinking: register?.args.thinking, contextPercent: register?.args.contextPercent },
+				{ model: "fake/fake-model", thinking: "high", contextPercent: 31.985 },
+				"Registration must carry the model, thinking level, and context usage the child starts with.",
+			);
+			const changes: Array<[string, ReturnType<typeof runningWith>]> = [
+				["turn_end", runningWith("fake-model", "high", 40.2)],
+				["session_compact", runningWith("fake-model", "high", null)],
+				["model_select", runningWith("other-model", "high", 41)],
+				["thinking_level_select", runningWith("other-model", "low", 41)],
+				["session_tree", runningWith("other-model", "low", 12)],
+			];
+			for (const [eventName, context] of changes) {
+				const handler = child.handlers.get(eventName);
+				assert.ok(handler, `Expected the child to report its runtime facts on ${eventName}.`);
+				await handler({}, context);
+			}
+			await waitFor(() => child.requests.filter((request) => request.tool === "event").length === changes.length);
 			assert.deepEqual(
 				child.requests.filter((request) => request.tool === "event").map((request) => request.args.event),
-				[{ type: "context_usage", percent: 40.2 }, { type: "context_usage", percent: null }],
+				[
+					{ type: "runtime_facts", model: "fake/fake-model", thinking: "high", contextPercent: 40.2 },
+					{ type: "runtime_facts", model: "fake/fake-model", thinking: "high", contextPercent: null },
+					{ type: "runtime_facts", model: "fake/other-model", thinking: "high", contextPercent: 41 },
+					{ type: "runtime_facts", model: "fake/other-model", thinking: "low", contextPercent: 41 },
+					{ type: "runtime_facts", model: "fake/other-model", thinking: "low", contextPercent: 12 },
+				],
 				"A compaction makes the usage unknown until the next response, so it must clear the reported value.",
 			);
 		} finally {

@@ -776,10 +776,18 @@ function validateChildDeliveryUrl(rawUrl: string, teammateName: string): string 
 	return url.toString();
 }
 
+/** The child reports the model, thinking level, and context usage it runs with. They replace what main requested, because Pi may clamp the thinking level or restore other settings from the session. */
+function applyRuntimeFacts(teammate: TeammateState, facts: JsonRecord): void {
+	if (typeof facts.model !== "string" || typeof facts.thinking !== "string") throw new Error(`Teammate ${teammate.name} reported invalid runtime facts`);
+	teammate.model = facts.model;
+	teammate.thinking = facts.thinking as ThinkingLevel;
+	teammate.contextPercent = (facts.contextPercent as number | null) ?? undefined;
+}
+
 function handleChildEvent(team: TeamState, teammate: TeammateState, event: JsonRecord): void {
 	if (event.type === "agent_start" || event.type === "work_queued") teammate.active = true;
 	if (event.type === "agent_settled" || event.type === "session_shutdown") teammate.active = false;
-	if (event.type === "context_usage") teammate.contextPercent = (event.percent as number | null) ?? undefined;
+	if (event.type === "runtime_facts") applyRuntimeFacts(teammate, event);
 	if (event.type === "session_shutdown") {
 		teammate.alive = false;
 		teammate.deliveryUrl = undefined;
@@ -825,7 +833,7 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 			teammate.sessionId = sessionId;
 			teammate.sessionFile = sessionFile;
 			teammate.sessionMaterialized = fs.existsSync(sessionFile);
-			teammate.contextPercent = (args.contextPercent as number | null | undefined) ?? undefined;
+			applyRuntimeFacts(teammate, args);
 			teammate.alive = true;
 			teammate.active = false;
 			team.statuses.set(teammate.name, status("idle", "Spawned"));

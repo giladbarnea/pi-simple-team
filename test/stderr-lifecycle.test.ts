@@ -59,7 +59,7 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("RPC stderr and
 		const tools = new Map<string, RegisteredTool>();
 		const shutdownHandlers: Array<() => Promise<void>> = [];
 		const context = {
-			cwd: directory, scopedModels: [], modelRegistry: { getAvailable: () => [{ provider: "local-probe", id: "probe" }] },
+			cwd: directory, scopedModels: [], getContextUsage: () => ({ tokens: 0, contextWindow: 32000, percent: 0 }), modelRegistry: { getAvailable: () => [{ provider: "local-probe", id: "probe" }] },
 			sessionManager: { getCwd: () => directory, getSessionId: () => "test-main", getSessionFile: () => path.join(directory, "main.jsonl") },
 		};
 		const api = {
@@ -83,6 +83,9 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("RPC stderr and
 			const team = (listing.details.teams as Array<{ teamId: string; teammates: Array<{ name: string; teammateId: string; sessionFile: string }> }>).find((candidate) => candidate.teamId === spawned.details.teamId);
 			const session = team?.teammates.find((candidate) => candidate.name === "probe");
 			assert.ok(session, "Team listing must expose the registered Pi session.");
+			const spawnedStatus = await execute("team_status", { team: "stderr-check" });
+			const spawnedFacts = (spawnedStatus.details.teammates as Record<string, JsonRecord>).probe;
+			assert.equal(spawnedFacts?.thinking, "off", `A non-reasoning model runs at off, so Team Status must not show the requested low. Got: ${JSON.stringify(spawnedFacts)}`);
 			const processId = Number(fs.readFileSync(processIdFile, "utf8"));
 			await waitFor(async () => (await log()).some((entry) => entry.kind === "stderr" && entry.summary.includes(diagnostic)), "stderr preview");
 			const stderrEntry = (await log()).find((entry) => entry.kind === "stderr" && entry.summary.includes(diagnostic))!;
@@ -109,11 +112,18 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("RPC stderr and
 			assert.ok(saved.includes(session.teammateId) && saved.includes("What token"), "Both turns must use the registered session file");
 
 			await execute("team_shutdown", { team: "stderr-check" });
-			const resumptionPrompt = `next-task-${crypto.randomUUID()}`;
+			const resumptionPrompt = `next-task-${crypto.randomUUID()} ${"Instruction ".repeat(2000)}`;
 			const resumed = await execute("team_resume", { team: "stderr-check", startIdle: true, resumptionPrompt });
 			assert.equal(requests.length, 2, "Idle resumption must not issue a real model request.");
 			assert.equal(resumed.details.started, false, "Idle resumption must report no work started.");
 			assert.equal((resumed.details.teammates as JsonRecord[])[0]?.teammateId, session.teammateId, "Idle resumption must preserve the Pi session identity.");
+			const actualUsage = (await execute("get_context_window_usage", { targets: ["probe"] })).content[0]!.text.match(/Teammate probe .*\((\d+)%\)/)?.[1];
+			const resumedStatus = await execute("team_status", { team: "stderr-check" });
+			const displayedPercent = ((resumedStatus.details.teammates as Record<string, JsonRecord>).probe?.contextPercent) as number | undefined;
+			assert.ok(
+				actualUsage !== undefined && Number(actualUsage) > 10 && Math.round(displayedPercent ?? -1) === Number(actualUsage),
+				`An idle resumption prompt fills the context without a turn, so Team Status must show the new usage. Actual: ${actualUsage}%. Displayed: ${displayedPercent}%.`,
+			);
 			await execute("team_send_message", { targets: ["probe"], message: "Continue the task." });
 			await waitFor(async () => (await log()).filter((entry) => entry.kind === "agent_end").length === 1, "turn after idle resumption");
 			assert.equal(requests.length, 3, "Only the later explicit message should start the resumed model turn.");

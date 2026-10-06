@@ -260,19 +260,19 @@ describe("/team", () => {
 		}
 	});
 
-	test("a short terminal with a full team still shows the latest message and log event", async () => {
+	test("a short terminal with a full team still shows the latest multi-line message and log event", async () => {
 		const teammateNames = ["alpha", "beta", "gamma", "delta"];
 		const snapshot: TeamSnapshot = {
 			...liveSnapshot([
 				logEntry({ sequence: 1, kind: "send", teammate: "alpha", summary: "Older note", details: { from: "alpha", to: "beta", message: "Older note" } }),
-				logEntry({ sequence: 2, kind: "send", teammate: "alpha", summary: "LATEST MESSAGE BODY", details: { from: "alpha", to: "main", message: "LATEST MESSAGE BODY" } }),
+				logEntry({ sequence: 2, kind: "send", teammate: "alpha", summary: "LATEST MESSAGE BODY", details: { from: "alpha", to: "main", message: "LATEST MESSAGE BODY\nIt has ceased to be.\nIt is an ex-parrot." } }),
 				logEntry({ sequence: 3, kind: "error", teammate: "delta", summary: "LATEST LOG EVENT" }),
 			]),
 			roster: teammateNames,
 			statuses: Object.fromEntries(["main", ...teammateNames].map((name, index) => [name, { word: "working", phrase: `${name} works`, updated: `August 12, 10:00:0${index + 1}` }])),
 		};
 
-		for (const rows of [24, 30]) {
+		for (const rows of [24, 25, 26, 27, 28, 29, 30]) {
 			const host = new TeamCommandHost(rows);
 			try {
 				await host.openSnapshots(() => [snapshot], (component) => {

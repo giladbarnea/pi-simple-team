@@ -2,6 +2,7 @@ import * as http from "node:http";
 import { defineTool, getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { formatContextWindowReport, requireKnownContextUsage } from "./context-window.ts";
+import { formatModelReference } from "./model-preflight.ts";
 import { renderTeamMessage } from "./render.ts";
 import { targetDescription, interruptDescription } from "./team-selection.ts";
 
@@ -98,6 +99,15 @@ async function readJsonBody(request: http.IncomingMessage): Promise<JsonRecord> 
 	return JSON.parse(Buffer.concat(chunks).toString("utf8")) as JsonRecord;
 }
 
+/** The model, thinking level, and context usage the child actually runs with. Pi may clamp the requested thinking level to the model. */
+function runtimeFacts(context: ExtensionContext): JsonRecord {
+	return {
+		model: formatModelReference(context.model!),
+		thinking: context.thinkingLevel!,
+		contextPercent: context.getContextUsage()?.percent ?? null,
+	};
+}
+
 interface ChildDelivery {
 	team: string;
 	from: string;
@@ -169,11 +179,12 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 		notifyParent({ type: "agent_settled" });
 		markIdle();
 	});
-	const reportContextUsage = (context: ExtensionContext): void => {
-		notifyParent({ type: "context_usage", percent: context.getContextUsage()?.percent ?? null });
-	};
-	pi.on("turn_end", (_event, context) => reportContextUsage(context));
-	pi.on("session_compact", (_event, context) => reportContextUsage(context));
+	const reportRuntimeFacts = (context: ExtensionContext): Promise<void> => notifyParent({ type: "runtime_facts", ...runtimeFacts(context) });
+	pi.on("turn_end", (_event, context) => { void reportRuntimeFacts(context); });
+	pi.on("session_compact", (_event, context) => { void reportRuntimeFacts(context); });
+	pi.on("model_select", (_event, context) => { void reportRuntimeFacts(context); });
+	pi.on("thinking_level_select", (_event, context) => { void reportRuntimeFacts(context); });
+	pi.on("session_tree", (_event, context) => { void reportRuntimeFacts(context); });
 	pi.on("tool_execution_start", (event) => {
 		notifyParent({ type: "tool_execution_start", toolCallId: event.toolCallId, toolName: event.toolName, args: event.args });
 	});
@@ -223,6 +234,7 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 						},
 						{ deliverAs: "steer", triggerTurn: delivery.triggerTurn !== false },
 					);
+					await reportRuntimeFacts(context);
 					writeJson(response, 200, { accepted: true, team: config.teamName, from: delivery.from, to: delivery.to, interrupt: delivery.interrupt });
 				} catch (error) {
 					writeJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
@@ -242,7 +254,7 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 				url: `http://127.0.0.1:${address.port}/deliver`,
 				sessionId: context.sessionManager.getSessionId(),
 				sessionFile: context.sessionManager.getSessionFile(),
-				contextPercent: context.getContextUsage()?.percent ?? null,
+				...runtimeFacts(context),
 			});
 		} catch (error) {
 			context.shutdown();

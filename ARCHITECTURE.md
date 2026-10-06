@@ -37,7 +37,7 @@ A team ID has this form:
 
 The manifest stores the team ID, display name, canonical project directory, prompts, transport settings, member session identities, and each member's team-management capability. It also stores lifecycle timestamps and whether each session file has ever materialized.
 
-Version-2 manifests store the current teammate fields directly: `systemPrompt`, `forkContext`, `canManageOwnTeams`, `teammateId`, optional `extensionPaths`, and the last reported `contextPercent`. The new directory separates the current format from old manifests. There are no old-name aliases or storage adapters. Pi session files remain untouched. A `teammateId` is the Pi session ID.
+Version-2 manifests store the current teammate fields directly: `systemPrompt`, `forkContext`, `canManageOwnTeams`, `teammateId`, optional `extensionPaths`, and the last reported runtime facts: `model`, `thinking`, and `contextPercent`. The new directory separates the current format from old manifests. There are no old-name aliases or storage adapters. Pi session files remain untouched. A `teammateId` is the Pi session ID.
 
 `team_list` reads only manifests whose canonical project directory matches the current project. Symlinked paths resolve to the same project. A manifest that fails validation never blocks work: other projects ignore it, and `team_list` in its own project reports it under `unreadableManifests`. It still holds its team ID: `team_spawn` refuses any team ID whose manifest file exists, readable or not.
 
@@ -68,6 +68,8 @@ RPC teammates start with `pi --mode rpc`. Children disable discovered extensions
 A normal child registers only parent-team member tools. A child with `canManageOwnTeams: true` also registers manager tools in the same runtime.
 
 Every child runs the same runtime regardless of transport: it starts a local delivery server, then registers that server and its session identity through the parent callback. Startup completes only after registration.
+
+Registration also carries the child's runtime facts: the model and thinking level it actually runs with, and its context usage. The child reports them again after each turn, compaction, model change, thinking change, and branch change. It also reports them after it records an idle delivery, before it acknowledges that delivery, so a lifecycle result already shows the new usage. The parent stores these facts on the teammate, where they replace the requested model and thinking level. Pi can clamp the thinking level to the model, for example to `off` for a model that cannot reason. Every record and view reads the stored facts. A compaction makes the usage unknown, which clears the stored percent.
 
 The parent records every teammate session ID and absolute session file path before it writes the active manifest. After every teammate registers, the parent publishes kickoff messages through their delivery queues. `startIdle: true` suppresses kickoff. A partial kickoff failure reports which teammates started and keeps the team available for inspection.
 
@@ -184,7 +186,7 @@ The 90% overlay has one outer frame and fixed bordered regions for metadata, sta
 
 The message and log widgets are zoomable. Up and Down move a focus marker between them, Enter expands the focused widget to the full overlay under the metadata header, and Esc returns to the dashboard. From the dashboard, Esc closes the overlay. A zoomed view keeps the user oriented three ways: the header title becomes a breadcrumb (`Team: <name> ❯ Messages`), the expanded widget keeps its focused styling, and the hint reads `Esc back to team view`. The dashboard resolves these keys through the `tui.select.*` keybindings, the same ids the team selector uses, so user rebinds apply everywhere. The overlay keeps two intent fields for this: the focused widget and the zoomed widget. Every render still derives the visible screen from those fields plus a fresh snapshot, so a vanished team drops both the selection and the zoom.
 
-The status region shows at most the five most recently updated participants. It fits only whole participants, after it reserves one message header and body row and one log row. It aligns the name, status word, and phrase columns, then right-aligns timestamps.
+The status region shows at most the five most recently updated participants. It fits only whole participants, after each feed gets its own minimum height. Messages keeps a sender row, one body row, and an omission marker. Team Log keeps one row. It aligns the name, status word, and phrase columns, then right-aligns timestamps.
 
 The message region turns `send` and `main_message` entries into message views. It chooses the newest message groups that fit and keeps those groups in chronological order. If one message exceeds its region, the view retains its outer lines around an omission marker.
 
