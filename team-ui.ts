@@ -31,6 +31,8 @@ export type TeamSnapshotSource = () => readonly TeamSnapshot[];
 const RECENT_STATUS_LIMIT = 5;
 /** A fact row, the status phrase row, and an empty row before the next member. */
 const STATUS_ROWS_PER_MEMBER = 3;
+/** Room the status region leaves for the feeds: Messages keeps a header and one body row, Team Log keeps one row, each inside its borders. */
+const FEEDS_MINIMUM_HEIGHT = 7;
 
 type ZoomableWidget = "messages" | "log";
 
@@ -306,14 +308,14 @@ class TeamOverviewOverlay implements Component {
 		const contentWidth = Math.max(1, width - 2);
 		const contentHeight = Math.max(1, height - 2);
 		const headerHeight = Math.min(3, Math.max(1, contentHeight - 3));
-		const desiredStatusHeight = Math.min(Object.keys(team.statuses).length, RECENT_STATUS_LIMIT) * STATUS_ROWS_PER_MEMBER - 1 + 2;
-		const statusHeight = Math.max(1, Math.min(desiredStatusHeight, contentHeight - headerHeight - 2));
+		const statusBudget = contentHeight - headerHeight - FEEDS_MINIMUM_HEIGHT;
+		const statusCount = Math.max(0, Math.min(Object.keys(team.statuses).length, RECENT_STATUS_LIMIT, Math.floor((statusBudget - 1) / STATUS_ROWS_PER_MEMBER)));
+		const statusHeight = Math.max(1, statusCount * STATUS_ROWS_PER_MEMBER + 1);
 		const feedHeight = contentHeight - headerHeight - statusHeight;
 		const messageHeight = Math.max(1, Math.min(feedHeight - 1, Math.round(feedHeight * 0.55)));
 		const logHeight = feedHeight - messageHeight;
 
-		const statusContentHeight = Math.max(0, statusHeight - 2);
-		const statuses = recentStatuses(team.statuses, Math.min(RECENT_STATUS_LIMIT, Math.floor((statusContentHeight + 1) / STATUS_ROWS_PER_MEMBER)));
+		const statuses = recentStatuses(team.statuses, statusCount);
 		const statusLines = clipTeamLines(memberRows(this.theme, Object.fromEntries(statuses), team.teammates, team.roster), Math.max(1, contentWidth - 3));
 
 		const messages = this.messageWidget(team, messageHeight - 2);

@@ -39,7 +39,7 @@ The manifest stores the team ID, display name, canonical project directory, prom
 
 Version-2 manifests store the current teammate fields directly: `systemPrompt`, `forkContext`, `canManageOwnTeams`, `teammateId`, optional `extensionPaths`, and the last reported `contextPercent`. The new directory separates the current format from old manifests. There are no old-name aliases or storage adapters. Pi session files remain untouched. A `teammateId` is the Pi session ID.
 
-`team_list` reads only manifests whose canonical project directory matches the current project. Symlinked paths resolve to the same project. A manifest that fails validation never blocks work: other projects ignore it, and `team_list` in its own project reports it under `unreadableManifests`.
+`team_list` reads only manifests whose canonical project directory matches the current project. Symlinked paths resolve to the same project. A manifest that fails validation never blocks work: other projects ignore it, and `team_list` in its own project reports it under `unreadableManifests`. It still holds its team ID: `team_spawn` refuses any team ID whose manifest file exists, readable or not.
 
 Pi session JSONL files are the canonical conversation history for main and teammates. The registry stores no messages or tool results.
 
@@ -184,7 +184,7 @@ The 90% overlay has one outer frame and fixed bordered regions for metadata, sta
 
 The message and log widgets are zoomable. Up and Down move a focus marker between them, Enter expands the focused widget to the full overlay under the metadata header, and Esc returns to the dashboard. From the dashboard, Esc closes the overlay. A zoomed view keeps the user oriented three ways: the header title becomes a breadcrumb (`Team: <name> ❯ Messages`), the expanded widget keeps its focused styling, and the hint reads `Esc back to team view`. The dashboard resolves these keys through the `tui.select.*` keybindings, the same ids the team selector uses, so user rebinds apply everywhere. The overlay keeps two intent fields for this: the focused widget and the zoomed widget. Every render still derives the visible screen from those fields plus a fresh snapshot, so a vanished team drops both the selection and the zoom.
 
-The status region shows at most the five most recently updated participants. It aligns the name, status word, and phrase columns, then right-aligns timestamps.
+The status region shows at most the five most recently updated participants. It fits only whole participants, after it reserves one message header and body row and one log row. It aligns the name, status word, and phrase columns, then right-aligns timestamps.
 
 The message region turns `send` and `main_message` entries into message views. It chooses the newest message groups that fit and keeps those groups in chronological order. If one message exceeds its region, the view retains its outer lines around an omission marker.
 

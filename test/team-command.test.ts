@@ -260,6 +260,34 @@ describe("/team", () => {
 		}
 	});
 
+	test("a short terminal with a full team still shows the latest message and log event", async () => {
+		const teammateNames = ["alpha", "beta", "gamma", "delta"];
+		const snapshot: TeamSnapshot = {
+			...liveSnapshot([
+				logEntry({ sequence: 1, kind: "send", teammate: "alpha", summary: "Older note", details: { from: "alpha", to: "beta", message: "Older note" } }),
+				logEntry({ sequence: 2, kind: "send", teammate: "alpha", summary: "LATEST MESSAGE BODY", details: { from: "alpha", to: "main", message: "LATEST MESSAGE BODY" } }),
+				logEntry({ sequence: 3, kind: "error", teammate: "delta", summary: "LATEST LOG EVENT" }),
+			]),
+			roster: teammateNames,
+			statuses: Object.fromEntries(["main", ...teammateNames].map((name, index) => [name, { word: "working", phrase: `${name} works`, updated: `August 12, 10:00:0${index + 1}` }])),
+		};
+
+		for (const rows of [24, 30]) {
+			const host = new TeamCommandHost(rows);
+			try {
+				await host.openSnapshots(() => [snapshot], (component) => {
+					const text = component.render(90).join("\n");
+					assert.match(text, /LATEST MESSAGE BODY/, `Expected the latest message body on a ${rows}-row terminal. Got:\n${text}`);
+					assert.match(text, /LATEST LOG EVENT/, `Expected the latest log event on a ${rows}-row terminal. Got:\n${text}`);
+					assert.match(text, /delta works/, `Expected the most recent status to stay visible on a ${rows}-row terminal. Got:\n${text}`);
+					close(component);
+				});
+			} finally {
+				await host.shutdown();
+			}
+		}
+	});
+
 	test("aligns status columns, shows teammate facts, and right-aligns relative timestamps under them", async () => {
 		const host = new TeamCommandHost();
 		const snapshot = liveSnapshot([]);

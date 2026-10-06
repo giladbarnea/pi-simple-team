@@ -606,6 +606,55 @@ test("team_spawn cannot overwrite a dormant team attachment", async () => {
 	}
 });
 
+test("team_spawn cannot overwrite an unreadable team attachment with the same team ID", async () => {
+	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-unreadable-collision-test-"));
+	const agentDirectory = path.join(temporaryDirectory, "agent");
+	const projectDirectory = path.join(temporaryDirectory, "project");
+	fs.mkdirSync(agentDirectory);
+	fs.mkdirSync(projectDirectory);
+	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreFakePi = installFakePi(temporaryDirectory);
+	let host: ExtensionHost | undefined;
+
+	try {
+		const { default: teamExtension } = await import("../index.ts");
+		const teamName = "old-format-team";
+		const manifestPath = path.join(agentDirectory, "pi-simple-team", "teams-v2", `origin-main-session-id-${teamName}.json`);
+		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
+		await host.start();
+		await host.execute("team_spawn", {
+			teamName: teamName,
+			startIdle: true, commonPrompt: "Keep this attachment.",
+			teammates: [{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+		});
+		await host.execute("team_shutdown", { team: teamName });
+		fs.writeFileSync(manifestPath, fs.readFileSync(manifestPath, "utf8").replaceAll("\"forkContext\"", "\"inheritMainContext\""));
+		const originalBytes = fs.readFileSync(manifestPath, "utf8");
+		const listed = await host.execute("team_list", {});
+		assert.deepEqual((listed.details?.unreadableManifests as JsonRecord[] | undefined)?.map((entry) => entry.filePath), [manifestPath], "Precondition: the old-format attachment must be unreadable.");
+		const invocationCount = readFakePiInvocations(temporaryDirectory).length;
+
+		await assert.rejects(
+			() => host!.execute("team_spawn", {
+				teamName: teamName,
+				startIdle: true, commonPrompt: "Replace the attachment.",
+				teammates: [{ name: "replacement", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+			}),
+			/already exists.*team_resume/i,
+			"Expected team_spawn to refuse a team ID whose attachment file exists, even when that file is unreadable.",
+		);
+		assert.equal(readFakePiInvocations(temporaryDirectory).length, invocationCount, "Expected the rejected spawn to start no replacement Pi session.");
+		assert.equal(fs.readFileSync(manifestPath, "utf8"), originalBytes, "Expected the rejected spawn to leave the unreadable attachment bytes unchanged.");
+	} finally {
+		await host?.shutdown();
+		restoreFakePi();
+		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+	}
+});
+
 test("canonical team IDs distinguish live teams with the same display name", async () => {
 	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-canonical-id-test-"));
 	const agentDirectory = path.join(temporaryDirectory, "agent");
@@ -1655,5 +1704,61 @@ test("explicit teammate extensions survive shutdown and resume without enabling 
 		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
 		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("Team Resume and Team Add results render each teammate's resolved facts", async () => {
+	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-lifecycle-render-test-"));
+	const agentDirectory = path.join(temporaryDirectory, "agent");
+	const projectDirectory = path.join(temporaryDirectory, "project");
+	fs.mkdirSync(agentDirectory);
+	fs.mkdirSync(projectDirectory);
+	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreFakePi = installFakePi(temporaryDirectory);
+	const hosts: ExtensionHost[] = [];
+	const plainTheme = { bold: (text: string) => text, fg: (_token: string, text: string) => text };
+
+	try {
+		const { default: teamExtension } = await import("../index.ts");
+		const teamName = "lifecycle-render";
+		const originHost = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
+		hosts.push(originHost);
+		await originHost.start();
+		await originHost.execute("team_spawn", {
+			teamName: teamName,
+			startIdle: true, commonPrompt: "Wait.",
+			teammates: [
+				{ name: "resumed", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+				{ name: "sleeper", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+			],
+		});
+		await originHost.execute("team_shutdown", { team: teamName });
+		const host = new ExtensionHost(teamExtension, makeContext("resuming-main-session-id", projectDirectory));
+		hosts.push(host);
+		await host.start();
+		const render = async (toolName: string, args: JsonRecord): Promise<string[]> => {
+			const result = await host.execute(toolName, args);
+			const tool = host.tools.get(toolName) as RegisteredTool & { renderResult: (...parameters: unknown[]) => { render(width: number): string[] } };
+			return tool.renderResult(result, { expanded: false }, plainTheme, { args }).render(120);
+		};
+
+		const resumedId = listedMember(await host.execute("team_list", {}), `origin-main-session-id-${teamName}`, "resumed")?.teammateId;
+		const resumeLines = await render("team_resume", { team: teamName, startIdle: true, teammates: [String(resumedId)] });
+		const sleeperLine = resumeLines.find((line) => line.includes("sleeper"));
+		const resumedLine = resumeLines.find((line) => line.includes("resumed "));
+		assert.match(sleeperLine ?? "", /\u001b\[2msleeper/, `Expected the still-stopped teammate's name to be dimmed. Got: ${JSON.stringify(resumeLines)}`);
+		assert.doesNotMatch(resumedLine ?? "", /\u001b\[2m/, `Expected the resumed teammate's name to stay bright. Got: ${JSON.stringify(resumeLines)}`);
+
+		const addLines = await render("team_add_teammates", { team: teamName, startIdle: true, teammates: [{ name: "added", systemPrompt: "Help.", model: "fake/fake-model" }] });
+		const addedLine = addLines.find((line) => line.includes("added ") && line.includes("fake-model"));
+		assert.match(addedLine ?? "", /\bxhigh\b/, `Expected Team Add to show the default thinking level the teammate started with. Got: ${JSON.stringify(addLines)}`);
+		assert.match(addedLine ?? "", /32%/, `Expected Team Add to show the context usage the new teammate reported. Got: ${JSON.stringify(addLines)}`);
+	} finally {
+		for (const host of hosts) await host.shutdown();
+		restoreFakePi();
+		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });

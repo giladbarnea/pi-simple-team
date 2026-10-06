@@ -347,7 +347,7 @@ describe("Team Spawn result", () => {
 
 	test("Team Add expands the same way for the added teammates", () => {
 		const addArgs = { team: "demo-team", teammates: [teammates[0]] };
-		const details = { teamName: "demo-team", status: { implementer: {}, reviewer: {} } };
+		const details = { teamName: "demo-team", status: { implementer: {}, reviewer: {} }, addedTeammates: [teammates[0]] };
 		const lines = renderTeamToolResult("team_add_teammates", { details }, { expanded: true }, identityTheme, { args: addArgs }, identityMarkdownTheme).render(80);
 		expect(lines.find((line) => line.includes("implementer"))).toContain("〒 team manager");
 		expect(lines.join("\n")).toContain("Test it.");

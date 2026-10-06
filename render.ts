@@ -279,9 +279,9 @@ export function teamResumeLines(theme: ThemeLike, team: string, resumed: Resumed
 	const countText = resumedCount === teammateCount ? `${resumedCount} resumed` : `${resumedCount} of ${teammateCount} resumed`;
 	const header = headerLine(theme, "Team Resume", theme.fg("accent", team), [theme.fg("muted", countText)]);
 	if (resumed.length === 0) return [header, `${treeConnector(theme, "└")}${theme.fg("muted", "no stopped teammates")}`];
-	const rows = resumed.map(({ restored, active, live, ...member }) => ({
+	const rows = resumed.map(({ restored, active, ...member }) => ({
 		...member,
-		status: restored === undefined ? active ? "working" : live ? "idle" : "stopped" : restored ? "resumed" : "restarted",
+		status: restored === undefined ? active ? "working" : member.live ? "idle" : "stopped" : restored ? "resumed" : "restarted",
 		note: restored === undefined ? "" : `${restored ? "history restored" : "empty session"}, ${active ? "working" : "idle"}`,
 	}));
 	return [header, ...teammateTree(theme, rows, roster, (row, stem) => (row.note ? [`${stem}${theme.fg("muted", row.note)}`] : []))];
@@ -798,7 +798,7 @@ function resultLinesFor(tool: TeamToolName, theme: ThemeLike, args: Record<strin
 	}
 	if (tool === "team_add_teammates") {
 		const memberCount = Object.keys((details.status ?? {}) as Record<string, unknown>).length;
-		return teamAddLines(theme, String(details.teamName), (args.teammates ?? []) as TeammateSpecView[], memberCount, roster, expanded ? markdownTheme! : undefined);
+		return teamAddLines(theme, String(details.teamName), details.addedTeammates as TeammateSpecView[], memberCount, roster, expanded ? markdownTheme! : undefined);
 	}
 	if (tool === "team_send_message") {
 		return teamSendLines(theme, {

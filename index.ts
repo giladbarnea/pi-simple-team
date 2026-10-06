@@ -16,6 +16,7 @@ import {
 	claimTeamLease,
 	dormantManifestRetentionMilliseconds,
 	listTeamManifests,
+	teamManifestExists,
 	readTeamLeaseState,
 	releaseTeamLease,
 	writeTeamManifest,
@@ -1030,7 +1031,7 @@ export default function (pi: ExtensionAPI) {
 					if (teams.has(runtimeTeamId)) throw new Error(`Team already exists: ${runtimeTeamId}`);
 					const lease = teamId ? claimTeamLease(teamId, originMainSessionId) : undefined;
 					try {
-						if (teamId && projectDirectory && listTeamManifests(projectDirectory).manifests.some((manifest) => manifest.id === teamId)) {
+						if (teamId && teamManifestExists(teamId)) {
 							// TODO: Consider resuming here if all supplied spawn settings can be preserved.
 							throw new Error(`Team already exists: ${teamId}. Use team_resume.`);
 						}
@@ -1358,7 +1359,7 @@ export default function (pi: ExtensionAPI) {
 					...lifecycleResult(team),
 					teammates: [...team.members.values()].map(teammateSummary),
 					status: formatStatus(team),
-				});
+				}, { addedTeammates: addedTeammates.map(teammateRecord) });
 			},
 		}),
 	);

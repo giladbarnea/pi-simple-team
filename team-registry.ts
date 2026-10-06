@@ -149,6 +149,11 @@ export function writeTeamManifest(manifest: TeamManifest): void {
 	fs.renameSync(temporaryPath, filePath);
 }
 
+/** Whether a saved attachment file holds this team ID, readable or not. */
+export function teamManifestExists(teamId: string): boolean {
+	return fs.existsSync(manifestPath(teamId));
+}
+
 export interface UnreadableManifest {
 	filePath: string;
 	error: string;
