@@ -246,10 +246,10 @@ describe("/team", () => {
 				for (const line of lines) assert.equal(visibleWidth(line), 90);
 				assert.match(lines[1]!, /Team: live-team-command-test/);
 				assert.match(lines[4]!, /Status/);
-				assert.match(lines[16]!, /Messages/);
+				assert.match(lines[20]!, /Messages/);
 				assert.ok(lines.some((line) => line.includes("Team Log")));
 
-				const statusRows = lines.slice(5, 15).join("\n");
+				const statusRows = lines.slice(5, 19).join("\n");
 				assert.match(statusRows, /teammate-7[\s\S]*teammate-6[\s\S]*teammate-5[\s\S]*teammate-4[\s\S]*teammate-3/);
 				assert.doesNotMatch(statusRows, /teammate-[12]/);
 				assert.doesNotMatch(statusRows, /\bmain\b/);
@@ -270,7 +270,7 @@ describe("/team", () => {
 
 		try {
 			await host.openSnapshots(() => [snapshot], (component) => {
-				const rows = component.render(100).slice(5, 9);
+				const rows = component.render(100).slice(5, 10);
 				const mainRow = rows.find((row) => row.includes("main"));
 				const reviewerRow = rows.find((row) => row.includes("reviewer"));
 				const mainPhrase = rows.find((row) => row.includes("STATUS-BEGIN"));

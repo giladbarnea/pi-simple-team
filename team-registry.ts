@@ -149,27 +149,50 @@ export function writeTeamManifest(manifest: TeamManifest): void {
 	fs.renameSync(temporaryPath, filePath);
 }
 
-export function listTeamManifests(projectDirectory: string): TeamManifest[] {
+export interface UnreadableManifest {
+	filePath: string;
+	error: string;
+}
+
+/** The project an unreadable manifest names, when its JSON still says. */
+function claimedProjectDirectory(filePath: string): string | undefined {
+	try {
+		const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as { projectDirectory?: unknown };
+		return typeof parsed.projectDirectory === "string" ? parsed.projectDirectory : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The current project's readable manifests, plus the unreadable ones that may belong to it.
+ * A manifest from another Pi Simple Team version or another project never blocks this project.
+ */
+export function listTeamManifests(projectDirectory: string): { manifests: TeamManifest[]; unreadable: UnreadableManifest[] } {
 	const directory = manifestsDirectory();
-	if (!fs.existsSync(directory)) return [];
+	if (!fs.existsSync(directory)) return { manifests: [], unreadable: [] };
 
 	const resolvedProjectDirectory = canonicalProjectDirectory(projectDirectory);
 	const now = Date.now();
-	return fs
-		.readdirSync(directory, { withFileTypes: true })
-		.filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-		.map((entry) => ({ filePath: path.join(directory, entry.name), manifest: parseManifest(path.join(directory, entry.name)) }))
-		.filter(({ filePath, manifest }) => {
-			const expiresAt = Date.parse(manifest.expiresAt ?? "");
-			const expired = manifest.state === "dormant" && now >= expiresAt;
-			if (!expired) return true;
+	const manifests: TeamManifest[] = [];
+	const unreadable: UnreadableManifest[] = [];
+	const filePaths = fs.readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.isFile() && entry.name.endsWith(".json")).map((entry) => path.join(directory, entry.name));
+	for (const filePath of filePaths) {
+		let manifest: TeamManifest;
+		try {
+			manifest = parseManifest(filePath);
+		} catch (error) {
+			if ((claimedProjectDirectory(filePath) ?? resolvedProjectDirectory) === resolvedProjectDirectory) unreadable.push({ filePath, error: error instanceof Error ? error.message : String(error) });
+			continue;
+		}
+		if (manifest.state === "dormant" && now >= Date.parse(manifest.expiresAt ?? "")) {
 			fs.rmSync(leasePath(manifest.id), { force: true });
 			fs.rmSync(filePath);
-			return false;
-		})
-		.map(({ manifest }) => manifest)
-		.filter((manifest) => manifest.projectDirectory === resolvedProjectDirectory)
-		.sort((left, right) => left.id.localeCompare(right.id));
+			continue;
+		}
+		if (manifest.projectDirectory === resolvedProjectDirectory) manifests.push(manifest);
+	}
+	return { manifests: manifests.sort((left, right) => left.id.localeCompare(right.id)), unreadable };
 }
 
 export function readTeamLeaseState(teamId: string): { state: "unclaimed" | "claimed" | "stale"; mainSessionId?: string } {

@@ -39,7 +39,7 @@ The manifest stores the team ID, display name, canonical project directory, prom
 
 Version-2 manifests store the current teammate fields directly: `systemPrompt`, `forkContext`, `canManageOwnTeams`, `teammateId`, optional `extensionPaths`, and the last reported `contextPercent`. The new directory separates the current format from old manifests. There are no old-name aliases or storage adapters. Pi session files remain untouched. A `teammateId` is the Pi session ID.
 
-`team_list` reads only manifests whose canonical project directory matches the current project. Symlinked paths resolve to the same project.
+`team_list` reads only manifests whose canonical project directory matches the current project. Symlinked paths resolve to the same project. A manifest that fails validation never blocks work: other projects ignore it, and `team_list` in its own project reports it under `unreadableManifests`.
 
 Pi session JSONL files are the canonical conversation history for main and teammates. The registry stores no messages or tool results.
 

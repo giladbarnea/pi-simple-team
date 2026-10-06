@@ -470,6 +470,45 @@ test("team_spawn isolates teammates from conflicting discovered team extensions"
 	}
 });
 
+test("an unreadable manifest blocks nothing: other projects ignore it, and its own project's team_list reports it", async () => {
+	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-unreadable-manifest-test-"));
+	const agentDirectory = path.join(temporaryDirectory, "agent");
+	const projectDirectory = path.join(temporaryDirectory, "project");
+	fs.mkdirSync(agentDirectory);
+	fs.mkdirSync(projectDirectory);
+	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreFakePi = installFakePi(temporaryDirectory);
+	const manifestsDirectory = path.join(agentDirectory, "pi-simple-team", "teams-v2");
+	const ownProjectManifest = path.join(manifestsDirectory, "old-format.json");
+	let host: ExtensionHost | undefined;
+
+	try {
+		fs.mkdirSync(manifestsDirectory, { recursive: true });
+		fs.writeFileSync(path.join(manifestsDirectory, "other-project.json"), JSON.stringify({ version: 2, projectDirectory: "/another/project" }));
+		fs.writeFileSync(ownProjectManifest, JSON.stringify({ version: 2, projectDirectory: fs.realpathSync(projectDirectory) }));
+		const { default: teamExtension } = await import("../index.ts");
+		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
+		await host.start();
+		const spawned = await host.execute("team_spawn", {
+			teamName: "unblocked-team",
+			startIdle: true, commonPrompt: "Wait.",
+			teammates: [{ name: "waiter", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+		});
+		assert.equal(spawned.details?.teamId, "origin-main-session-id-unblocked-team");
+		const listed = await host.execute("team_list", {});
+		assert.deepEqual((listed.details?.teams as JsonRecord[]).map((team) => team.teamName), ["unblocked-team"]);
+		assert.deepEqual((listed.details?.unreadableManifests as JsonRecord[]).map((entry) => entry.filePath), [ownProjectManifest]);
+		assert.match(listed.content[0]!.text, /old-format\.json/, "The model must see the unreadable manifest too.");
+	} finally {
+		await host?.shutdown();
+		restoreFakePi();
+		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+	}
+});
+
 test("team_spawn returns each durable Pi session identity", async () => {
 	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-spawn-identity-test-"));
 	const agentDirectory = path.join(temporaryDirectory, "agent");

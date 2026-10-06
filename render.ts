@@ -204,9 +204,10 @@ function statusRows(statuses: Record<string, TeamStatusView>, teammates: Record<
 	return Object.entries(statuses).map(([name, entry]) => ({ ...teammates[name], name, status: entry.word, entry }));
 }
 
-/** Each participant's fact row with its status phrase under it. Team Status and the /team overlay share it. */
+/** Each participant's fact row with its status phrase under it, and an empty row before the next participant. Team Status and the /team overlay share it. */
 export function memberRows(theme: ThemeLike, statuses: Record<string, TeamStatusView>, teammates: Record<string, TeammateView> | undefined, roster: string[], indent = ""): TeamLine[] {
-	return teammateTree(theme, statusRows(statuses, teammates), roster, (row, stem) => [statusPhraseLine(theme, stem, row.entry)], indent);
+	const below = (row: StatusRow, stem: string, isLast: boolean): TeamLine[] => [statusPhraseLine(theme, stem, row.entry), ...(isLast ? [] : [{ prefix: stem, text: "" }])];
+	return teammateTree(theme, statusRows(statuses, teammates), roster, below, indent);
 }
 
 export function teamStatusLines(theme: ThemeLike, team: string, statuses: Record<string, TeamStatusView>, roster: string[] = [], teammates?: Record<string, TeammateView>): TeamLine[] {
@@ -311,10 +312,11 @@ function teamListTimestamp(teamView: TeamListTeamView): string {
 }
 
 /** Collapsed, each team lists its teammate names inline. Expanded, each teammate gets its own fact row. */
-export function teamListLines(theme: ThemeLike, teamViews: TeamListTeamView[], roster: string[] = [], expanded = false): TeamLine[] {
+export function teamListLines(theme: ThemeLike, teamViews: TeamListTeamView[], roster: string[] = [], expanded = false, unreadableCount = 0): TeamLine[] {
 	const activeCount = teamViews.filter((teamView) => teamView.state === "active").length;
 	const stats = [theme.fg("muted", plural(teamViews.length, "team"))];
 	if (activeCount > 0) stats.push(theme.fg("success", `${activeCount} active`));
+	if (unreadableCount > 0) stats.push(theme.fg("warning", `${unreadableCount} unreadable`));
 	const header = headerLine(theme, "Team List", "", stats);
 	if (teamViews.length === 0) return [header, `${treeConnector(theme, "└")}${theme.fg("muted", "no teams")}`];
 	const nameWidth = Math.max(...teamViews.map((teamView) => teamView.name.length));
@@ -788,7 +790,7 @@ function resultLinesFor(tool: TeamToolName, theme: ThemeLike, args: Record<strin
 			updatedAt: String(entry.updatedAt),
 			expiresAt: entry.expiresAt as string | undefined,
 		}));
-		return teamListLines(theme, teamViews, roster, expanded);
+		return teamListLines(theme, teamViews, roster, expanded, ((details.unreadableManifests ?? []) as unknown[]).length);
 	}
 	if (tool === "team_resume") {
 		const teammates = (details.teammates as Array<ResumedMemberView & { contextRestored?: boolean }>).map(({ contextRestored, ...member }) => ({ ...member, restored: contextRestored }));

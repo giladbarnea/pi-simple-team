@@ -105,35 +105,36 @@ describe("teamStatusLines", () => {
 		reviewer: { word: "waiting", phrase: "Standing by", updated: "July 16, 23:01:10" },
 	};
 
-	test("renders a stat-line header and a fact row plus a phrase row per member", () => {
+	test("renders a stat-line header and, per member, a fact row, a phrase row, and an empty row before the next", () => {
 		const lines = teamStatusLines(identityTheme, "demo-team", statuses).map(teamLineText);
-		expect(lines).toHaveLength(7);
+		expect(lines).toHaveLength(9);
 		expect(lines[0]).toContain("Team Status demo-team");
 		expect(lines[0]).toContain("3 members");
 		expect(lines[0]).toContain("1 working");
 		expect(lines[1]).toContain(g.tree.mid.trim());
 		expect(lines[2]).toContain("Running gates");
-		expect(lines[5]).toContain(g.tree.last.trim());
-		expect(lines[6]).toContain("Standing by");
+		expect(lines[3]).toBe(`  ${g.tree.stem.trim()}`);
+		expect(lines[7]).toContain(g.tree.last.trim());
+		expect(lines[8]).toContain("Standing by");
 	});
 
 	test("aligns the status word column across rows", () => {
 		const lines = teamStatusLines(identityTheme, "demo-team", statuses).map(teamLineText);
-		const wordColumns = [lines[1]!.indexOf("working"), lines[3]!.indexOf("waiting"), lines[5]!.indexOf("waiting")];
+		const wordColumns = [lines[1]!.indexOf("working"), lines[4]!.indexOf("waiting"), lines[7]!.indexOf("waiting")];
 		expect(new Set(wordColumns).size).toBe(1);
 	});
 
 	test("colors each status word by its semantic token", () => {
 		const lines = teamStatusLines(taggingTheme, "demo-team", statuses).map(teamLineText);
 		expect(lines[1]).toContain("«success:working");
-		expect(lines[3]).toContain("«warning:waiting");
+		expect(lines[4]).toContain("«warning:waiting");
 	});
 
 	test("uses the Team Log actor colors for member names", () => {
 		const lines = teamStatusLines(taggingTheme, "demo-team", statuses, ["implementer", "reviewer"]).map(teamLineText);
 		expect(lines[1]).toContain("«mdCode:implementer");
-		expect(lines[3]).toContain("«accent:main");
-		expect(lines[5]).toContain("«customMessageLabel:reviewer");
+		expect(lines[4]).toContain("«accent:main");
+		expect(lines[7]).toContain("«customMessageLabel:reviewer");
 	});
 
 	test("renders ISO updated timestamps as relative time on the phrase row", () => {
@@ -142,14 +143,17 @@ describe("teamStatusLines", () => {
 			main: { word: "waiting", phrase: "Standing by", updated: new Date(Date.now() - 2.5 * 60_000).toISOString() },
 		}).map(teamLineText);
 		expect(lines[2]).toEndWith("12m ago");
-		expect(lines[4]).toEndWith("2m ago");
+		expect(lines[5]).toEndWith("2m ago");
 	});
 
-	test("shows each teammate's facts after its live mark and status word", () => {
-		const teammates = { implementer: { name: "implementer", live: true, model: "openai-codex/gpt-6-luna", thinking: "high", contextPercent: 16, forkContext: true } };
+	test("shows each teammate's facts after its status word, and dims a stopped teammate's name", () => {
+		const teammates = {
+			implementer: { name: "implementer", live: true, model: "openai-codex/gpt-6-luna", thinking: "high", contextPercent: 16, forkContext: true },
+			reviewer: { name: "reviewer", live: false, model: "openai-codex/gpt-6-luna", thinking: "low" },
+		};
 		const lines = teamStatusLines(identityTheme, "demo-team", statuses, [], teammates).map(teamLineText);
-		expect(lines[1]).toMatch(/implementer +● +working +openai-codex\/gpt-6-luna +▂16% context +⑂ fork +high$/);
-		expect(lines[3]).not.toContain("●");
+		expect(lines[1]).toMatch(/implementer +working +openai-codex\/gpt-6-luna +▂16% context +⑂ fork +high$/);
+		expect(lines[7]).toContain("\u001b[2mreviewer");
 	});
 });
 
@@ -454,10 +458,13 @@ describe("teamListLines", () => {
 		const lines = teamListLines(identityTheme, detailed, [], true).map(teamLineText);
 		expect(lines).toHaveLength(4);
 		expect(lines[1]).not.toContain("scout");
-		expect(lines[2]).toMatch(/scout +● +openai-codex\/gpt-6-luna +low$/);
-		expect(lines[3]).toContain("reviewer");
-		expect(lines[3]).toContain("○");
+		expect(lines[2]).toMatch(/scout +openai-codex\/gpt-6-luna +low$/);
+		expect(lines[3]).toContain("\u001b[2mreviewer");
 		expect(lines[3]).toContain("〒 team manager");
+	});
+
+	test("counts unreadable manifests in the header", () => {
+		expect(teamListLines(taggingTheme, [], [], false, 2).map(teamLineText)[0]).toContain("«warning:2 unreadable»");
 	});
 
 	test("shows an empty state when no teams exist", () => {
@@ -887,7 +894,7 @@ describe("renderTeamToolResult", () => {
 			identityTheme,
 			{},
 		);
-		const rows = component.render(width).slice(1).filter((_row, index) => index % 2 === 1);
+		const rows = component.render(width).slice(1).filter((_row, index) => index % 3 === 1);
 		const plainRows = rows.map(stripAnsi);
 
 		expect(rows).toHaveLength(2);

@@ -8,7 +8,7 @@ export interface FactTheme extends HeatTheme {
 	bold(text: string): string;
 }
 
-/** The facts a teammate row can show. A missing field means the view does not show that fact. */
+/** The facts a teammate row can show. A missing field means the view does not show that fact. A stopped teammate (`live: false`) has a dimmed name. */
 export interface TeammateView {
 	name: string;
 	live?: boolean;
@@ -25,7 +25,7 @@ export interface FactRow extends TeammateView {
 	status?: string;
 }
 
-export type FactKey = "name" | "live" | "status" | "model" | "context" | "fork" | "manager" | "thinking" | "herdr";
+export type FactKey = "name" | "status" | "model" | "context" | "fork" | "manager" | "thinking" | "herdr";
 type Form = "full" | "short" | "bare" | "icon";
 type FormOrHidden = Form | "hidden";
 
@@ -39,7 +39,7 @@ interface Paint {
 type Ladder = { full: (row: FactRow, paint: Paint) => string } & Partial<Record<Exclude<Form, "full">, (row: FactRow, paint: Paint) => string>>;
 
 /** Left to right on every teammate row, across every view. */
-export const FACT_ORDER: readonly FactKey[] = ["name", "live", "status", "model", "context", "fork", "manager", "thinking", "herdr"];
+export const FACT_ORDER: readonly FactKey[] = ["name", "status", "model", "context", "fork", "manager", "thinking", "herdr"];
 
 const TEAMMATE_HUE_TOKENS = ["mdCode", "customMessageLabel", "mdHeading"] as const;
 
@@ -109,13 +109,6 @@ const LADDERS: Record<FactKey, Ladder> = {
 			return row.live === false ? `${DIM_SGR_OPEN}${name}${DIM_SGR_CLOSE}` : name;
 		},
 	},
-	live: {
-		full: (row, paint) => {
-			if (row.live === undefined) return "";
-			const g = glyphs();
-			return row.live ? paint.theme.fg("muted", g.bullet.trim()) : paint.theme.fg("dim", g.emptyBullet.trim());
-		},
-	},
 	status: { full: (row, paint) => (row.status ? paint.theme.fg(statusWordToken(row.status), row.status) : "") },
 	model: {
 		full: (row, paint) => (row.model ? paint.theme.fg("muted", row.model) : ""),
@@ -137,7 +130,7 @@ const SHRINK_STEPS: ReadonlyArray<readonly [FactKey, FormOrHidden]> = [
 	["herdr", "short"], ["manager", "short"], ["context", "short"], ["model", "short"],
 	["herdr", "bare"], ["manager", "bare"], ["fork", "bare"],
 	["herdr", "icon"], ["manager", "icon"], ["fork", "icon"], ["context", "icon"],
-	["herdr", "hidden"], ["thinking", "hidden"], ["manager", "hidden"], ["fork", "hidden"], ["context", "hidden"], ["model", "hidden"], ["status", "hidden"], ["live", "hidden"],
+	["herdr", "hidden"], ["thinking", "hidden"], ["manager", "hidden"], ["fork", "hidden"], ["context", "hidden"], ["model", "hidden"], ["status", "hidden"],
 ];
 
 const FULL_FORMS = Object.fromEntries(FACT_ORDER.map((key) => [key, "full"])) as Record<FactKey, FormOrHidden>;

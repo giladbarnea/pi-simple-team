@@ -1029,10 +1029,14 @@ export default function (pi: ExtensionAPI) {
 					const runtimeTeamId = teamId ?? teamName;
 					if (teams.has(runtimeTeamId)) throw new Error(`Team already exists: ${runtimeTeamId}`);
 					const lease = teamId ? claimTeamLease(teamId, originMainSessionId) : undefined;
-					if (teamId && projectDirectory && listTeamManifests(projectDirectory).some((manifest) => manifest.id === teamId)) {
-						releaseTeamLease(lease!);
-						// TODO: Consider resuming here if all supplied spawn settings can be preserved.
-						throw new Error(`Team already exists: ${teamId}. Use team_resume.`);
+					try {
+						if (teamId && projectDirectory && listTeamManifests(projectDirectory).manifests.some((manifest) => manifest.id === teamId)) {
+							// TODO: Consider resuming here if all supplied spawn settings can be preserved.
+							throw new Error(`Team already exists: ${teamId}. Use team_resume.`);
+						}
+					} catch (error) {
+						if (lease) releaseTeamLease(lease);
+						throw error;
 					}
 					sessionTeammateRoster.push(...teammateNames.filter((teammateName) => !sessionTeammateRoster.includes(teammateName)));
 					try {
@@ -1146,10 +1150,12 @@ export default function (pi: ExtensionAPI) {
 				if (!projectDirectory) throw new Error("team_list requires a project directory");
 				const managerSessionId = childRuntimeConfig ? context.sessionManager?.getSessionId?.() : undefined;
 				if (childRuntimeConfig && !managerSessionId) throw new Error("team_list requires a persistent managing teammate Pi session");
-				const manifests = listTeamManifests(projectDirectory).filter(
+				const listing = listTeamManifests(projectDirectory);
+				const manifests = listing.manifests.filter(
 					(manifest) => !managerSessionId || manifest.originMainSessionId === managerSessionId,
 				);
 				return toolResult({
+					...(listing.unreadable.length > 0 ? { unreadableManifests: listing.unreadable } : {}),
 					teams: manifests.map((manifest) => {
 						const liveTeam = teams.get(manifest.id);
 						return {
@@ -1195,7 +1201,7 @@ export default function (pi: ExtensionAPI) {
 				if (!rawProjectDirectory) throw new Error("team_resume requires a project directory");
 				const managerSessionId = childRuntimeConfig ? context.sessionManager?.getSessionId?.() : undefined;
 				if (childRuntimeConfig && !managerSessionId) throw new Error("team_resume requires a persistent managing teammate Pi session");
-				const availableManifests = listTeamManifests(rawProjectDirectory).filter(
+				const availableManifests = listTeamManifests(rawProjectDirectory).manifests.filter(
 					(candidate) => !managerSessionId || candidate.originMainSessionId === managerSessionId,
 				);
 				const manifest = resolveTeamIdentifier(availableManifests, params.team);
