@@ -1,0 +1,7 @@
+# OptMem sizes for this memory. A commented line means: follow the
+# tool's default. Edit with `~/dev/optmem/memo config NAME=VALUE`.
+
+# WAKE_LINES   = 96     # the memory context: how many lines wake prints
+# ENTRY_CHARS  = 280    # the longest one memory may be, in bytes
+# PART_CHARS   = 20000  # output paging: largest part, in bytes
+# PART_LINES   = 500    # output paging: largest part, in lines
