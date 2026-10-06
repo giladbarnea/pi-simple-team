@@ -37,7 +37,7 @@ A team ID has this form:
 
 The manifest stores the team ID, display name, canonical project directory, prompts, transport settings, member session identities, and each member's team-management capability. It also stores lifecycle timestamps and whether each session file has ever materialized.
 
-Version-2 manifests store the current teammate fields directly: `systemPrompt`, `inheritMainContext`, `canManageOwnTeams`, `teammateId`, and optional `extensionPaths`. The new directory separates the current format from old manifests. There are no old-name aliases or storage adapters. Pi session files remain untouched. A `teammateId` is the Pi session ID.
+Version-2 manifests store the current teammate fields directly: `systemPrompt`, `forkContext`, `canManageOwnTeams`, `teammateId`, optional `extensionPaths`, and the last reported `contextPercent`. The new directory separates the current format from old manifests. There are no old-name aliases or storage adapters. Pi session files remain untouched. A `teammateId` is the Pi session ID.
 
 `team_list` reads only manifests whose canonical project directory matches the current project. Symlinked paths resolve to the same project.
 
@@ -75,7 +75,7 @@ The spawn result returns `teamName`, `teamId`, `started`, the complete roster wi
 
 `live` identifies a running runtime. `active` identifies running or queued work. Runtime events and pending delivery counts determine activity independently of teammate-written status prose. `started` is true when any teammate has active work. Idle or no-op lifecycle calls therefore still report existing active work. Lifecycle results and instructions describe the resulting team.
 
-Kickoff restates the recipient's identity and individual assignment. This prevents an inheriting teammate from continuing main's coordination workflow. Cancellation during startup stops prepared members before automatic kickoff. Concurrent creators await the same parent callback-server readiness promise.
+Kickoff restates the recipient's identity and individual assignment. This prevents a forked teammate from continuing main's coordination workflow. Cancellation during startup stops prepared members before automatic kickoff. Concurrent creators await the same parent callback-server readiness promise.
 
 ### `team_add_teammates` grows only a running owned team
 

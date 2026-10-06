@@ -169,6 +169,11 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 		notifyParent({ type: "agent_settled" });
 		markIdle();
 	});
+	const reportContextUsage = (context: ExtensionContext): void => {
+		notifyParent({ type: "context_usage", percent: context.getContextUsage()?.percent ?? null });
+	};
+	pi.on("turn_end", (_event, context) => reportContextUsage(context));
+	pi.on("session_compact", (_event, context) => reportContextUsage(context));
 	pi.on("tool_execution_start", (event) => {
 		notifyParent({ type: "tool_execution_start", toolCallId: event.toolCallId, toolName: event.toolName, args: event.args });
 	});
@@ -237,6 +242,7 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 				url: `http://127.0.0.1:${address.port}/deliver`,
 				sessionId: context.sessionManager.getSessionId(),
 				sessionFile: context.sessionManager.getSessionFile(),
+				contextPercent: context.getContextUsage()?.percent ?? null,
 			});
 		} catch (error) {
 			context.shutdown();

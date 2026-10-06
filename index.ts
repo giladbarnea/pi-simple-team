@@ -24,7 +24,7 @@ import {
 	type TeamManifestMember,
 } from "./team-registry.ts";
 import { appendTeamLog, filterTeamLog, normalizeChildEvent, pageTeamLog, preview, renderTeamLogPage, type TeamLogEntry } from "./teamlog.ts";
-import { renderReminderToolCall, renderReminderToolResult, renderTeamMessage, renderTeamToolCall, renderTeamToolResult, type TeamMessageDetails } from "./render.ts";
+import { renderReminderToolCall, renderReminderToolResult, renderTeamMessage, renderTeamToolCall, renderTeamToolResult, type TeammateView, type TeamMessageDetails } from "./render.ts";
 import { openTeamOverview, type TeamSnapshot } from "./team-ui.ts";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -46,7 +46,7 @@ interface TeammateState {
 	prompt: string;
 	model: string;
 	thinking: ThinkingLevel;
-	inheritMainContext: boolean;
+	forkContext: boolean;
 	canManageOwnTeams: boolean;
 	extensionPaths: string[];
 	transport: TeammateTransport;
@@ -61,6 +61,7 @@ interface TeammateState {
 	rejectReady?: (error: Error) => void;
 	alive: boolean;
 	active: boolean;
+	contextPercent?: number;
 	pendingTurnDeliveries: number;
 	deliveryQueue: Promise<void>;
 }
@@ -106,10 +107,11 @@ function compactName(name: string): string {
 	return trimmed;
 }
 
-function toolResult(payload: JsonRecord) {
+/** The model reads `payload`; the renderer reads `payload` plus `viewDetails`. */
+function toolResult(payload: JsonRecord, viewDetails: JsonRecord = {}) {
 	return {
 		content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-		details: payload,
+		details: { ...payload, ...viewDetails },
 	};
 }
 
@@ -135,9 +137,10 @@ function teammateRecord(teammate: TeammateState): TeammateRecord {
 		systemPrompt: teammate.prompt,
 		model: teammate.model,
 		thinking: teammate.thinking,
-		inheritMainContext: teammate.inheritMainContext,
+		forkContext: teammate.forkContext,
 		canManageOwnTeams: teammate.canManageOwnTeams,
 		showOnHerdrPane: teammate.transport === "herdr",
+		contextPercent: teammate.contextPercent,
 		sessionFile: teammate.sessionFile!,
 		...(teammate.extensionPaths.length > 0 ? { extensionPaths: teammate.extensionPaths } : {}),
 	};
@@ -298,7 +301,7 @@ async function kickoffTeammates(team: TeamState, teammates: TeammateState[], sta
 	if (startIdle && resumptionPrompt === undefined) return;
 	const outcomes = await Promise.allSettled(teammates.map((teammate) => {
 		// A fork can continue main's workflow unless its latest message restates its own assignment.
-		const assignment = `You are teammate "${teammate.name}" on team "${team.name}". Work on your individual assignment, continuing from any prior progress:\n\n${teammate.prompt}\n\nMain coordinates the team. If you inherited main's conversation, use it as background for your own assignment.`;
+		const assignment = `You are teammate "${teammate.name}" on team "${team.name}". Work on your individual assignment, continuing from any prior progress:\n\n${teammate.prompt}\n\nMain coordinates the team. If your session forked main's conversation, use it as background for your own assignment.`;
 		return queueDelivery(team, "main", teammate, resumptionPrompt ?? assignment, false, !startIdle);
 	}));
 	const completed = teammates.filter((_teammate, index) => outcomes[index].status === "fulfilled").map((teammate) => teammate.name);
@@ -376,8 +379,18 @@ function formatStatus(team: TeamState): Record<string, TeamStatus> {
 	return Object.fromEntries([...team.statuses.entries()].sort(([a], [b]) => a.localeCompare(b)));
 }
 
-function allStatuses(owner: symbol): Array<{ teamName: string; teamId: string; status: Record<string, TeamStatus> }> {
-	return [...teams.values()].filter((team) => team.owner === owner).map((team) => ({ ...teamIdentity(team), status: formatStatus(team) }));
+/** @example teammateViews(team).scout?.model // "openai-codex/gpt-6-luna" */
+function teammateViews(team: TeamState): Record<string, TeammateView> {
+	return Object.fromEntries([...team.members.values()].map((teammate) => [teammate.name, {
+		name: teammate.name,
+		live: teammate.alive,
+		model: teammate.model,
+		thinking: teammate.thinking,
+		forkContext: teammate.forkContext,
+		canManageOwnTeams: teammate.canManageOwnTeams,
+		showOnHerdrPane: teammate.transport === "herdr",
+		contextPercent: teammate.contextPercent,
+	}]));
 }
 
 function ownedTeamSnapshots(owner: symbol): TeamSnapshot[] {
@@ -389,6 +402,7 @@ function ownedTeamSnapshots(owner: symbol): TeamSnapshot[] {
 			transports: (["rpc", "herdr"] as const).filter((transport) => [...team.members.values()].some((teammate) => teammate.alive && teammate.transport === transport)),
 			roster: [...team.members.keys()],
 			statuses: formatStatus(team),
+			teammates: teammateViews(team),
 			log: [...team.log],
 		}));
 }
@@ -431,7 +445,7 @@ function createTeammateState(teammateSpec: Teammate): TeammateState {
 		prompt: teammateSpec.systemPrompt,
 		model: teammateSpec.model,
 		thinking,
-		inheritMainContext: Boolean(teammateSpec.inheritMainContext),
+		forkContext: Boolean(teammateSpec.forkContext),
 		canManageOwnTeams: Boolean(teammateSpec.canManageOwnTeams),
 		extensionPaths,
 		transport: teammateSpec.showOnHerdrPane ? "herdr" : "rpc",
@@ -465,8 +479,8 @@ function appendSpawnLog(team: TeamState, teammate: TeammateState): void {
 		teammate: teammate.name,
 		direction: "runtime",
 		kind: "spawn",
-		summary: `spawned ${teammate.name} (model=${teammate.model}, thinking=${teammate.thinking}, context=${teammate.inheritMainContext ? "inherited" : "fresh"})`,
-		details: { model: teammate.model, thinking: teammate.thinking, inheritMainContext: teammate.inheritMainContext, transport: teammate.transport, paneId: teammate.paneId },
+		summary: `spawned ${teammate.name} (model=${teammate.model}, thinking=${teammate.thinking}, context=${teammate.forkContext ? "forked" : "fresh"})`,
+		details: { model: teammate.model, thinking: teammate.thinking, forkContext: teammate.forkContext, transport: teammate.transport, paneId: teammate.paneId },
 	});
 }
 
@@ -479,7 +493,7 @@ interface ChildStartOptions {
 function attachRpcTeammate(team: TeamState, teammate: TeammateState, participants: string[], options: ChildStartOptions): void {
 	const sessionArgs = options.sessionFile
 		? ["--session", options.sessionFile]
-		: teammate.inheritMainContext && !options.restartEmpty
+		: teammate.forkContext && !options.restartEmpty
 			? ["--fork", team.mainSessionFile!]
 			: [];
 	const modelArgs = options.sessionFile ? [] : ["--model", teammate.model, "--thinking", teammate.thinking];
@@ -541,7 +555,7 @@ async function attachHerdrTeammate(
 	const environment = childEnvironmentOverrides(team, teammate, participants);
 	const sessionArgs = options.sessionFile
 		? ["--session", options.sessionFile]
-		: teammate.inheritMainContext && !options.restartEmpty
+		: teammate.forkContext && !options.restartEmpty
 			? ["--fork", team.mainSessionFile!]
 			: [];
 	const modelArgs = options.sessionFile ? [] : ["--model", teammate.model, "--thinking", teammate.thinking];
@@ -764,6 +778,7 @@ function validateChildDeliveryUrl(rawUrl: string, teammateName: string): string 
 function handleChildEvent(team: TeamState, teammate: TeammateState, event: JsonRecord): void {
 	if (event.type === "agent_start" || event.type === "work_queued") teammate.active = true;
 	if (event.type === "agent_settled" || event.type === "session_shutdown") teammate.active = false;
+	if (event.type === "context_usage") teammate.contextPercent = (event.percent as number | null) ?? undefined;
 	if (event.type === "session_shutdown") {
 		teammate.alive = false;
 		teammate.deliveryUrl = undefined;
@@ -809,6 +824,7 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 			teammate.sessionId = sessionId;
 			teammate.sessionFile = sessionFile;
 			teammate.sessionMaterialized = fs.existsSync(sessionFile);
+			teammate.contextPercent = (args.contextPercent as number | null | undefined) ?? undefined;
 			teammate.alive = true;
 			teammate.active = false;
 			team.statuses.set(teammate.name, status("idle", "Spawned"));
@@ -887,7 +903,7 @@ function teammateSchema(modelGuidance: string) {
 		systemPrompt: Type.String({ description: "Individual teammate system prompt" }),
 		model: Type.String({ description: `Canonical provider/model id for this teammate. ${modelGuidance}` }),
 		thinking: Type.Optional(StringEnum(thinkingLevels, { description: "Thinking level for this teammate. Defaults to xhigh.", default: defaultThinkingLevel })),
-		inheritMainContext: Type.Optional(Type.Boolean({ description: "Start with a clone of your context window rather than start fresh. Defaults to false.", default: false })),
+		forkContext: Type.Optional(Type.Boolean({ description: "Start as a fork of your context window rather than fresh. Defaults to false.", default: false })),
 		canManageOwnTeams: Type.Optional(Type.Boolean({ description: "Allow this teammate to create and manage teams of its own. Defaults to false.", default: false })),
 		showOnHerdrPane: Type.Optional(Type.Boolean({ description: "Open a visible Herdr pane for this teammate. Defaults to false.", default: false })),
 		extensionPaths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true, description: "Trusted extension files or directories to load alongside the team runtime. Use existing absolute paths. Saved for later resume; discovered extensions stay disabled." })),
@@ -917,6 +933,7 @@ function restoreTeamState(owner: symbol, ownerPi: ExtensionAPI, parentPiExecutab
 		teammate.sessionId = member.teammateId;
 		teammate.sessionFile = member.sessionFile;
 		teammate.sessionMaterialized = member.sessionMaterialized;
+		teammate.contextPercent = member.contextPercent;
 		teammate.alive = false;
 		team.members.set(teammate.name, teammate);
 		team.statuses.set(teammate.name, status("stopped", "Dormant"));
@@ -1002,9 +1019,9 @@ export default function (pi: ExtensionAPI) {
 					if (teammateNames.includes("main")) throw new Error('"main" is reserved');
 
 					validateTeammateModels(teammateSpecs, context.modelRegistry.getAvailable());
-					const inheritsMainContext = teammateSpecs.some((teammate) => Boolean(teammate.inheritMainContext));
-					const mainSessionFile = inheritsMainContext ? context.sessionManager.getSessionFile() : undefined;
-					if (inheritsMainContext && !mainSessionFile) throw new Error("inheritMainContext requires a saved main session. Use a saved main session or retry with inheritMainContext: false.");
+					const forksContext = teammateSpecs.some((teammate) => Boolean(teammate.forkContext));
+					const mainSessionFile = forksContext ? context.sessionManager.getSessionFile() : undefined;
+					if (forksContext && !mainSessionFile) throw new Error("forkContext requires a saved main session. Use a saved main session or retry with forkContext: false.");
 					const originMainSessionId = context.sessionManager?.getSessionId?.();
 					const rawProjectDirectory = context.sessionManager?.getCwd?.() ?? context.cwd;
 					const projectDirectory = rawProjectDirectory ? canonicalProjectDirectory(rawProjectDirectory) : undefined;
@@ -1301,9 +1318,9 @@ export default function (pi: ExtensionAPI) {
 				if (teammateNames.includes("main")) throw new Error('"main" is reserved');
 				validateTeammateModels(teammateSpecs, context.modelRegistry.getAvailable());
 
-				const inheritsMainContext = teammateSpecs.some((teammate) => Boolean(teammate.inheritMainContext));
-				const mainSessionFile = inheritsMainContext ? context.sessionManager.getSessionFile() : undefined;
-				if (inheritsMainContext && !mainSessionFile) throw new Error("inheritMainContext requires a saved main session. Use a saved main session or retry with inheritMainContext: false.");
+				const forksContext = teammateSpecs.some((teammate) => Boolean(teammate.forkContext));
+				const mainSessionFile = forksContext ? context.sessionManager.getSessionFile() : undefined;
+				if (forksContext && !mainSessionFile) throw new Error("forkContext requires a saved main session. Use a saved main session or retry with forkContext: false.");
 				if (mainSessionFile) team.mainSessionFile = mainSessionFile;
 
 				const addedTeammates = teammateSpecs.map(createTeammateState);
@@ -1404,12 +1421,14 @@ export default function (pi: ExtensionAPI) {
 					}, signal));
 				}
 				if (!params.team && params.gerund === undefined && params.phrase === undefined) {
-					return toolResult({ teams: allStatuses(owner) });
+					const ownedTeams = [...teams.values()].filter((team) => team.owner === owner);
+					const statuses = ownedTeams.map((team) => ({ ...teamIdentity(team), status: formatStatus(team) }));
+					return toolResult({ teams: statuses }, { teams: statuses.map((entry, index) => ({ ...entry, teammates: teammateViews(ownedTeams[index]!) })) });
 				}
 				const team = resolveTeam(owner, params.team);
 				updateStatus(team, "main", params.gerund, params.phrase);
 				logStatusDeclaration(team, "main", params.gerund, params.phrase);
-				return toolResult({ ...teamIdentity(team), status: formatStatus(team) });
+				return toolResult({ ...teamIdentity(team), status: formatStatus(team) }, { teammates: teammateViews(team) });
 			},
 		}),
 	);

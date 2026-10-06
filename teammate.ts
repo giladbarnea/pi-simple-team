@@ -5,7 +5,7 @@ export interface Teammate {
 	systemPrompt: string;
 	model: string;
 	thinking?: ThinkingLevel;
-	inheritMainContext?: boolean;
+	forkContext?: boolean;
 	canManageOwnTeams?: boolean;
 	showOnHerdrPane?: boolean;
 	extensionPaths?: string[];
@@ -17,4 +17,5 @@ export type TeammateRecord = Required<Omit<Teammate, "extensionPaths">> & {
 	sessionFile: string;
 	live: boolean;
 	active: boolean;
+	contextPercent?: number;
 };

@@ -142,6 +142,7 @@ function liveSnapshot(log: TeamLogEntry[], statusPhrase = "Standing by"): TeamSn
 			main: { word: "waiting", phrase: "Watching the team", updated: "August 12, 10:00:00" },
 			reviewer: { word: "working", phrase: statusPhrase, updated: "August 12, 10:00:01" },
 		},
+		teammates: { reviewer: { name: "reviewer", live: true, model: "openai-codex/gpt-6-luna", thinking: "high", contextPercent: 42 } },
 		log,
 	};
 }
@@ -245,10 +246,10 @@ describe("/team", () => {
 				for (const line of lines) assert.equal(visibleWidth(line), 90);
 				assert.match(lines[1]!, /Team: live-team-command-test/);
 				assert.match(lines[4]!, /Status/);
-				assert.match(lines[11]!, /Messages/);
+				assert.match(lines[16]!, /Messages/);
 				assert.ok(lines.some((line) => line.includes("Team Log")));
 
-				const statusRows = lines.slice(5, 10).join("\n");
+				const statusRows = lines.slice(5, 15).join("\n");
 				assert.match(statusRows, /teammate-7[\s\S]*teammate-6[\s\S]*teammate-5[\s\S]*teammate-4[\s\S]*teammate-3/);
 				assert.doesNotMatch(statusRows, /teammate-[12]/);
 				assert.doesNotMatch(statusRows, /\bmain\b/);
@@ -259,7 +260,7 @@ describe("/team", () => {
 		}
 	});
 
-	test("aligns status columns and right-aligns relative timestamps of different widths", async () => {
+	test("aligns status columns, shows teammate facts, and right-aligns relative timestamps under them", async () => {
 		const host = new TeamCommandHost();
 		const snapshot = liveSnapshot([]);
 		snapshot.statuses = {
@@ -269,17 +270,19 @@ describe("/team", () => {
 
 		try {
 			await host.openSnapshots(() => [snapshot], (component) => {
-				const rows = component.render(100).slice(5, 7);
+				const rows = component.render(100).slice(5, 9);
 				const mainRow = rows.find((row) => row.includes("main"));
 				const reviewerRow = rows.find((row) => row.includes("reviewer"));
-				assert.ok(mainRow);
-				assert.ok(reviewerRow);
+				const mainPhrase = rows.find((row) => row.includes("STATUS-BEGIN"));
+				const reviewerPhrase = rows.find((row) => row.includes("Short phrase"));
+				assert.ok(mainRow && reviewerRow && mainPhrase && reviewerPhrase);
 				assert.equal(mainRow.indexOf("main"), reviewerRow.indexOf("reviewer"));
 				assert.equal(mainRow.indexOf("waiting"), reviewerRow.indexOf("working"));
-				assert.equal(mainRow.indexOf("STATUS-BEGIN"), reviewerRow.indexOf("Short phrase"));
-				assert.ok(mainRow.endsWith("12m ago││"), `Expected the wider timestamp flush right. Got: ${JSON.stringify(mainRow.slice(-14))}`);
-				assert.ok(reviewerRow.endsWith(" 1m ago││"), `Expected the narrower timestamp left-padded to align right. Got: ${JSON.stringify(reviewerRow.slice(-14))}`);
-				assert.match(mainRow, /STATUS-BEGIN.*….*STATUS-END/);
+				assert.match(reviewerRow, /working +openai-codex\/gpt-6-luna +▄42% context +high/);
+				assert.equal(mainPhrase.indexOf("STATUS-BEGIN"), reviewerPhrase.indexOf("Short phrase"));
+				assert.ok(mainPhrase.endsWith("12m ago││"), `Expected the wider timestamp flush right. Got: ${JSON.stringify(mainPhrase.slice(-14))}`);
+				assert.ok(reviewerPhrase.endsWith(" 1m ago││"), `Expected the narrower timestamp left-padded to align right. Got: ${JSON.stringify(reviewerPhrase.slice(-14))}`);
+				assert.match(mainPhrase, /STATUS-BEGIN-x+\u001b\[0m…\u001b\[0m 12m ago/, "A long phrase ends with an ellipsis before its timestamp, as in Team Status.");
 				close(component);
 			});
 		} finally {
@@ -287,7 +290,7 @@ describe("/team", () => {
 		}
 	});
 
-	test("middle-truncates status, message, and team-log rows", async () => {
+	test("middle-truncates message and team-log rows", async () => {
 		const host = new TeamCommandHost();
 		const middle = "x".repeat(140);
 		const log = [
@@ -305,14 +308,12 @@ describe("/team", () => {
 		try {
 			await host.openSnapshots(() => [snapshot], (component) => {
 				const lines = component.render(100);
-				const statusLine = lines.find((line) => line.includes("STATUS-BEGIN"));
 				const messageLine = lines.find((line) => line.includes("MESSAGE-BEGIN"));
 				const logLine = lines.find((line) => line.includes("LOG-BEGIN"));
-				for (const line of [statusLine, messageLine, logLine]) {
+				for (const line of [messageLine, logLine]) {
 					assert.ok(line);
 					assert.match(line, /…/);
 				}
-				assert.match(statusLine, /STATUS-END/);
 				assert.match(messageLine, /MESSAGE-END/);
 				assert.match(logLine, /LOG-END/);
 				close(component);
@@ -646,10 +647,10 @@ describe("/team", () => {
 				assert.deepEqual(borderIndexes(populatedLines), borderIndexes(emptyLines));
 
 				const text = populatedLines.join("\n");
-				assert.doesNotMatch(text, /message [1-4]/);
-				assert.match(text, /message 5[\s\S]*message 6/);
-				assert.doesNotMatch(text, /log [1-5]/);
-				assert.match(text, /log 6[\s\S]*log 7[\s\S]*log 8/);
+				assert.doesNotMatch(text, /message [1-5]/);
+				assert.match(text, /message 6/);
+				assert.doesNotMatch(text, /log [1-6]/);
+				assert.match(text, /log 7[\s\S]*log 8/);
 				component.handleInput?.("\u001b[6~");
 				assert.deepEqual(component.render(90), populatedLines, "Expected paging keys to leave the view untouched.");
 				component.handleInput?.("\u001b[B");

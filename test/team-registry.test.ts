@@ -493,7 +493,7 @@ test("team_spawn returns each durable Pi session identity", async () => {
 		const invocation = readFakePiInvocations(temporaryDirectory)[0];
 		assert.deepEqual(
 			result.details?.teammates,
-			[{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low", inheritMainContext: false, canManageOwnTeams: true, showOnHerdrPane: false, teammateId: invocation?.sessionId, sessionFile: invocation?.sessionFile, live: true, active: false }],
+			[{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low", forkContext: false, canManageOwnTeams: true, showOnHerdrPane: false, contextPercent: 31.985, teammateId: invocation?.sessionId, sessionFile: invocation?.sessionFile, live: true, active: false }],
 			`Expected team_spawn to return the reported Pi session identity. Got: ${JSON.stringify(result.details)}`,
 		);
 		const manifestPath = path.join(agentDirectory, "pi-simple-team", "teams-v2", "origin-main-session-id-identity-team.json");

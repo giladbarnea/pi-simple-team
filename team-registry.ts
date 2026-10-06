@@ -69,7 +69,7 @@ function isManifestMember(value: unknown): value is TeamManifestMember {
 		typeof member.systemPrompt === "string" &&
 		typeof member.model === "string" &&
 		typeof member.thinking === "string" &&
-		typeof member.inheritMainContext === "boolean" &&
+		typeof member.forkContext === "boolean" &&
 		typeof member.canManageOwnTeams === "boolean" &&
 		typeof member.showOnHerdrPane === "boolean" &&
 		typeof member.live === "boolean" &&
@@ -77,6 +77,7 @@ function isManifestMember(value: unknown): value is TeamManifestMember {
 		typeof member.teammateId === "string" &&
 		typeof member.sessionFile === "string" &&
 		typeof member.sessionMaterialized === "boolean" &&
+		(member.contextPercent === undefined || typeof member.contextPercent === "number") &&
 		(member.extensionPaths === undefined || (Array.isArray(member.extensionPaths) && member.extensionPaths.every((value) => typeof value === "string" && path.isAbsolute(value))))
 	);
 }
