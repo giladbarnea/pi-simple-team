@@ -100,7 +100,6 @@ type FakePiInvocation = {
 type FakePiTurn = {
 	member: string;
 	message: string;
-	systemPrompt: string;
 };
 
 const fakePiScript = String.raw`#!/usr/bin/env bun
@@ -134,7 +133,6 @@ fs.appendFileSync(
 		canManageOwnTeams: process.env.PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS === "1",
 	}) + "\n",
 );
-const beforeAgentStartHandlers = [];
 const sessionStartHandlers = [];
 const sessionShutdownHandlers = [];
 const activityHandlers = new Map();
@@ -143,7 +141,6 @@ const extensionArgumentIndex = process.argv.indexOf("-e");
 const extensionPath = process.argv[extensionArgumentIndex + 1];
 const extensionApi = {
 	on: (event, handler) => {
-		if (event === "before_agent_start") beforeAgentStartHandlers.push(handler);
 		if (event === "session_start") sessionStartHandlers.push(handler);
 		if (event === "session_shutdown") sessionShutdownHandlers.push(handler);
 		if (event === "agent_start" || event === "agent_settled") activityHandlers.set(event, handler);
@@ -151,19 +148,13 @@ const extensionApi = {
 	registerCommand: () => undefined,
 	registerMessageRenderer: () => undefined,
 	registerTool: (tool) => registeredTools.set(tool.name, tool),
-	// Emulates Pi's turn semantics: a delivered message starts a turn after before_agent_start refreshes the system prompt.
+	// Custom-message work starts without a user-prompt lifecycle hook.
 	sendMessage: (message, options) => {
 		if (options.triggerTurn === false) return;
 		void (async () => {
 			await activityHandlers.get("agent_start")?.({}, extensionContext);
-			const systemPromptArgumentIndex = process.argv.indexOf("--system-prompt");
-			let systemPrompt = process.argv[systemPromptArgumentIndex + 1];
-			for (const handler of beforeAgentStartHandlers) {
-				const result = await handler({ prompt: message.content, images: [], systemPrompt, systemPromptOptions: {} }, {});
-				if (result && typeof result.systemPrompt === "string") systemPrompt = result.systemPrompt;
-			}
-			fs.appendFileSync(path.join(root, "turns.jsonl"), JSON.stringify({ member, message: message.content, systemPrompt }) + "\n");
-			if (message.content.includes("FINISH_ACTIVITY_TEST")) await activityHandlers.get("agent_settled")?.({});
+			fs.appendFileSync(path.join(root, "turns.jsonl"), JSON.stringify({ member, message: message.content }) + "\n");
+			if (message.content.includes("FINISH_ACTIVITY_TEST")) await activityHandlers.get("agent_settled")?.({ aborted: false });
 		})();
 	},
 };
@@ -244,21 +235,8 @@ if (member === "recursive-slow-stop") {
 
 
 async function handleCommand(command) {
-	let systemPrompt;
 	if (command.type === "prompt") {
-		const systemPromptArgumentIndex = process.argv.indexOf("--system-prompt");
-		systemPrompt = process.argv[systemPromptArgumentIndex + 1];
-		for (const handler of beforeAgentStartHandlers) {
-			const result = await handler(
-				{ prompt: command.message, images: [], systemPrompt, systemPromptOptions: {} },
-				{},
-			);
-			if (result && typeof result.systemPrompt === "string") systemPrompt = result.systemPrompt;
-		}
-		fs.appendFileSync(
-			path.join(root, "turns.jsonl"),
-			JSON.stringify({ member, message: command.message, systemPrompt }) + "\n",
-		);
+		fs.appendFileSync(path.join(root, "turns.jsonl"), JSON.stringify({ member, message: command.message }) + "\n");
 	}
 
 	const response = {
@@ -1004,11 +982,9 @@ test("team_add_teammates accepts a team name and grows the owned running team", 
 		const turns = await waitForFakePiTurns(temporaryDirectory, 3);
 		for (const memberName of ["original", "security", "operations"]) {
 			const turn = turns.find((candidate) => candidate.member === memberName);
-			assert.match(
-				turn?.systemPrompt ?? "",
-				/Participants: main, original, security, operations\./,
-				`Expected ${memberName}'s next turn to see the current roster. Got: ${JSON.stringify(turn)}`,
-			);
+			assert.ok(turn, `Expected a delivery to ${memberName}.`);
+			const currentStatus = JSON.parse(turn.message.split("Current team status:\n")[1]) as JsonRecord;
+			assert.deepEqual(Object.keys(currentStatus).sort(), ["main", "operations", "original", "security"], `Expected ${memberName}'s next message to contain the current roster without a system-prompt rewrite.`);
 		}
 
 		await host.execute("team_shutdown", { team: teamName });

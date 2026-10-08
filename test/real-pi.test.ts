@@ -7,7 +7,7 @@ import * as path from "node:path";
 
 import { describe, test } from "bun:test";
 
-import { composeSystemPrompt } from "../system-prompt.ts";
+import { composeTeamBriefing } from "../team-briefing.ts";
 
 /**
  * Gated end-to-end check against the real `pi` binary. It proves the two facts the
@@ -59,10 +59,10 @@ describe.skipIf(!realPiEnabled)("real pi child runtime", () => {
 
 		const projectDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-real-pi-"));
 		const extensionPath = path.join(import.meta.dir, "..", "index.ts");
-		const systemPrompt = composeSystemPrompt("probe-team", "You are part of a connectivity probe.", "probe", "Wait for instructions.", ["probe"], false);
+		const briefing = composeTeamBriefing("probe-team", "You are part of a connectivity probe.", "probe", "Wait for instructions.", ["probe"], false);
 		const child = childProcess.spawn(
 			"pi",
-			["--mode", "rpc", "--model", "openai-codex/gpt-5.6-luna", "--thinking", "low", "--no-extensions", "-e", extensionPath, "--no-prompt-templates", "--no-themes", "--system-prompt", systemPrompt],
+			["--mode", "rpc", "--model", "openai-codex/gpt-5.6-luna", "--thinking", "low", "--no-extensions", "-e", extensionPath, "--no-prompt-templates", "--no-themes"],
 			{
 				cwd: projectDirectory,
 				stdio: ["pipe", "ignore", "pipe"],
@@ -90,7 +90,7 @@ describe.skipIf(!realPiEnabled)("real pi child runtime", () => {
 			assert.equal(typeof registration.args.sessionId, "string", `Expected registration to carry a session ID. Got: ${JSON.stringify(registration.args)}`);
 			assert.ok(path.isAbsolute(String(registration.args.sessionFile)), `Expected an absolute session file. Got: ${JSON.stringify(registration.args)}`);
 
-			const message = "Reply with the single word ok. Do not call any tools.";
+			const message = `${briefing}\n\nReply with the single word ok. Do not call any tools.`;
 			const delivery = await fetch(String(registration.args.url), {
 				method: "POST",
 				headers: { "content-type": "application/json" },

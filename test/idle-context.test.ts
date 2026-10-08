@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, test } from "bun:test";
-import { composeSystemPrompt } from "../system-prompt.ts";
+import { composeTeamBriefing } from "../team-briefing.ts";
 
 type JsonRecord = Record<string, unknown>;
 type ModelMessage = { role: string; content: unknown };
@@ -46,7 +46,6 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("idle conversat
 		const child = spawn(executable, [
 			"--mode", "rpc", "--no-extensions", "-e", path.join(import.meta.dir, "..", "index.ts"),
 			"--no-skills", "--no-context-files", "--model", "local-probe/probe", "--thinking", "low",
-			"--system-prompt", composeSystemPrompt("idle-team", commonPrompt, "probe", "Follow the supplied instructions.", ["probe"]),
 		], {
 			cwd: directory,
 			stdio: ["pipe", "pipe", "pipe"],
@@ -76,6 +75,7 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("idle conversat
 			await waitFor(() => registration !== undefined, "child registration");
 			assert.equal(registration!.model, "local-probe/probe", `Registration must report the model the child runs. Got: ${JSON.stringify(registration)}`);
 			assert.equal(registration!.thinking, "off", `A non-reasoning model runs at off even when launched with --thinking low. Got: ${JSON.stringify(registration)}`);
+			await deliver(composeTeamBriefing("idle-team", commonPrompt, "probe", "Follow the supplied instructions.", ["probe"]), false);
 			await deliver(instructions, false);
 			const reportedFacts = events.filter((event) => event.type === "runtime_facts").at(-1);
 			assert.ok(
@@ -96,7 +96,9 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("idle conversat
 			const messages = requests[0].messages;
 			assert.equal(messages.filter((message) => message.role !== "system" && JSON.stringify(message.content).includes(instructions)).length, 1, "The model must see the previously staged instructions exactly once.");
 			const systemMessages = messages.filter((message) => message.role === "system");
-			assert.ok(JSON.stringify(systemMessages).includes(commonPrompt), "The original common system prompt must remain present.");
+			const briefing = messages.find((message) => message.role !== "system" && JSON.stringify(message.content).includes("<team-system-message>"));
+			assert.ok(JSON.stringify(briefing?.content).includes(commonPrompt), "The first request must receive the staged common instructions as custom-message context.");
+			assert.ok(JSON.stringify(briefing?.content).includes("Follow the supplied instructions."), "The first request must also receive the staged individual instructions.");
 			assert.ok(!JSON.stringify(systemMessages).includes(instructions), "Resumption instructions must not replace or become system instructions.");
 		} finally {
 			const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));

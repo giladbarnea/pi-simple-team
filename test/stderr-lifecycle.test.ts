@@ -131,7 +131,9 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("RPC stderr and
 			assert.equal(resumedMessages.filter((message) => message.role !== "system" && JSON.stringify(message.content).includes(resumptionPrompt)).length, 1, "The resumption prompt must occur once in conversation context.");
 			assert.ok(resumedMessages.some((message) => message.role !== "system" && JSON.stringify(message.content).includes(token)), "Resumption must retain the original conversation.");
 			const resumedSystem = JSON.stringify(resumedMessages.filter((message) => message.role === "system"));
-			assert.ok(resumedSystem.includes("Follow instructions.") && resumedSystem.includes("Wait for a message."), "Resumption must retain common and individual system prompts.");
+			const savedBriefings = resumedMessages.filter((message) => message.role !== "system" && JSON.stringify(message.content).includes("<team-system-message>"));
+			assert.equal(savedBriefings.length, 1, "Resumption must inherit one original team briefing rather than repeat saved definitions.");
+			assert.ok(JSON.stringify(savedBriefings[0].content).includes("Follow instructions.") && JSON.stringify(savedBriefings[0].content).includes("Wait for a message."), "The resumed model must receive both original definitions in custom-message context.");
 			assert.ok(!resumedSystem.includes(resumptionPrompt), "The resumption prompt must not become a system prompt.");
 
 			await execute("team_shutdown", { team: "stderr-check" });

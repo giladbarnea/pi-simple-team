@@ -684,8 +684,8 @@ describe("unified child runtime", () => {
 				{ name: "second", systemPrompt: "Wait.", model: "fake/fake-model" },
 			] });
 			await host.execute("team_send_message", { targets: ["first", "second"], interrupt: ["second"], message: "Prioritize this." });
-			await waitFor(() => lines(fake.eventsPath).filter((entry) => entry.type === "delivery").length === 2);
-			const interrupts = Object.fromEntries(lines(fake.eventsPath).filter((entry) => entry.type === "delivery").map((entry) => {
+			await waitFor(() => lines(fake.eventsPath).filter((entry) => entry.type === "delivery" && ((entry.body as JsonRecord).args as JsonRecord).message === "Prioritize this.").length === 2);
+			const interrupts = Object.fromEntries(lines(fake.eventsPath).filter((entry) => entry.type === "delivery" && ((entry.body as JsonRecord).args as JsonRecord).message === "Prioritize this.").map((entry) => {
 				const args = (entry.body as JsonRecord).args as JsonRecord;
 				return [args.to, args.interrupt];
 			}));
@@ -707,7 +707,9 @@ describe("unified child runtime", () => {
 			const newDeliveries = lines(fake.eventsPath).filter((entry) => entry.type === "delivery").slice(before);
 			assert.deepEqual(newDeliveries.map((entry) => ((entry.body as JsonRecord).args as JsonRecord).to), ["new"], "Add must start only the new teammate without a send call.");
 			await host.execute("team_add_teammates", { startIdle: true, teammates: [{ name: "idle", systemPrompt: "Wait.", model: "fake/fake-model" }] });
-			assert.equal(lines(fake.eventsPath).filter((entry) => entry.type === "delivery").length, before + 1, "An idle addition must not start work for any member.");
+			const idleDelivery = lines(fake.eventsPath).filter((entry) => entry.type === "delivery").at(-1)!;
+			assert.equal(((idleDelivery.body as JsonRecord).args as JsonRecord).triggerTurn, false, "An idle addition stages its briefing without starting work.");
+			assert.equal(lines(fake.eventsPath).filter((entry) => entry.type === "parent" && ((entry.args as JsonRecord)?.event as JsonRecord)?.type === "agent_start").length, 2, "The idle addition must not start another model run.");
 		} finally {
 			await host.shutdown();
 			fake.restore();
@@ -752,9 +754,10 @@ describe("unified child runtime", () => {
 			assert.equal(after, before, "Idle resumption must not start a model turn.");
 			const starts = lines(fake.eventsPath).filter((entry) => entry.type === "pi_start");
 			const argumentsList = starts.at(-1)?.args as string[];
-			const systemPrompt = argumentsList[argumentsList.indexOf("--system-prompt") + 1];
-			assert.ok(systemPrompt.includes("Original common prompt.") && systemPrompt.includes("Original individual prompt."), "Resume must retain both original system prompts.");
-			assert.ok(!systemPrompt.includes("New instructions for the next turn."), "Resumption instructions must not become a system prompt.");
+			assert.equal(argumentsList.includes("--system-prompt"), false, "Resume must not install a team-specific system override.");
+			const initialBriefing = String(((deliveries[0].body as JsonRecord).args as JsonRecord).message);
+			assert.ok(initialBriefing.includes("Original common prompt.") && initialBriefing.includes("Original individual prompt."), "The original definitions belong in the initial custom briefing.");
+			assert.ok(!String(resumption.message).includes("Original individual prompt."), "A restored session must not repeat the saved assignment in its resume preamble.");
 		} finally {
 			await host.shutdown();
 			fake.restore();
@@ -766,9 +769,11 @@ describe("unified child runtime", () => {
 		const host = new ExtensionHost();
 		try {
 			await host.execute("team_spawn", { teamName: "idle-team", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "probe", systemPrompt: "Wait.", model: "fake/fake-model" }] });
-			assert.equal(lines(fake.eventsPath).filter((entry) => entry.type === "delivery").length, 0, "startIdle must suppress all initial deliveries.");
+			const staged = lines(fake.eventsPath).find((entry) => entry.type === "delivery")!;
+			assert.equal(((staged.body as JsonRecord).args as JsonRecord).triggerTurn, false, "startIdle stages the tagged briefing without starting work.");
+			assert.equal(lines(fake.eventsPath).filter((entry) => entry.type === "parent" && ((entry.args as JsonRecord)?.event as JsonRecord)?.type === "agent_start").length, 0, "Staging must not start a model run.");
 			await host.execute("team_send_message", { targets: ["probe"], message: "Start now." });
-			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "delivery"));
+			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "parent" && ((entry.args as JsonRecord)?.event as JsonRecord)?.type === "agent_start"));
 		} finally {
 			await host.shutdown();
 			fake.restore();
@@ -952,8 +957,8 @@ describe("unified child runtime", () => {
 				teammates: [{ name: "scout", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" }],
 			});
 			await host.execute("team_send_message", { targets: ["scout"], message: "check this", interrupt: false });
-			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "delivery"));
-			const delivery = lines(fake.eventsPath).find((entry) => entry.type === "delivery")!;
+			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "delivery" && ((entry.body as JsonRecord).args as JsonRecord).message === "check this"));
+			const delivery = lines(fake.eventsPath).find((entry) => entry.type === "delivery" && ((entry.body as JsonRecord).args as JsonRecord).message === "check this")!;
 			const deliveryArgs = (delivery.body as JsonRecord).args as JsonRecord;
 			assert.equal(deliveryArgs.message, "check this", `Expected the HTTP delivery to carry the message. Got: ${JSON.stringify(delivery)}`);
 			await waitFor(() => lines(fake.eventsPath).filter((entry) => entry.type === "parent" && entry.tool === "event").length === 4);
@@ -985,8 +990,8 @@ describe("unified child runtime", () => {
 				teammates: [{ name: "scout", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" }],
 			});
 			await host.execute("team_send_message", { targets: ["scout"], message: "drop everything", interrupt: true });
-			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "delivery"));
-			const delivery = lines(fake.eventsPath).find((entry) => entry.type === "delivery")!;
+			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "delivery" && ((entry.body as JsonRecord).args as JsonRecord).message === "drop everything"));
+			const delivery = lines(fake.eventsPath).find((entry) => entry.type === "delivery" && ((entry.body as JsonRecord).args as JsonRecord).message === "drop everything")!;
 			const deliveryArgs = (delivery.body as JsonRecord).args as JsonRecord;
 			assert.equal(deliveryArgs.interrupt, true, `Expected the delivery to carry interrupt=true. Got: ${JSON.stringify(delivery)}`);
 			assert.deepEqual(
@@ -1039,7 +1044,9 @@ describe("visible Herdr teammates", () => {
 			] });
 			assert.equal(lines(fake.logPath).filter((entry) => entry.type === "start").length, 1, "Only the individually selected teammate should open a pane.");
 			const visibleArguments = lines(fake.eventsPath).find((entry) => entry.type === "pi_start")?.args as string[];
-			assert.ok(visibleArguments[visibleArguments.indexOf("--system-prompt") + 1]?.includes(commonPrompt), "Herdr launch must preserve shell-sensitive prompt text exactly.");
+			assert.equal(visibleArguments.includes("--system-prompt"), false, "Herdr must not install a team-specific system override.");
+			const visibleBriefing = lines(fake.eventsPath).find((entry) => entry.type === "delivery" && ((entry.body as JsonRecord).args as JsonRecord).to === "visible")!;
+			assert.ok(String(((visibleBriefing.body as JsonRecord).args as JsonRecord).message).includes(commonPrompt), "The custom briefing must preserve shell-sensitive prompt text exactly.");
 			assert.equal(visibleArguments[visibleArguments.indexOf(extensionPath) - 1], "-e", "Herdr must preserve and load the explicit extension path without shell corruption.");
 			await host.execute("team_spawn", { teamName: "override-team", commonPrompt: "Wait.", startIdle: true, showOnHerdrPanes: false, teammates: [{ name: "overridden", systemPrompt: "Wait.", model: "fake/fake-model", showOnHerdrPane: true }] });
 			assert.equal(lines(fake.logPath).filter((entry) => entry.type === "start").length, 1, "Explicit false must override an individual pane request.");
@@ -1395,7 +1402,7 @@ describe("visible Herdr teammates", () => {
 			assert.equal(startArgs.includes("-e"), true);
 			assert.equal(startArgs.includes("--model"), true);
 			assert.equal(startArgs.includes("--thinking"), true);
-			assert.equal(startArgs.includes("--system-prompt"), true);
+			assert.equal(startArgs.includes("--system-prompt"), false);
 			assert.equal(startArgs.some((argument) => argument.startsWith("PATH=")), false);
 			assert.equal(startArgs.includes("HERDR_PANE_ID=main-pane"), false);
 

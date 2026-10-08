@@ -71,13 +71,15 @@ Every child runs the same runtime regardless of transport: it starts a local del
 
 Registration also carries the child's runtime facts: the model and thinking level it actually runs with, and its context usage. The child reports them again after each turn, compaction, model change, thinking change, and branch change. It also reports them after it records an idle delivery, before it acknowledges that delivery, so a lifecycle result already shows the new usage. The parent stores these facts on the teammate, where they replace the requested model and thinking level. Pi can clamp the thinking level to the model, for example to `off` for a model that cannot reason. Every record and view reads the stored facts. A compaction makes the usage unknown, which clears the stored percent.
 
-The parent records every teammate session ID and absolute session file path before it writes the active manifest. After every teammate registers, the parent publishes kickoff messages through their delivery queues. `startIdle: true` suppresses kickoff. A partial kickoff failure reports which teammates started and keeps the team available for inspection.
+The parent records every teammate session ID and absolute session file path before it writes the active manifest. After every teammate registers, the parent publishes startup briefings through their delivery queues. `startIdle: true` stages those briefings without starting work. A partial kickoff failure reports which teammates started and keeps the team available for inspection.
 
 The spawn result returns `teamName`, `teamId`, `started`, the complete roster with full teammate records, and post-call instructions. Spawn, list, and resume share those records. Each includes resolved configuration, `name`, `teammateId`, `sessionFile`, `live`, and `active`.
 
 `live` identifies a running runtime. `active` identifies running or queued work. Runtime events and pending delivery counts determine activity independently of teammate-written status prose. `started` is true when any teammate has active work. Idle or no-op lifecycle calls therefore still report existing active work. Lifecycle results and instructions describe the resulting team.
 
-Kickoff restates the recipient's identity and individual assignment. This prevents a forked teammate from continuing main's coordination workflow. Cancellation during startup stops prepared members before automatic kickoff. Concurrent creators await the same parent callback-server readiness promise.
+`team-briefing.ts` puts the saved common and individual definitions into `<team-system-message>` and `<your-specific-system-message>` tags, followed by identity and coordination guidance. The custom message is the only team-instruction delivery path. Neither transport installs a team-specific system prompt. Cancellation during startup stops prepared members before automatic kickoff. Concurrent creators await the same parent callback-server readiness promise.
+
+The tags are ordinary custom-message content. They do not rewrite inherited system messages or override host instructions. This avoids Pi's custom-start omission for team instructions only; it does not repair missing generic Pi project, skill, or cwd prompt sections. Previously saved sessions without a custom briefing are not migrated.
 
 ### `team_add_teammates` grows only a running owned team
 
@@ -85,7 +87,7 @@ Kickoff restates the recipient's identity and individual assignment. This preven
 
 The operation does not attach an existing Pi session. Existing teammates continue their work. New teammates start as one ready batch unless `startIdle` is true. The result includes the complete roster as lightweight name/ID/live/active records and the whole team's statuses.
 
-Before every teammate turn, the child asks the parent for the current roster. The system prompt therefore reflects additions without starting another turn for existing members.
+Every delivered message includes the parent's current team-status map. New participant names therefore reach existing members in ordinary messages, without a roster hook or system-prompt rewrite.
 
 ### `team_shutdown` makes the team dormant
 
@@ -107,7 +109,7 @@ A persisted member starts with `pi --session <stored-session-file>`. The extensi
 
 Selective resume creates a valid partially running team. A later resume can start the remaining stopped members.
 
-Resumed teammates start work by default. Each restarted teammate receives one custom briefing with its existing team identity, current time, and last recorded model activity on its restored branch. Both times include a timezone. The briefing gives current team instructions precedence over earlier team assignments, then includes `resumptionPrompt` when supplied. It leaves saved common and individual system prompts and previous transcript entries unchanged.
+Resumed teammates start work by default. Each restarted teammate receives one custom briefing with its existing team identity, current time, and last recorded model activity on its restored branch. Both times include a timezone. The briefing gives current team instructions precedence over earlier team assignments, then includes `resumptionPrompt` when supplied. It leaves saved common and individual definitions and previous transcript entries unchanged. A restored conversation inherits its existing tagged briefing rather than repeating those definitions.
 
 The child reports the latest assistant response, tool result, or model-attributed summary timestamp during registration. Metadata, cache warming, and trailing user or custom inputs without recorded consumption do not count. A branch without such evidence reports no prior model activity.
 
@@ -117,11 +119,11 @@ Resume returns full records for every teammate, including already-live and still
 
 ## Session materialization controls resume behavior
 
-Pi assigns an idle child a session ID and session file path before it creates the JSONL file. Pi creates that file only after the first assistant response.
+Pi assigns an idle child a session ID and session file path before it creates the JSONL file. A user or assistant message materializes that file. Custom-only idle staging does not.
 
 If the file exists, resume uses it. If the file once materialized but is now missing, resume fails instead of replacing conversation history.
 
-If the teammate never produced an assistant response, its provisional file does not exist. Resume starts a new empty session and replaces the provisional identity.
+If the teammate never materialized its provisional file, resume starts a new empty session and replaces the provisional identity. Only this existing restart-empty path stages the same initial tagged briefing again, followed by the dated resume grounding.
 
 ## Recursive management stays session-scoped
 
@@ -205,8 +207,9 @@ The dashboard shows only live teams owned by the current parent runtime. Dormant
 - `index.ts`: team lifecycle tools, live state, owner-scoped dashboard snapshots, transport startup, and message delivery
 - `team-ui.ts`: `/team` selection, live refresh, and bounded dashboard rendering
 - `team-registry.ts`: manifests, project discovery, expiry, and leases
-- `child-tools.ts`: child callbacks, current-roster injection, and teammate tools
-- `system-prompt.ts`: teammate attachment instructions
+- `child-tools.ts`: child callbacks and teammate tools
+- `team-briefing.ts`: tagged custom startup instructions
+- `resume-message.ts`: recorded activity selection and dated resume grounding
 - `model-preflight.ts`: model-pattern availability checks
 - `team-selection.ts`: shared name/ID resolution and selection
 - `teammate.ts`: shared teammate configuration and result records

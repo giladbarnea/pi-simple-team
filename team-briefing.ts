@@ -1,6 +1,7 @@
 import { bundledSkillsInstruction } from "./bundled-skill.ts";
 
-export function composeSystemPrompt(
+/** Compose the one-time custom team briefing. @example composeTeamBriefing("review", "Shared", "scout", "Inspect", []).includes("<team-system-message>") // true */
+export function composeTeamBriefing(
 	teamName: string,
 	teamPrompt: string,
 	teammateName: string,
@@ -10,9 +11,10 @@ export function composeSystemPrompt(
 ): string {
 	return [
 		bundledSkillsInstruction,
-		teamPrompt.trim(),
-		teammatePrompt.trim(),
+		`<team-system-message>\n${teamPrompt.trim()}\n</team-system-message>`,
+		`<your-specific-system-message>\n${teammatePrompt.trim()}\n</your-specific-system-message>`,
 		`You are ${teammateName}, a teammate on team ${teamName}.`,
+		"Work on your current team assignment. Treat inherited conversation as background for this assignment.",
 		`Participants: main, ${participants.join(", ")}.`,
 		"Use team_send_message to talk to teammates, send_main_message to talk to the main agent, and team_status to set/read public statuses.",
 		"The main agent is the current coordinator. Use the team tools and available session history to share relevant context.",

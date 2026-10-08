@@ -279,25 +279,6 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 
 export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 	pi.registerMessageRenderer(teamMessageType, (message, options, theme) => renderTeamMessage(message, options, theme, getMarkdownTheme(), config.participants));
-	const startupRosterInstruction = `Participants: main, ${config.participants.join(", ")}.`;
-	pi.on("before_agent_start", async (event, context) => {
-		const teamContext = await callParent(config, "team_context", {}, context.signal);
-		const rawParticipants: unknown = teamContext.participants;
-		if (!Array.isArray(rawParticipants) || rawParticipants.some((participant: unknown) => typeof participant !== "string")) {
-			throw new Error("team runtime returned an invalid participant list");
-		}
-		const participants = rawParticipants as string[];
-		if (!event.systemPrompt.includes(startupRosterInstruction)) {
-			throw new Error("team runtime could not find its startup roster instruction");
-		}
-		config.participants.splice(0, config.participants.length, ...participants);
-		return {
-			systemPrompt: event.systemPrompt.replace(
-				startupRosterInstruction,
-				`Participants: main, ${participants.join(", ")}.`,
-			),
-		};
-	});
 	startChildRuntime(pi, config);
 
 	pi.registerTool(

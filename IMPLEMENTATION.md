@@ -15,7 +15,7 @@ There is no inbox, polling loop, explicit done primitive, or message broker. The
 
 The implementation uses child CLI processes rather than Pi SDK sessions. Children stay alive while idle. Ordinary delivery uses `pi.sendMessage` with `deliverAs: "steer"` and `triggerTurn: true`. Idle resumption instructions use `triggerTurn: false` to record context without starting work. Interrupt delivery aborts the active turn before the message lands.
 
-Spawn, resume, and add start the affected batch after all members register and the manifest is saved. `kickoffTeammates` shares the ordinary publication queue and waits for all delivery outcomes. It reports partial starts without tearing down work that already started. `startIdle` suppresses execution for all three lifecycle tools. Resume still appends its identity/time briefing while idle. `resume-message.ts` selects unambiguous model activity from the restored branch and composes that briefing, followed by optional new instructions.
+Spawn, resume, and add start the affected batch after all members register and the manifest is saved. `kickoffTeammates` shares the ordinary publication queue and waits for all delivery outcomes. It reports partial starts without tearing down work that already started. `startIdle` suppresses execution for all three lifecycle tools while still staging their custom briefings. `team-briefing.ts` supplies startup definitions and coordination guidance without a system-prompt override or roster hook. Actual restores inherit that briefing; only never-materialized sessions need initialization again. Resume appends its identity/time briefing. `resume-message.ts` selects unambiguous model activity from the restored branch and composes that briefing, followed by optional new instructions.
 
 `teammateId` is the Pi session ID. Every input identifying an existing teammate accepts its name or ID in the same field. Messages, context usage, and logs use one `targets` list that also accepts whole teams. The shared resolver handles ambiguity and overlapping selections.
 
@@ -31,7 +31,7 @@ Each active team holds an atomic lease. This lease enforces one extension-manage
 
 Every child reports its session identity when it registers its delivery server. Spawn, add, and resume complete only after that registration.
 
-Pi can report a session file before creating it. The file appears after the first assistant response.
+Pi can report a session file before creating it. A user or assistant message materializes the file. Custom-only idle staging does not.
 
 Resume uses an existing session file without overriding its stored model state. A missing materialized file fails, while a never-materialized session restarts empty.
 

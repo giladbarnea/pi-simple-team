@@ -9,7 +9,7 @@ import { defineTool, type ContextUsage, type ExtensionAPI, getMarkdownTheme } fr
 import { bundledSkillsInstruction } from "./bundled-skill.ts";
 import { formatContextWindowReport, requireKnownContextUsage, type KnownContextUsage } from "./context-window.ts";
 import { formatScopedModelGuidance, validateTeammateModels, type ModelReference } from "./model-preflight.ts";
-import { composeSystemPrompt } from "./system-prompt.ts";
+import { composeTeamBriefing } from "./team-briefing.ts";
 import { composeResumptionMessage } from "./resume-message.ts";
 import { callParent, readChildRuntimeConfig, registerChildTools } from "./child-tools.ts";
 import {
@@ -300,13 +300,13 @@ function enqueueDelivery(team: TeamState, from: string, recipient: TeammateState
 	});
 }
 
-async function kickoffTeammates(team: TeamState, teammates: TeammateState[], startIdle: boolean, resumption?: { instructions?: string }): Promise<void> {
-	if (startIdle && resumption === undefined) return;
+async function kickoffTeammates(team: TeamState, teammates: TeammateState[], startIdle: boolean, resumption?: { instructions?: string; emptyRestarts: TeammateState[] }): Promise<void> {
 	const outcomes = await Promise.allSettled(teammates.map((teammate) => {
-		// A fork can continue main's workflow unless its latest message restates its own assignment.
-		const message = resumption
-			? composeResumptionMessage(team.name, teammate.name, teammate.lastModelActivityAt, resumption.instructions)
-			: `You are teammate "${teammate.name}" on team "${team.name}". Work on your individual assignment, continuing from any prior progress:\n\n${teammate.prompt}\n\nMain coordinates the team. If your session forked main's conversation, use it as background for your own assignment.`;
+		const initialize = !resumption || resumption.emptyRestarts.includes(teammate);
+		const message = [
+			initialize && composeTeamBriefing(team.name, team.teamPrompt, teammate.name, teammate.prompt, [...team.members.keys()], teammate.canManageOwnTeams),
+			resumption && composeResumptionMessage(team.name, teammate.name, teammate.lastModelActivityAt, resumption.instructions),
+		].filter(Boolean).join("\n\n");
 		return queueDelivery(team, "main", teammate, message, false, !startIdle);
 	}));
 	const completed = teammates.filter((_teammate, index) => outcomes[index].status === "fulfilled").map((teammate) => teammate.name);
@@ -513,8 +513,6 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 		"--no-prompt-templates",
 		"--no-themes",
 		...modelArgs,
-		"--system-prompt",
-		composeSystemPrompt(team.name, team.teamPrompt, teammate.name, teammate.prompt, participants, teammate.canManageOwnTeams),
 	];
 	const proc = childProcess.spawn(team.parentPiExecutable, args, {
 		cwd: team.projectDirectory ?? process.cwd(),
@@ -556,7 +554,6 @@ async function attachHerdrTeammate(
 	herdrParentPaneId: string,
 	options: ChildStartOptions,
 ): Promise<void> {
-	const systemPrompt = composeSystemPrompt(team.name, team.teamPrompt, teammate.name, teammate.prompt, participants, teammate.canManageOwnTeams);
 	const environment = childEnvironmentOverrides(team, teammate, participants);
 	const sessionArgs = options.sessionFile
 		? ["--session", options.sessionFile]
@@ -579,8 +576,6 @@ async function attachHerdrTeammate(
 		teamLiteExtensionPath,
 		...teammate.extensionPaths.flatMap(extensionPath => ["-e", extensionPath]),
 		...modelArgs,
-		"--system-prompt",
-		systemPrompt,
 	].map(shellQuote).join(" ");
 	await runCommand("herdr", ["pane", "run", teammate.paneId, command]);
 	appendSpawnLog(team, teammate);
@@ -914,7 +909,7 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 function teammateSchema(modelGuidance: string) {
 	return Type.Object({
 		name: Type.String({ description: "Teammate name" }),
-		systemPrompt: Type.String({ description: "Individual teammate system prompt" }),
+		systemPrompt: Type.String({ description: "Individual teammate instructions, delivered in the custom startup briefing" }),
 		model: Type.String({ description: `Canonical provider/model id for this teammate. ${modelGuidance}` }),
 		thinking: Type.Optional(StringEnum(thinkingLevels, { description: "Thinking level for this teammate. Defaults to xhigh.", default: defaultThinkingLevel })),
 		forkContext: Type.Optional(Type.Boolean({ description: "Start as a fork of your context window rather than fresh. Defaults to false.", default: false })),
@@ -1016,10 +1011,10 @@ export default function (pi: ExtensionAPI) {
 				renderResult: (result, options, theme, context) => renderTeamToolResult("team_spawn", result, options, theme, context, getMarkdownTheme(), sessionTeammateRoster),
 				parameters: Type.Object({
 					teamName: Type.String({ description: "Name for the new team" }),
-					commonPrompt: Type.String({ description: "Common system prompt for all teammates" }),
+					commonPrompt: Type.String({ description: "Shared instructions for all teammates, delivered in the custom startup briefing" }),
 					teammates: Type.Array(teammateSchema(modelGuidance), { description: "Teammates to spawn" }),
 					showOnHerdrPanes: Type.Optional(Type.Boolean({ description: "Open visible Herdr panes for the team. Overrides individual teammate Herdr settings when explicitly supplied. Defaults to false.", default: false })),
-					startIdle: Type.Optional(Type.Boolean({ default: false, description: "Start teammates idle. Otherwise, start work following their common and individual system prompts once everyone is ready. Set true when only a few teammates should start first, then message those teammates." })),
+					startIdle: Type.Optional(Type.Boolean({ default: false, description: "Stage each teammate's briefing without starting work. Otherwise, start work once everyone is ready. Set true when only a few teammates should start first, then message those teammates." })),
 				}, { additionalProperties: false }),
 				async execute(_toolCallId, params, signal, _onUpdate, context) {
 					signal?.throwIfAborted();
@@ -1207,7 +1202,7 @@ export default function (pi: ExtensionAPI) {
 				teammates: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: "Teammate names or Pi session IDs within this team. Omit to resume all stopped teammates." })),
 				showOnHerdrPanes: Type.Optional(Type.Boolean({ default: false, description: "Open visible Herdr panes for selected teammates. Defaults to false." })),
 				startIdle: Type.Optional(Type.Boolean({ default: false, description: "Start resumed teammates idle." })),
-				resumptionPrompt: Type.Optional(Type.String({ description: "Instructions added once to resumed teammates' conversation context. Does not change system prompts or independently start work." })),
+				resumptionPrompt: Type.Optional(Type.String({ description: "Instructions added once after the resumed teammate's dated grounding. Does not change saved definitions or independently start work." })),
 			}, { additionalProperties: false }),
 			async execute(_toolCallId, params, signal, _onUpdate, context) {
 				signal?.throwIfAborted();
@@ -1291,7 +1286,7 @@ export default function (pi: ExtensionAPI) {
 					throw error;
 				}
 
-				await kickoffTeammates(team, starts.map(({ teammate }) => teammate), Boolean(params.startIdle), { instructions: params.resumptionPrompt });
+				await kickoffTeammates(team, starts.map(({ teammate }) => teammate), Boolean(params.startIdle), { instructions: params.resumptionPrompt, emptyRestarts: starts.filter(({ sessionFile }) => sessionFile === undefined).map(({ teammate }) => teammate) });
 				return toolResult({
 					...lifecycleResult(team),
 					teammates: [...team.members.values()].map((teammate) => {

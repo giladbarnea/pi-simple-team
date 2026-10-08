@@ -35,9 +35,9 @@ env -i PATH="$PATH" HOME="$sandbox" PI_CODING_AGENT_DIR="$sandbox" PI_SIMPLE_TEA
 rm -rf "$sandbox"
 ```
 
-It covers cancellation after a successful response, retries, normal completion, provider failure, interruption, and queued delivery through the real child callback and parent log.
+It covers cancellation, retries, provider failure, interruption, queued delivery, and append-only resume through the real child callback and parent log. Startup checks assert tagged common and individual instructions in actual first model requests for spawn, add, forks, and idle staging.
 
-For this API, verify the readiness barrier, `startIdle` on spawn/resume/add, and `resumptionPrompt` without system-prompt changes. Verify that deferred delivery errors reach the sender, and that explicit team-wide Herdr settings override individual choices. The Herdr fixture must match the installed `pane split` / `pane run` contract.
+For this API, verify the readiness barrier, `startIdle` on spawn/resume/add, and `resumptionPrompt` without saved-definition or transcript rewrites. Verify that deferred delivery errors reach the sender, and that explicit team-wide Herdr settings override individual choices. The Herdr fixture must match the installed `pane split` / `pane run` contract.
 
 Verify that every teammate selector accepts a name or Pi session ID without changing the call shape. Test two same-named teammates across teams, overlapping targets, invalid interruption subsets, and cross-team log pagination. Lifecycle results must include the complete roster. Idle/no-op resume must report existing and queued work accurately, independently of status prose.
 

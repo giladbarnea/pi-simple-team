@@ -697,7 +697,7 @@ describe("team ownership across in-process AgentSessions", () => {
 			});
 			await host.execute("team_send_message", { targets: ["reviewer"], message });
 			const log = await host.execute<{ entries: TeamLogEntry[] }>("team_log", { targets: [team] });
-			const send = log.entries.find((entry) => entry.kind === "send");
+			const send = log.entries.findLast((entry) => entry.kind === "send");
 			assert.equal(send?.details?.message, message);
 		} finally {
 			await host.shutdown();

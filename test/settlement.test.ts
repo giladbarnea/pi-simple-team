@@ -21,7 +21,7 @@ async function waitFor(check: () => Promise<boolean>, label: string): Promise<vo
 	assert.fail(`Timed out waiting for ${label}`);
 }
 
-async function startTeam(scenario: Scenario, startIdle = false) {
+async function startTeam(scenario: Scenario, startIdle = false, options: { automaticStart?: boolean; parentSessionFile?: string; commonPrompt?: string; teammatePrompt?: string } = {}) {
 	assert.deepEqual(Object.keys(process.env).filter((name) => name.startsWith("PI_SIMPLE_TEAM_") && name !== "PI_SIMPLE_TEAM_TEST_REAL_PI"), [], "Run settlement tests without live team routing or credentials.");
 	const executable = Bun.which("pi");
 	assert.ok(executable, "The real-Pi check requires Pi 1.1.0 or newer on PATH.");
@@ -64,7 +64,7 @@ async function startTeam(scenario: Scenario, startIdle = false) {
 	const shutdownHandlers: Array<() => Promise<void>> = [];
 	const context = {
 		cwd: directory, scopedModels: [], modelRegistry: { getAvailable: () => [{ provider: "local-settlement", id: "probe" }] },
-		sessionManager: { getCwd: () => directory, getSessionId: () => `settlement-${scenario}`, getSessionFile: () => path.join(directory, "main.jsonl") },
+		sessionManager: { getCwd: () => directory, getSessionId: () => `settlement-${scenario}`, getSessionFile: () => options.parentSessionFile ?? path.join(directory, "main.jsonl") },
 	};
 	const api = {
 		on: (event: string, handler: (event: JsonRecord, context: unknown) => Promise<void>) => {
@@ -92,15 +92,16 @@ async function startTeam(scenario: Scenario, startIdle = false) {
 	};
 	try {
 		teamExtension(api);
-		const spawned = await execute("team_spawn", { teamName: "settlement", startIdle: true, commonPrompt: "Respond once.", teammates: [{ name: "probe", model: "local-settlement/probe", thinking: "low", systemPrompt: "Wait for a message.", extensionPaths: scenario === "cancel" ? [cancellationExtension] : [] }] });
-		if (!startIdle) await execute("team_send_message", { targets: ["probe"], message: "Do the small task." });
+		const spawned = await execute("team_spawn", { teamName: "settlement", startIdle: !options.automaticStart, commonPrompt: options.commonPrompt ?? "Respond once.", teammates: [{ name: "probe", model: "local-settlement/probe", thinking: "low", systemPrompt: options.teammatePrompt ?? "Wait for a message.", forkContext: options.parentSessionFile !== undefined, extensionPaths: scenario === "cancel" ? [cancellationExtension] : [] }] });
+		if (!startIdle && !options.automaticStart) await execute("team_send_message", { targets: ["probe"], message: "Do the small task." });
 		return {
 			close, releaseRetry, modelRequests, requests: () => requestCount,
 			stop: async (): Promise<ToolResult> => execute("team_shutdown", { team: "settlement" }),
+			add: async (startIdle: boolean): Promise<ToolResult> => execute("team_add_teammates", { team: "settlement", startIdle, teammates: [{ name: "addition", model: "local-settlement/probe", thinking: "low", systemPrompt: "ADDITION_SPECIFIC" }] }),
 			resume: async (startIdle: boolean, resumptionPrompt?: string): Promise<ToolResult> => execute("team_resume", { team: "settlement", startIdle, ...(resumptionPrompt === undefined ? {} : { resumptionPrompt }) }),
 			sessionFile: String((spawned.details.teammates as JsonRecord[])[0].sessionFile),
 			log: async (): Promise<ToolResult> => execute("team_log", { targets: ["settlement"], limit: 100 }),
-			send: async (interrupt: boolean): Promise<ToolResult> => execute("team_send_message", { targets: ["probe"], message: "Continue with this message.", interrupt }),
+			send: async (interrupt: boolean, recipient = "probe"): Promise<ToolResult> => execute("team_send_message", { targets: [recipient], message: "Continue with this message.", interrupt }),
 			active: async (): Promise<boolean> => {
 				const listing = await execute("team_list", {});
 				return Boolean(((listing.details.teams as JsonRecord[])[0].teammates as JsonRecord[])[0].active);
@@ -120,6 +121,73 @@ function renderedLog(result: ToolResult): string {
 }
 
 describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("teammate settlement reporting", () => {
+	test.each([false, true])("newly added teammate stages=%s receives its own tagged assignment in its first request", async (startIdle) => {
+		const child = await startTeam("complete", false, { commonPrompt: "ADDITION_COMMON" });
+		try {
+			await waitFor(async () => child.requests() === 1 && !(await child.active()), "the existing teammate to settle");
+			await child.add(startIdle);
+			if (startIdle) {
+				assert.equal(child.requests(), 1, "An idle addition must stage its briefing without starting work.");
+				await child.send(false, "addition");
+			}
+			await waitFor(async () => child.requests() === 2 && ((await child.log()).details.entries as TeamLogEntry[]).some((entry) => entry.teammate === "addition" && entry.kind === "agent_settled"), "the added teammate's first request to settle");
+			const input = JSON.stringify(child.modelRequests[1].messages);
+			assert.match(input, /<team-system-message>\\nADDITION_COMMON\\n<\/team-system-message>/, "An added teammate needs the existing common instructions immediately.");
+			assert.match(input, /<your-specific-system-message>\\nADDITION_SPECIFIC\\n<\/your-specific-system-message>/, "An added teammate needs its own instructions immediately.");
+			assert.equal(input.match(/ADDITION_SPECIFIC/g)?.length, 1, "The added assignment must occur once.");
+		} finally {
+			await child.close();
+		}
+	}, 30000);
+
+	test("a fork receives its current tagged instructions while keeping inherited system history unchanged", async () => {
+		const parent = await startTeam("complete", false, { commonPrompt: "PARENT_COMMON", teammatePrompt: "PARENT_SPECIFIC" });
+		let fork: Awaited<ReturnType<typeof startTeam>> | undefined;
+		try {
+			await waitFor(async () => parent.requests() === 1 && !(await parent.active()), "the parent history to materialize");
+			await parent.stop();
+			const entries = fs.readFileSync(parent.sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line) as JsonRecord);
+			fs.appendFileSync(parent.sessionFile, JSON.stringify({ type: "message", id: "parent-system", parentId: entries.at(-1)!.id, timestamp: new Date().toISOString(), message: { role: "system", content: "OLD_PARENT_SYSTEM", timestamp: Date.now() } }) + "\n");
+			const preserved = fs.readFileSync(parent.sessionFile, "utf8");
+			fork = await startTeam("complete", false, { automaticStart: true, parentSessionFile: parent.sessionFile, commonPrompt: "FORK_COMMON", teammatePrompt: "FORK_SPECIFIC" });
+			await waitFor(async () => fork!.requests() === 1 && !(await fork!.active()), "the fork's first request");
+			const messages = fork.modelRequests[0].messages;
+			const current = messages.filter((message) => message.role === "user").map((message) => JSON.stringify(message.content)).join("\n");
+			assert.match(current, /<team-system-message>\\nFORK_COMMON\\n<\/team-system-message>/, "The first forked request needs its current common briefing, not only inherited instructions.");
+			assert.match(current, /<your-specific-system-message>\\nFORK_SPECIFIC\\n<\/your-specific-system-message>/, "The fork receives its current individual assignment.");
+			assert.equal(current.match(/FORK_SPECIFIC/g)?.length, 1, "The current assignment is not duplicated.");
+			assert.ok(JSON.stringify(messages.filter((message) => message.role === "system")).includes("OLD_PARENT_SYSTEM"), "The mitigation must not rewrite inherited system messages.");
+			assert.equal(fs.readFileSync(parent.sessionFile, "utf8"), preserved, "The source transcript must remain byte-for-byte unchanged.");
+		} finally {
+			await fork?.close();
+			await parent.close();
+		}
+	}, 30000);
+
+	test.each([false, true])("fresh startup stages=%s delivers common and individual instructions in its first custom-message request", async (startIdle) => {
+		const child = await startTeam("complete", startIdle, { automaticStart: !startIdle, commonPrompt: "STARTUP_COMMON", teammatePrompt: "STARTUP_SPECIFIC" });
+		try {
+			if (startIdle) {
+				assert.equal(child.requests(), 0, "Initial idle briefing must not start a model request.");
+				await child.send(false);
+			}
+			await waitFor(async () => child.requests() === 1 && !(await child.active()), "the first startup response");
+			const messages = child.modelRequests[0].messages;
+			const customInput = messages.filter((message) => message.role === "user").map((message) => JSON.stringify(message.content)).join("\n");
+			assert.match(customInput, /<team-system-message>\\nSTARTUP_COMMON\\n<\/team-system-message>/, "The first provider request must receive the common instructions in the tagged custom briefing.");
+			assert.match(customInput, /<your-specific-system-message>\\nSTARTUP_SPECIFIC\\n<\/your-specific-system-message>/, "The first provider request must receive the individual instructions in its own tag.");
+			assert.equal(customInput.match(/STARTUP_SPECIFIC/g)?.length, 1, "Do not repeat the per-teammate assignment in the kickoff.");
+			assert.match(customInput, /team_send_message.*send_main_message/, "The custom briefing must retain coordination guidance.");
+			const transcript = fs.readFileSync(child.sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line) as JsonRecord);
+			const briefing = transcript.find((entry) => entry.type === "custom_message" && String(entry.content).includes("STARTUP_COMMON"));
+			assert.equal(briefing?.customType, "pi-simple-team", "Initial briefing keeps the custom team renderer.");
+			assert.equal(briefing?.display, true, "Initial briefing remains visible.");
+			assert.equal((briefing?.details as JsonRecord)?.from, "main", "Initial briefing keeps sender attribution.");
+		} finally {
+			await child.close();
+		}
+	}, 30000);
+
 	test("resume without prior model activity stages a truthful briefing even without new instructions", async () => {
 		const child = await startTeam("complete", true);
 		try {
@@ -133,7 +201,9 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("teammate settl
 			const briefings = entries.filter((entry) => entry.type === "custom_message" && String(entry.content).includes("This session has resumed."));
 			assert.equal(briefings.length, 1, "A restarted session needs exactly one resume briefing, even without resumptionPrompt.");
 			assert.match(String(briefings[0].content), /No prior model activity is recorded/, "A never-used session must not invent a last-activity timestamp.");
-			assert.doesNotMatch(String(briefings[0].content), /Your last recorded model activity was|Wait for a message\./, "Do not invent previous activity or repeat the saved assignment.");
+			assert.doesNotMatch(String(briefings[0].content), /Your last recorded model activity was/, "Do not invent previous model activity.");
+			assert.match(String(briefings[0].content), /<team-system-message>\nRespond once\.\n<\/team-system-message>/, "A never-materialized session must be initialized again after its staged briefing was lost.");
+			assert.equal(String(briefings[0].content).match(/<your-specific-system-message>/g)?.length, 1, "Restart-empty initialization uses one tagged individual briefing, not a duplicate.");
 			assert.equal(child.modelRequests[0].messages.filter((message) => JSON.stringify(message.content).includes("This session has resumed.")).length, 1, "The first request must receive the staged briefing once.");
 		} finally {
 			await child.close();
@@ -156,6 +226,8 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("teammate settl
 			assert.match(JSON.stringify(briefing[0].content), /Your last recorded model activity was/, "A used session must include its recorded activity time.");
 			assert.doesNotMatch(JSON.stringify(briefing[0].content), /Wait for a message\./, "Default resume must not repeat the saved per-teammate assignment.");
 			assert.ok(messages.some((message) => JSON.stringify(message.content).includes("Do the small task.")), "Earlier conversation must remain available as background.");
+			assert.equal(messages.filter((message) => JSON.stringify(message.content).includes("<team-system-message>")).length, 1, "A real restored session inherits its original briefing instead of repeating definitions.");
+			assert.ok(messages.some((message) => JSON.stringify(message.content).includes("Respond once.") && JSON.stringify(message.content).includes("Wait for a message.")), "Both saved definitions must still reach the resumed model.");
 		} finally {
 			await child.close();
 		}
@@ -245,7 +317,8 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("teammate settl
 			await waitFor(async () => child.requests() === 1 && await child.active(), "the held active response");
 			await child.send(scenario === "interrupt");
 			if (scenario === "queued") {
-				await waitFor(async () => ((await child.log()).details.entries as TeamLogEntry[]).filter((entry) => entry.kind === "ack").length === 2, "the ordinary message to enter the busy child's queue");
+				const expectedAcknowledgments = ((await child.log()).details.entries as TeamLogEntry[]).filter((entry) => entry.kind === "send").length;
+				await waitFor(async () => ((await child.log()).details.entries as TeamLogEntry[]).filter((entry) => entry.kind === "ack").length === expectedAcknowledgments, "every published message to enter the busy child's queue");
 				assert.equal(await child.active(), true, "Accepting queued work must not clear current activity.");
 				child.releaseRetry();
 			}
