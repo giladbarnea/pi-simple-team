@@ -3,6 +3,7 @@ import { defineTool, getMarkdownTheme, type ExtensionAPI, type ExtensionContext 
 import { Type } from "typebox";
 import { formatContextWindowReport, requireKnownContextUsage } from "./context-window.ts";
 import { formatModelReference } from "./model-preflight.ts";
+import { lastRecordedModelActivity } from "./resume-message.ts";
 import { renderTeamMessage } from "./render.ts";
 import { targetDescription, interruptDescription } from "./team-selection.ts";
 
@@ -254,6 +255,7 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 				url: `http://127.0.0.1:${address.port}/deliver`,
 				sessionId: context.sessionManager.getSessionId(),
 				sessionFile: context.sessionManager.getSessionFile(),
+				lastModelActivityAt: lastRecordedModelActivity(context.sessionManager.getBranch()),
 				...runtimeFacts(context),
 			});
 		} catch (error) {

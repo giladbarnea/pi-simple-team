@@ -225,7 +225,7 @@ Kept minimal:
 
 `team_spawn`, `team_resume`, and `team_add_teammates` start work automatically once every affected teammate is ready. Set `startIdle: true` to leave those teammates idle instead.
 
-On resume, `resumptionPrompt` adds instructions to the conversation without changing saved system prompts. With `startIdle: true`, those instructions wait in context for the next turn.
+Resume appends a custom briefing with the team identity, current time, and last recorded model activity. Optional `resumptionPrompt` instructions follow that briefing without changing saved system prompts. With `startIdle: true`, the briefing waits in context for the next turn.
 
 Existing teammates can be selected by name or Pi session ID in the same input field. Messages, logs, and context usage share a `targets` list. Select a team for all its teammates, or select individual teammates across your teams. Ambiguous names return IDs you can use instead.
 

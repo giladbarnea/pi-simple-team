@@ -21,7 +21,7 @@ async function waitFor(check: () => Promise<boolean>, label: string): Promise<vo
 	assert.fail(`Timed out waiting for ${label}`);
 }
 
-async function startTeam(scenario: Scenario) {
+async function startTeam(scenario: Scenario, startIdle = false) {
 	assert.deepEqual(Object.keys(process.env).filter((name) => name.startsWith("PI_SIMPLE_TEAM_") && name !== "PI_SIMPLE_TEAM_TEST_REAL_PI"), [], "Run settlement tests without live team routing or credentials.");
 	const executable = Bun.which("pi");
 	assert.ok(executable, "The real-Pi check requires Pi 1.1.0 or newer on PATH.");
@@ -29,11 +29,13 @@ async function startTeam(scenario: Scenario) {
 	const agentDirectory = path.join(directory, "agent");
 	fs.mkdirSync(agentDirectory);
 	let requestCount = 0;
+	const modelRequests: Array<{ messages: Array<{ role: string; content: unknown }> }> = [];
 	let releaseRetry: () => void = () => undefined;
 	const retryGate = new Promise<void>((resolve) => { releaseRetry = resolve; });
 	const provider = Bun.serve({
 		hostname: "127.0.0.1", port: 0,
-		async fetch(): Promise<Response> {
+		async fetch(request: Request): Promise<Response> {
+			modelRequests.push(await request.json() as { messages: Array<{ role: string; content: unknown }> });
 			requestCount += 1;
 			if (scenario === "error") return Response.json({ error: { message: "Invalid API key fixture" } }, { status: 401 });
 			if (scenario === "retry" && requestCount === 1) return Response.json({ error: { message: "overloaded fixture" } }, { status: 503 });
@@ -91,9 +93,11 @@ async function startTeam(scenario: Scenario) {
 	try {
 		teamExtension(api);
 		const spawned = await execute("team_spawn", { teamName: "settlement", startIdle: true, commonPrompt: "Respond once.", teammates: [{ name: "probe", model: "local-settlement/probe", thinking: "low", systemPrompt: "Wait for a message.", extensionPaths: scenario === "cancel" ? [cancellationExtension] : [] }] });
-		await execute("team_send_message", { targets: ["probe"], message: "Do the small task." });
+		if (!startIdle) await execute("team_send_message", { targets: ["probe"], message: "Do the small task." });
 		return {
-			close, releaseRetry, requests: () => requestCount,
+			close, releaseRetry, modelRequests, requests: () => requestCount,
+			stop: async (): Promise<ToolResult> => execute("team_shutdown", { team: "settlement" }),
+			resume: async (startIdle: boolean, resumptionPrompt?: string): Promise<ToolResult> => execute("team_resume", { team: "settlement", startIdle, ...(resumptionPrompt === undefined ? {} : { resumptionPrompt }) }),
 			sessionFile: String((spawned.details.teammates as JsonRecord[])[0].sessionFile),
 			log: async (): Promise<ToolResult> => execute("team_log", { targets: ["settlement"], limit: 100 }),
 			send: async (interrupt: boolean): Promise<ToolResult> => execute("team_send_message", { targets: ["probe"], message: "Continue with this message.", interrupt }),
@@ -116,6 +120,110 @@ function renderedLog(result: ToolResult): string {
 }
 
 describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("teammate settlement reporting", () => {
+	test("resume without prior model activity stages a truthful briefing even without new instructions", async () => {
+		const child = await startTeam("complete", true);
+		try {
+			await child.stop();
+			const resumed = await child.resume(true);
+			assert.equal(child.requests(), 0, "An idle resume without new instructions must not start the model.");
+			await child.send(false);
+			await waitFor(async () => child.requests() === 1 && !(await child.active()), "the first explicitly started model response");
+			const sessionFile = String((resumed.details.teammates as JsonRecord[])[0].sessionFile);
+			const entries = fs.readFileSync(sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line) as JsonRecord);
+			const briefings = entries.filter((entry) => entry.type === "custom_message" && String(entry.content).includes("This session has resumed."));
+			assert.equal(briefings.length, 1, "A restarted session needs exactly one resume briefing, even without resumptionPrompt.");
+			assert.match(String(briefings[0].content), /No prior model activity is recorded/, "A never-used session must not invent a last-activity timestamp.");
+			assert.doesNotMatch(String(briefings[0].content), /Your last recorded model activity was|Wait for a message\./, "Do not invent previous activity or repeat the saved assignment.");
+			assert.equal(child.modelRequests[0].messages.filter((message) => JSON.stringify(message.content).includes("This session has resumed.")).length, 1, "The first request must receive the staged briefing once.");
+		} finally {
+			await child.close();
+		}
+	}, 30000);
+
+	test("default resume starts once with the custom briefing and retains previous conversation", async () => {
+		const child = await startTeam("complete");
+		try {
+			await waitFor(async () => child.requests() === 1 && !(await child.active()), "initial model activity");
+			await child.stop();
+			const previousTranscript = fs.readFileSync(child.sessionFile, "utf8");
+			const resumed = await child.resume(false);
+			await waitFor(async () => child.requests() === 2 && !(await child.active()), "automatic resumption to settle");
+			assert.ok(fs.readFileSync(child.sessionFile, "utf8").startsWith(previousTranscript), "Automatic resumption must append without rewriting saved history.");
+			assert.equal((resumed.details.teammates as JsonRecord[])[0].systemPrompt, "Wait for a message.", "The saved individual definition must remain unchanged.");
+			const messages = child.modelRequests[1].messages;
+			const briefing = messages.filter((message) => JSON.stringify(message.content).includes("This session has resumed."));
+			assert.equal(briefing.length, 1, "Default resume must send exactly one current briefing to the model.");
+			assert.match(JSON.stringify(briefing[0].content), /Your last recorded model activity was/, "A used session must include its recorded activity time.");
+			assert.doesNotMatch(JSON.stringify(briefing[0].content), /Wait for a message\./, "Default resume must not repeat the saved per-teammate assignment.");
+			assert.ok(messages.some((message) => JSON.stringify(message.content).includes("Do the small task.")), "Earlier conversation must remain available as background.");
+		} finally {
+			await child.close();
+		}
+	}, 30000);
+
+	test("resume leaves an already-active teammate's model work and conversation unchanged", async () => {
+		const child = await startTeam("queued");
+		try {
+			await waitFor(async () => child.requests() === 1 && await child.active(), "held active model work");
+			const resumed = await child.resume(false, "UNEXPECTED_RESUMPTION");
+			assert.equal((resumed.details.alreadyActiveTeammates as JsonRecord[])[0]?.name, "probe", "No-op resume must report the already-active teammate.");
+			assert.equal(await child.active(), true, "No-op resume must not cancel or restart the active run.");
+			child.releaseRetry();
+			await waitFor(async () => !(await child.active()), "unchanged active work to finish");
+			assert.equal(child.requests(), 1, "No-op resume must not queue another model request.");
+			assert.doesNotMatch(fs.readFileSync(child.sessionFile, "utf8"), /UNEXPECTED_RESUMPTION|This session has resumed/, "An already-active member must receive no resume briefing.");
+		} finally {
+			await child.close();
+		}
+	}, 30000);
+
+	test("idle resume appends one dated custom briefing without rewriting history or starting work", async () => {
+		const child = await startTeam("complete");
+		try {
+			await waitFor(async () => child.requests() === 1 && !(await child.active()), "initial recorded model activity");
+			await child.stop();
+			const history = fs.readFileSync(child.sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line) as JsonRecord);
+			const lastResponse = history.findLast((entry) => entry.type === "message" && (entry.message as JsonRecord).role === "assistant");
+			assert.ok(lastResponse, "The fixture needs an actual model response before metadata and staging.");
+			lastResponse.timestamp = "2026-02-03T14:05:06.000Z";
+			const tail = String(history.at(-1)!.id);
+			history.push({ type: "session_info", id: "later-info", parentId: tail, timestamp: "2099-01-01T00:00:00.000Z", name: "Recent metadata, not model work" });
+			history.push({ type: "custom_message", id: "later-staging", parentId: "later-info", timestamp: "2099-01-02T00:00:00.000Z", customType: "staged", content: "Unconsumed staged context", display: false });
+			history.push({ type: "message", id: "later-input", parentId: "later-staging", timestamp: "2099-01-03T00:00:00.000Z", message: { role: "user", content: "Submitted input without a recorded response", timestamp: Date.parse("2099-01-03T00:00:00.000Z") } });
+			const previousTranscript = history.map((entry) => JSON.stringify(entry)).join("\n") + "\n";
+			fs.writeFileSync(child.sessionFile, previousTranscript);
+			const resumptionPrompt = "Review only the current assignment.";
+			const resumed = await child.resume(true, resumptionPrompt);
+			assert.equal((resumed.details.teammates as JsonRecord[])[0].systemPrompt, "Wait for a message.", "Resumption instructions must not rewrite the saved individual definition.");
+			assert.equal(child.requests(), 1, "An idle resume briefing must not issue a model request.");
+			assert.equal(await child.active(), false, "Recording the resume briefing must leave the teammate idle.");
+			const stagedTranscript = fs.readFileSync(child.sessionFile, "utf8");
+			assert.ok(stagedTranscript.startsWith(previousTranscript), "Resumption must preserve every prior transcript entry byte-for-byte.");
+			const entries = stagedTranscript.trim().split("\n").map((line) => JSON.parse(line) as JsonRecord);
+			const briefing = entries.at(-1)!;
+			assert.equal(briefing.type, "custom_message", "The resume briefing must remain a custom message.");
+			assert.equal(briefing.customType, "pi-simple-team", "The existing team renderer must receive the same custom type.");
+			assert.equal(briefing.display, true, "The briefing must remain visible through the team renderer.");
+			assert.equal((briefing.details as JsonRecord).from, "main", "Resume must preserve sender attribution.");
+			const content = String(briefing.content);
+			assert.match(content, /You are teammate "probe" on team "settlement"/, "Explicit instructions must not replace the restored teammate's identity.");
+			assert.match(content, /Your last recorded model activity was .*03 Feb 2026.*(?:GMT|UTC)/, "Report the actual model activity in human-readable time with a timezone, not later metadata or staged context.");
+			assert.match(content, /Current time: .*\d{2}:\d{2}:\d{2}.*(?:GMT|UTC)/, "Current time needs a readable date, clock, and explicit timezone.");
+			assert.doesNotMatch(content, /2099|Wait for a message\./, "Do not reuse metadata timestamps or repeat the saved individual assignment.");
+			assert.ok(content.includes(resumptionPrompt), "The briefing must include the new instructions.");
+			const beforeNoop = stagedTranscript;
+			await child.resume(true, "Do not send this to an already-live member.");
+			assert.equal(fs.readFileSync(child.sessionFile, "utf8"), beforeNoop, "Resuming an already-live member must not append another briefing.");
+			await child.send(false);
+			await waitFor(async () => child.requests() === 2 && !(await child.active()), "work after the staged briefing");
+			const received = child.modelRequests[1].messages;
+			assert.equal(received.filter((message) => JSON.stringify(message.content).includes(resumptionPrompt)).length, 1, "The model must receive the appended briefing exactly once.");
+			assert.ok(received.some((message) => JSON.stringify(message.content).includes("Do the small task.")), "The resumed model must still receive previous conversation context.");
+		} finally {
+			await child.close();
+		}
+	}, 30000);
+
 	test.each(["complete", "error"] as const)("a %s run ends without falsely claiming cancellation or success", async (scenario) => {
 		const child = await startTeam(scenario);
 		try {

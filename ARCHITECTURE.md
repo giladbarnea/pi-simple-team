@@ -107,7 +107,11 @@ A persisted member starts with `pi --session <stored-session-file>`. The extensi
 
 Selective resume creates a valid partially running team. A later resume can start the remaining stopped members.
 
-Resumed teammates start work by default. `resumptionPrompt` supplies one conversation message, leaving common and individual system prompts unchanged. With `startIdle: true`, the runtime records it through `pi.sendMessage` with `triggerTurn: false`. A later ordinary message starts work using that context. Already-running members receive neither the resumption message nor another kickoff.
+Resumed teammates start work by default. Each restarted teammate receives one custom briefing with its existing team identity, current time, and last recorded model activity on its restored branch. Both times include a timezone. The briefing gives current team instructions precedence over earlier team assignments, then includes `resumptionPrompt` when supplied. It leaves saved common and individual system prompts and previous transcript entries unchanged.
+
+The child reports the latest assistant response, tool result, or model-attributed summary timestamp during registration. Metadata, cache warming, and trailing user or custom inputs without recorded consumption do not count. A branch without such evidence reports no prior model activity.
+
+With `startIdle: true`, the runtime records the briefing through `pi.sendMessage` with `triggerTurn: false`, even without new instructions. A later ordinary message starts work using that context. Already-running members receive no resume briefing.
 
 Resume returns full records for every teammate, including already-live and still-stopped teammates, plus whole-team status. Only actually resumed teammates have `contextRestored`. `alreadyActiveTeammates` identifies pre-existing live teammates that have work at return time, including when `startIdle` is true.
 

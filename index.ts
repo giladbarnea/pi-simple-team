@@ -10,6 +10,7 @@ import { bundledSkillsInstruction } from "./bundled-skill.ts";
 import { formatContextWindowReport, requireKnownContextUsage, type KnownContextUsage } from "./context-window.ts";
 import { formatScopedModelGuidance, validateTeammateModels, type ModelReference } from "./model-preflight.ts";
 import { composeSystemPrompt } from "./system-prompt.ts";
+import { composeResumptionMessage } from "./resume-message.ts";
 import { callParent, readChildRuntimeConfig, registerChildTools } from "./child-tools.ts";
 import {
 	canonicalProjectDirectory,
@@ -54,6 +55,7 @@ interface TeammateState {
 	sessionId?: string;
 	sessionFile?: string;
 	sessionMaterialized: boolean;
+	lastModelActivityAt?: string;
 	process?: ChildProcess;
 	paneId?: string;
 	deliveryUrl?: string;
@@ -298,12 +300,14 @@ function enqueueDelivery(team: TeamState, from: string, recipient: TeammateState
 	});
 }
 
-async function kickoffTeammates(team: TeamState, teammates: TeammateState[], startIdle: boolean, resumptionPrompt?: string): Promise<void> {
-	if (startIdle && resumptionPrompt === undefined) return;
+async function kickoffTeammates(team: TeamState, teammates: TeammateState[], startIdle: boolean, resumption?: { instructions?: string }): Promise<void> {
+	if (startIdle && resumption === undefined) return;
 	const outcomes = await Promise.allSettled(teammates.map((teammate) => {
 		// A fork can continue main's workflow unless its latest message restates its own assignment.
-		const assignment = `You are teammate "${teammate.name}" on team "${team.name}". Work on your individual assignment, continuing from any prior progress:\n\n${teammate.prompt}\n\nMain coordinates the team. If your session forked main's conversation, use it as background for your own assignment.`;
-		return queueDelivery(team, "main", teammate, resumptionPrompt ?? assignment, false, !startIdle);
+		const message = resumption
+			? composeResumptionMessage(team.name, teammate.name, teammate.lastModelActivityAt, resumption.instructions)
+			: `You are teammate "${teammate.name}" on team "${team.name}". Work on your individual assignment, continuing from any prior progress:\n\n${teammate.prompt}\n\nMain coordinates the team. If your session forked main's conversation, use it as background for your own assignment.`;
+		return queueDelivery(team, "main", teammate, message, false, !startIdle);
 	}));
 	const completed = teammates.filter((_teammate, index) => outcomes[index].status === "fulfilled").map((teammate) => teammate.name);
 	const errors = outcomes.flatMap((outcome, index) => {
@@ -832,6 +836,7 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 			}
 			teammate.sessionId = sessionId;
 			teammate.sessionFile = sessionFile;
+			teammate.lastModelActivityAt = args.lastModelActivityAt as string | undefined;
 			teammate.sessionMaterialized = fs.existsSync(sessionFile);
 			applyRuntimeFacts(teammate, args);
 			teammate.alive = true;
@@ -1286,7 +1291,7 @@ export default function (pi: ExtensionAPI) {
 					throw error;
 				}
 
-				await kickoffTeammates(team, starts.map(({ teammate }) => teammate), Boolean(params.startIdle), params.resumptionPrompt);
+				await kickoffTeammates(team, starts.map(({ teammate }) => teammate), Boolean(params.startIdle), { instructions: params.resumptionPrompt });
 				return toolResult({
 					...lifecycleResult(team),
 					teammates: [...team.members.values()].map((teammate) => {

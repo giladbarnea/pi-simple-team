@@ -15,7 +15,7 @@ There is no inbox, polling loop, explicit done primitive, or message broker. The
 
 The implementation uses child CLI processes rather than Pi SDK sessions. Children stay alive while idle. Ordinary delivery uses `pi.sendMessage` with `deliverAs: "steer"` and `triggerTurn: true`. Idle resumption instructions use `triggerTurn: false` to record context without starting work. Interrupt delivery aborts the active turn before the message lands.
 
-Spawn, resume, and add start the affected batch after all members register and the manifest is saved. `kickoffTeammates` shares the ordinary publication queue and waits for all delivery outcomes. It reports partial starts without tearing down work that already started. `startIdle` suppresses execution for all three lifecycle tools.
+Spawn, resume, and add start the affected batch after all members register and the manifest is saved. `kickoffTeammates` shares the ordinary publication queue and waits for all delivery outcomes. It reports partial starts without tearing down work that already started. `startIdle` suppresses execution for all three lifecycle tools. Resume still appends its identity/time briefing while idle. `resume-message.ts` selects unambiguous model activity from the restored branch and composes that briefing, followed by optional new instructions.
 
 `teammateId` is the Pi session ID. Every input identifying an existing teammate accepts its name or ID in the same field. Messages, context usage, and logs use one `targets` list that also accepts whole teams. The shared resolver handles ambiguity and overlapping selections.
 

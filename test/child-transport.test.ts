@@ -356,6 +356,7 @@ async function startChildRuntimeForTest(failingLifecycleEvents: number): Promise
 		thinkingLevel: "high",
 		getContextUsage: () => ({ tokens: 87_000, contextWindow: 272_000, percent: 31.985 }),
 		sessionManager: {
+			getBranch: () => [],
 			getSessionId: () => "visible-child-test-session-id",
 			getSessionFile: () => "/tmp/visible-child-test-session.jsonl",
 		},
@@ -501,7 +502,7 @@ describe("unified child runtime", () => {
 			await host.execute("team_resume", { team: "resumption-log", startIdle: true, resumptionPrompt });
 			const log = await host.execute("team_log", { targets: ["resumption-log"], search: "RESUMPTION_TAIL" });
 			const entries = log.details?.entries as Array<{ kind: string; details?: JsonRecord }>;
-			assert.ok(entries?.some((entry) => entry.kind === "send" && entry.details?.message === resumptionPrompt), "Resumption must preserve the full published message in the same log as ordinary sends.");
+			assert.ok(entries?.some((entry) => entry.kind === "send" && String(entry.details?.message).endsWith(resumptionPrompt)), "Resumption must preserve the full published message in the same log as ordinary sends.");
 		} finally {
 			await host.shutdown();
 			fake.restore();
@@ -744,7 +745,7 @@ describe("unified child runtime", () => {
 			const before = lines(fake.eventsPath).filter((entry) => entry.type === "parent" && (entry.args as JsonRecord)?.event && ((entry.args as JsonRecord).event as JsonRecord).type === "agent_start").length;
 			await host.execute("team_resume", { team: "resume-instructions", startIdle: true, resumptionPrompt: "New instructions for the next turn." });
 			const deliveries = lines(fake.eventsPath).filter((entry) => entry.type === "delivery");
-			const resumption = deliveries.map((entry) => (entry.body as JsonRecord).args as JsonRecord).find((args) => args.message === "New instructions for the next turn.");
+			const resumption = deliveries.map((entry) => (entry.body as JsonRecord).args as JsonRecord).find((args) => String(args.message).endsWith("New instructions for the next turn."));
 			assert.ok(resumption, "Resume must record the supplied instructions even when startIdle is true.");
 			assert.equal(resumption.triggerTurn, false, "The recorded resumption prompt must not request a turn.");
 			const after = lines(fake.eventsPath).filter((entry) => entry.type === "parent" && (entry.args as JsonRecord)?.event && ((entry.args as JsonRecord).event as JsonRecord).type === "agent_start").length;

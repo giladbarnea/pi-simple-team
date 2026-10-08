@@ -84,6 +84,7 @@ function makeContext(sessionId: string, projectDirectory: string): ExtensionCont
 			getCwd: () => projectDirectory,
 			getSessionFile: () => path.join(projectDirectory, `${sessionId}.jsonl`),
 			getSessionId: () => sessionId,
+			getBranch: () => [],
 		},
 	} as unknown as ExtensionContext;
 }
@@ -187,6 +188,7 @@ const extensionContext = {
 		getCwd: () => process.cwd(),
 		getSessionFile: () => sessionFile,
 		getSessionId: () => sessionId,
+		getBranch: () => [],
 	},
 };
 if ((member === "resume-fails" && sequence > 1) || member === "add-fails") {
