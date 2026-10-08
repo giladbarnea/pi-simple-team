@@ -543,7 +543,7 @@ export function foldLogEntries(entries: TeamLogEntry[]): LogAction[] {
 			continue;
 		}
 		if (entry.kind === "agent_start") {
-			const action: LogAction = { ...base, icon: "diamond", iconToken: "borderMuted", action: "turn", details: [textDetail(ellipsis)], startEpoch: entry.epochMilliseconds };
+			const action: LogAction = { ...base, icon: "diamond", iconToken: "borderMuted", action: "attempt", details: [textDetail(ellipsis)], startEpoch: entry.epochMilliseconds };
 			actions.push(action);
 			openTurns.set(who, action);
 			continue;
@@ -557,7 +557,11 @@ export function foldLogEntries(entries: TeamLogEntry[]): LogAction[] {
 				open.details = [textDetail(durationText(open.startEpoch, entry.epochMilliseconds)), ...countDetails];
 				continue;
 			}
-			actions.push({ ...base, icon: "diamond", iconToken: "borderMuted", action: "turn", details: countDetails });
+			actions.push({ ...base, icon: "diamond", iconToken: "borderMuted", action: "attempt", details: countDetails });
+			continue;
+		}
+		if (entry.kind === "agent_settled") {
+			actions.push({ ...base, icon: "diamond", iconToken: details.aborted ? "warning" : "borderMuted", action: "run", details: [textDetail(details.aborted ? "cancelled" : "ended")] });
 			continue;
 		}
 		if (entry.kind === "spawn") {

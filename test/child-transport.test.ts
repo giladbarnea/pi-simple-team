@@ -376,6 +376,18 @@ async function startChildRuntimeForTest(failingLifecycleEvents: number): Promise
 }
 
 describe("unified child runtime", () => {
+	test("forwards the cancellation flag from both final settlement outcomes", async () => {
+		const child = await startChildRuntimeForTest(0);
+		try {
+			await child.handlers.get("agent_settled")?.({ aborted: true });
+			await child.handlers.get("agent_settled")?.({ aborted: false });
+			await waitFor(() => child.requests.filter((request) => request.tool === "event").length === 2);
+			assert.deepEqual(child.requests.filter((request) => request.tool === "event").map((request) => request.args.event), [{ type: "agent_settled", aborted: true }, { type: "agent_settled", aborted: false }], "The shared RPC/Herdr callback must not discard either cancellation value.");
+		} finally {
+			await child.close();
+		}
+	});
+
 	test("idle resume reports work queued before the child starts its turn", async () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();

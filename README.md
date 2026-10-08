@@ -38,6 +38,8 @@ Not scheduling a meeting.
 
 ## Install
 
+Requires Pi 1.1.0 or newer.
+
 ```sh
 pi install npm:@giladbarnea/pi-simple-team
 ```
@@ -146,6 +148,7 @@ You can stop babysitting context windows.
 Your main uses `team_log` when it needs to understand the chain of events in high granularity.
 
 Provides main a timestamped, filterable, append-only record of the team’s messages, tool calls, and lifecycle events.
+Attempts can end before retries finish. A separate run row reports final settlement as ended or cancelled. Ended does not imply success.
 
 ### 🌅 Herdr Support
 

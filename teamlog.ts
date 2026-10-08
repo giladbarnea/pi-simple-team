@@ -6,6 +6,7 @@ export type TeamLogKind =
 	| "status"
 	| "agent_start"
 	| "agent_end"
+	| "agent_settled"
 	| "tool_start"
 	| "tool_end"
 	| "main_message"
@@ -260,8 +261,12 @@ export function normalizeChildEvent(team: string, teammate: string, event: Recor
 	if (type === "agent_end") {
 		const messages = event.messages;
 		const messageCount = Array.isArray(messages) ? messages.length : undefined;
-		const summary = messageCount === undefined ? `${teammate} finished` : `${teammate} finished (${messageCount} message${messageCount === 1 ? "" : "s"})`;
+		const summary = messageCount === undefined ? `${teammate} attempt ended` : `${teammate} attempt ended (${messageCount} message${messageCount === 1 ? "" : "s"})`;
 		return { team, teammate, direction: "runtime", kind: "agent_end", summary, details: messageCount === undefined ? undefined : { messageCount } };
+	}
+
+	if (type === "agent_settled") {
+		return { team, teammate, direction: "runtime", kind: "agent_settled", summary: `${teammate} run ${event.aborted ? "cancelled" : "ended"}`, details: { aborted: event.aborted } };
 	}
 
 	if (type === "tool_execution_start") {

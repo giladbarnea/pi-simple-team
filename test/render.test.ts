@@ -673,9 +673,9 @@ describe("teamLogLines", () => {
 		expect(lines[1]).toContain("Writing findings");
 	});
 
-	test("a turn opens with an ellipsis and closes in place with duration and message count", () => {
+	test("an attempt opens with an ellipsis and closes in place with duration and message count", () => {
 		const openOnly = teamLogLines(identityTheme, logView([logEntry({ sequence: 50, kind: "agent_start", teammate: "reviewer", epochMilliseconds: T })]));
-		expect(openOnly[1]).toContain("turn");
+		expect(openOnly[1]).toContain("attempt");
 		expect(openOnly[1]).toContain(g.ellipsis);
 
 		const closed = teamLogLines(
@@ -689,6 +689,15 @@ describe("teamLogLines", () => {
 		expect(closed[1]).toContain("41s");
 		expect(closed[1]).toContain("14 messages");
 		expect(closed[1]).not.toContain(g.ellipsis);
+	});
+
+	test.each([true, false])("final settlement cancellation=%s renders separately without implying success", (aborted) => {
+		const entries = [logEntry({ sequence: 59, kind: "agent_settled", teammate: "reviewer", epochMilliseconds: T, details: { aborted } })];
+		const lines = teamLogLines(taggingTheme, logView(entries));
+		expect(lines[1]).toContain("run");
+		expect(lines[1]).toContain(aborted ? "cancelled" : "ended");
+		expect(lines[1]).toContain(aborted ? "«warning:" : "«borderMuted:");
+		expect(lines[1]).not.toContain("«success:");
 	});
 
 	test("spawn rows carry model and thinking from details", () => {

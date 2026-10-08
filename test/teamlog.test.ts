@@ -371,7 +371,14 @@ describe("normalizeChildEvent (child agent/tool lifecycle normalization)", () =>
 	test("maps agent_end without a messages array", () => {
 		const entry = normalizeChildEvent("demo-team", "Implementer", { type: "agent_end" });
 		expect(entry?.kind).toBe("agent_end");
-		expect(entry?.summary).toBe("Implementer finished");
+		expect(entry?.summary).toBe("Implementer attempt ended");
+	});
+
+	test.each([true, false])("preserves final settlement cancellation=%s independently of attempt messages", (aborted) => {
+		const entry = normalizeChildEvent("demo-team", "Implementer", { type: "agent_settled", aborted });
+		assert.equal(entry?.kind, "agent_settled", "Final settlement needs its own event, separate from agent_end.");
+		assert.equal(entry?.summary, `Implementer run ${aborted ? "cancelled" : "ended"}`, "Non-cancelled settlement must not imply success.");
+		assert.deepEqual(entry?.details, { aborted }, "The log must retain the exact cancellation flag.");
 	});
 
 	test("maps tool_execution_start to a tool_start entry carrying tool name and args", () => {

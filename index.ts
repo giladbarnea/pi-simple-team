@@ -88,7 +88,7 @@ interface TeamState {
 
 const teamLiteExtensionPath = fileURLToPath(import.meta.url);
 const thinkingLevels = ["low", "medium", "high", "xhigh", "max"] as const;
-const defaultThinkingLevel: ThinkingLevel = "xhigh";
+const defaultThinkingLevel = "xhigh" satisfies ThinkingLevel;
 const deliveryTimeoutMilliseconds = 30_000;
 const defaultRpcShutdownGraceMilliseconds = 1_000;
 const teamMessageType = "pi-simple-team";

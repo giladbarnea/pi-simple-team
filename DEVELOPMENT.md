@@ -27,6 +27,16 @@ Not everything can be tested programmatically, though. We lean on manual tests f
 
 Run `bun test` for the default suite. Run `PI_SIMPLE_TEAM_TEST_REAL_PI=1 bun test` to include real-Pi checks. The lifecycle and idle-context checks use local model endpoints. The small RPC connectivity check uses `openai-codex/gpt-5.6-luna` with low thinking.
 
+Never let tests inherit live `PI_SIMPLE_TEAM_*` routing or credentials. The settlement regression uses Pi 1.1.0 or newer with local model responses and no discovered extensions:
+
+```sh
+sandbox=$(mktemp -d)
+env -i PATH="$PATH" HOME="$sandbox" PI_CODING_AGENT_DIR="$sandbox" PI_SIMPLE_TEAM_TEST_REAL_PI=1 bun test test/settlement.test.ts
+rm -rf "$sandbox"
+```
+
+It covers cancellation after a successful response, retries, normal completion, provider failure, interruption, and queued delivery through the real child callback and parent log.
+
 For this API, verify the readiness barrier, `startIdle` on spawn/resume/add, and `resumptionPrompt` without system-prompt changes. Verify that deferred delivery errors reach the sender, and that explicit team-wide Herdr settings override individual choices. The Herdr fixture must match the installed `pane split` / `pane run` contract.
 
 Verify that every teammate selector accepts a name or Pi session ID without changing the call shape. Test two same-named teammates across teams, overlapping targets, invalid interruption subsets, and cross-team log pagination. Lifecycle results must include the complete roster. Idle/no-op resume must report existing and queued work accurately, independently of status prose.

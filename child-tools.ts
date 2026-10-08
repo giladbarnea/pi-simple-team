@@ -175,8 +175,8 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 	pi.on("agent_end", (event) => {
 		notifyParent({ type: "agent_end", messages: event.messages });
 	});
-	pi.on("agent_settled", () => {
-		notifyParent({ type: "agent_settled" });
+	pi.on("agent_settled", (event) => {
+		notifyParent({ type: "agent_settled", aborted: event.aborted });
 		markIdle();
 	});
 	const reportRuntimeFacts = (context: ExtensionContext): Promise<void> => notifyParent({ type: "runtime_facts", ...runtimeFacts(context) });
