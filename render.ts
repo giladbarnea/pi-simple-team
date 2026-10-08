@@ -5,6 +5,9 @@ import { glyphs } from "./render-support/glyphs.ts";
 import { stackPrefix, toolLabel, treeConnector, treeStem } from "./render-support/theme.ts";
 import { commandExit, plural, renderPendingCall, textContent } from "./render-support/text.ts";
 import { futureTime, monthDay, relativeTime, timeOfDay, type TeamLogEntry } from "./teamlog.ts";
+import { actorHueToken, DIM_SGR_CLOSE, DIM_SGR_OPEN, FactTable, inlineFact, statusWordToken, type FactRow, type TeammateView } from "./teammate-facts.ts";
+
+export { actorHueToken, statusWordToken, type TeammateView };
 
 export interface ThemeLike {
 	bold(text: string): string;
@@ -54,15 +57,30 @@ export function relativeTimeText(timestamp: string): string {
 }
 
 /** A rendered line with optional wrapping or right-aligned layout metadata. */
-export type TeamLine = string | { prefix: string; text: string } | { left: string; right: string };
+type MarkdownTeamLine = { prefix: string; markdown: string; markdownTheme: MarkdownTheme };
+
+/** A teammate's fact row. Its table shrinks it to fit the width, in collapsed and expanded views alike. */
+type FactTeamLine = { prefix: string; row: FactRow; table: FactTable };
+
+export type TeamLine = string | { prefix: string; text: string } | { left: string; right: string } | MarkdownTeamLine | FactTeamLine;
 
 function isRightAlignedTeamLine(line: TeamLine): line is { left: string; right: string } {
 	return typeof line !== "string" && "right" in line;
 }
 
+function isMarkdownTeamLine(line: TeamLine): line is MarkdownTeamLine {
+	return typeof line !== "string" && "markdown" in line;
+}
+
+function isFactTeamLine(line: TeamLine): line is FactTeamLine {
+	return typeof line !== "string" && "table" in line;
+}
+
 export function teamLineText(line: TeamLine): string {
 	if (typeof line === "string") return line;
 	if (isRightAlignedTeamLine(line)) return `${line.left}${line.right}`.trimEnd();
+	if (isMarkdownTeamLine(line)) return `${line.prefix}${line.markdown}`.trimEnd();
+	if (isFactTeamLine(line)) return `${line.prefix}${line.table.full(line.row)}`.trimEnd();
 	return `${line.prefix}${line.text}`.trimEnd();
 }
 
@@ -74,13 +92,13 @@ function rightAlignedLine(left: string, right: string, width: number): string {
 }
 
 function wrapTeamLine(line: TeamLine, width: number): string[] {
-	if (isRightAlignedTeamLine(line)) return [rightAlignedLine(line.left, line.right, width)];
+	if (isRightAlignedTeamLine(line) || isFactTeamLine(line)) return [clipTeamLine(line, width)];
 	if (typeof line === "string") {
 		const wrapped = wrapTextWithAnsi(line, width);
 		return wrapped.length > 0 ? wrapped : [""];
 	}
 	const contentWidth = Math.max(1, width - visibleLength(line.prefix));
-	const wrapped = wrapTextWithAnsi(line.text, contentWidth);
+	const wrapped = isMarkdownTeamLine(line) ? new Markdown(line.markdown, 0, 0, line.markdownTheme).render(contentWidth) : wrapTextWithAnsi(line.text, contentWidth);
 	const parts = wrapped.length > 0 ? wrapped : [""];
 	return parts.map((part) => clipToWidth(`${line.prefix}${part}`.trimEnd(), width));
 }
@@ -89,7 +107,13 @@ function clipToWidth(line: string, width: number): string {
 	return truncateToWidth(line, Math.max(1, width), glyphs().ellipsis);
 }
 
+/** Clips each logical line to exactly `width` columns, with no right-margin guard. */
+export function clipTeamLines(lines: TeamLine[], width: number): string[] {
+	return lines.map((line) => clipToWidth(clipTeamLine(line, width), width));
+}
+
 function clipTeamLine(line: TeamLine, width: number): string {
+	if (isFactTeamLine(line)) return `${line.prefix}${line.table.fit(line.row, width - visibleLength(line.prefix))}`;
 	return isRightAlignedTeamLine(line) ? rightAlignedLine(line.left, line.right, width) : clipToWidth(teamLineText(line), width);
 }
 
@@ -111,11 +135,9 @@ export class TeamLines {
 	render(width: number): string[] {
 		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
 		const targetWidth = Math.max(1, stableRenderWidth(width));
-		const renderedLines =
-			this.mode === "clip"
-				? this.lines.map((line) => clipTeamLine(line, targetWidth))
-				: this.lines.flatMap((line) => wrapTeamLine(line, targetWidth));
-		this.cachedLines = renderedLines.map((line) => clipToWidth(line, targetWidth));
+		this.cachedLines = this.mode === "clip"
+			? clipTeamLines(this.lines, targetWidth)
+			: this.lines.flatMap((line) => wrapTeamLine(line, targetWidth)).map((line) => clipToWidth(line, targetWidth));
 		this.cachedWidth = width;
 		return this.cachedLines;
 	}
@@ -153,120 +175,120 @@ export function formatCharCount(count: number): string {
 	return `${count} chars`;
 }
 
-const STATUS_WORD_TOKENS: Record<string, string> = {
-	active: "success",
-	busy: "success",
-	running: "success",
-	working: "success",
-	blocked: "warning",
-	restarted: "warning",
-	resumed: "success",
-	waiting: "warning",
-	available: "muted",
-	dormant: "muted",
-	idle: "muted",
-	spawned: "muted",
-	done: "dim",
-	exited: "dim",
-	stopped: "dim",
-	error: "error",
-	failed: "error",
-};
-
-/**
- * statusWordToken("working") === "success"; statusWordToken("reviewing") === "accent"
- */
-export function statusWordToken(word: string): string {
-	return STATUS_WORD_TOKENS[word.trim().toLowerCase()] ?? "accent";
-}
-
-function memberRows(theme: ThemeLike, statuses: Record<string, TeamStatusView>, roster: string[], indent = ""): TeamLine[] {
-	const names = Object.keys(statuses);
-	const nameWidth = Math.max(...names.map((name) => name.length));
-	const wordWidth = Math.max(...names.map((name) => statuses[name]!.word.length));
-	return names.map((name, index) => {
-		const entry = statuses[name]!;
-		const branch = index === names.length - 1 ? "└" : "├";
-		const left = `${indent}${treeConnector(theme, branch)}${theme.fg(actorHueToken(name, roster), padVisible(name, nameWidth))}  ${theme.fg(statusWordToken(entry.word), padVisible(entry.word, wordWidth))}  ${entry.phrase}`;
-		const right = theme.fg("dim", relativeTimeText(entry.updated));
-		return { left, right };
+/** One tree entry per teammate: its fact row, then the rows `below` returns under the entry's stem. */
+function teammateTree<Row extends FactRow>(
+	theme: ThemeLike,
+	rows: Row[],
+	roster: string[],
+	below: (row: Row, stem: string, isLast: boolean) => TeamLine[] = () => [],
+	indent = "",
+): TeamLine[] {
+	const table = new FactTable(theme, rows, roster);
+	return rows.flatMap((row, index) => {
+		const isLast = index === rows.length - 1;
+		const branch = isLast ? "└" : "├";
+		const stem = `${indent}${treeStem(theme, branch)}`;
+		return [{ prefix: `${indent}${treeConnector(theme, branch)}`, row, table }, ...below(row, stem, isLast)];
 	});
 }
 
-export function teamStatusLines(theme: ThemeLike, team: string, statuses: Record<string, TeamStatusView>, roster: string[] = []): TeamLine[] {
+/** A status row's phrase sits on its own line under the facts, with its time right-aligned. */
+function statusPhraseLine(theme: ThemeLike, indent: string, status: TeamStatusView): TeamLine {
+	return { left: `${indent}${status.phrase}`, right: theme.fg("dim", ` ${relativeTimeText(status.updated)}`) };
+}
+
+type StatusRow = FactRow & { entry: TeamStatusView };
+
+/** Status rows pair each participant's status with its teammate facts. Main has no teammate facts. */
+function statusRows(statuses: Record<string, TeamStatusView>, teammates: Record<string, TeammateView> = {}): StatusRow[] {
+	return Object.entries(statuses).map(([name, entry]) => ({ ...teammates[name], name, status: entry.word, entry }));
+}
+
+/** Each participant's fact row with its status phrase under it, and an empty row before the next participant. Team Status and the /team overlay share it. */
+export function memberRows(theme: ThemeLike, statuses: Record<string, TeamStatusView>, teammates: Record<string, TeammateView> | undefined, roster: string[], indent = ""): TeamLine[] {
+	const below = (row: StatusRow, stem: string, isLast: boolean): TeamLine[] => [statusPhraseLine(theme, stem, row.entry), ...(isLast ? [] : [{ prefix: stem, text: "" }])];
+	return teammateTree(theme, statusRows(statuses, teammates), roster, below, indent);
+}
+
+export function teamStatusLines(theme: ThemeLike, team: string, statuses: Record<string, TeamStatusView>, roster: string[] = [], teammates?: Record<string, TeammateView>): TeamLine[] {
 	const members = Object.values(statuses);
 	const workingCount = members.filter((member) => statusWordToken(member.word) === "success").length;
 	const stats = [theme.fg("muted", plural(members.length, "member"))];
 	if (workingCount > 0) stats.push(theme.fg("success", `${workingCount} working`));
-	return [headerLine(theme, "Team Status", theme.fg("accent", team), stats), ...memberRows(theme, statuses, roster)];
+	return [headerLine(theme, "Team Status", theme.fg("accent", team), stats), ...memberRows(theme, statuses, teammates, roster)];
 }
 
-export function allTeamsStatusLines(theme: ThemeLike, teams: Array<{ teamName: string; status: Record<string, TeamStatusView> }>, roster: string[] = []): TeamLine[] {
+export function allTeamsStatusLines(theme: ThemeLike, teams: Array<{ teamName: string; status: Record<string, TeamStatusView>; teammates?: Record<string, TeammateView> }>, roster: string[] = []): TeamLine[] {
 	const lines: TeamLine[] = [headerLine(theme, "Team Status", theme.fg("muted", plural(teams.length, "team")))];
 	teams.forEach((team, index) => {
 		const branch = index === teams.length - 1 ? "└" : "├";
 		lines.push(`${treeConnector(theme, branch)}${theme.fg("accent", team.teamName)}`);
-		lines.push(...memberRows(theme, team.status, roster, treeStem(theme, branch)));
+		lines.push(...memberRows(theme, team.status, team.teammates, roster, treeStem(theme, branch)));
 	});
 	return lines;
 }
 
-interface TeammateSpecView {
-	name: string;
-	model: string;
-	thinking?: string;
+interface TeammateSpecView extends TeammateView {
+	systemPrompt: string;
 }
 
-function teammateSpecRows(theme: ThemeLike, teammates: TeammateSpecView[], roster: string[]): string[] {
-	const nameWidth = Math.max(...teammates.map((teammate) => teammate.name.length));
-	return teammates.map((teammate, index) => {
-		const branch = index === teammates.length - 1 ? "└" : "├";
-		const spec = statLine(theme, [theme.fg("muted", teammate.model), theme.fg("dim", teammate.thinking ?? "")]);
-		return `${treeConnector(theme, branch)}${theme.fg(actorHueToken(teammate.name, roster), padVisible(teammate.name, nameWidth))}  ${spec}`;
-	});
+/** @example specRow({ name: "a", model: "m", systemPrompt: "p", live: true }) // { name: "a", model: "m", ... } without `live` */
+function specRow(spec: TeammateSpecView): FactRow & { systemPrompt: string } {
+	const { live: _live, ...row } = spec;
+	return row;
 }
 
-export function teamSpawnLines(theme: ThemeLike, team: string, teammates: TeammateSpecView[], roster: string[] = []): string[] {
+/** A full quote-barred Markdown text nested under a tree row. */
+function treeQuote(prefix: string, theme: ThemeLike, markdown: string, markdownTheme: MarkdownTheme): MarkdownTeamLine {
+	return { prefix: `${prefix}${theme.fg("muted", glyphs().codeBar)} `, markdown, markdownTheme };
+}
+
+/** One row per teammate. Expanded entries (given a Markdown theme) add the full system prompt and a spacer before the next entry. */
+function teammateSpecRows(theme: ThemeLike, teammates: TeammateSpecView[], roster: string[], expandedMarkdownTheme?: MarkdownTheme): TeamLine[] {
+	const below = (row: FactRow & { systemPrompt: string }, stem: string, isLast: boolean): TeamLine[] => expandedMarkdownTheme
+		? [treeQuote(stem, theme, row.systemPrompt, expandedMarkdownTheme), ...(isLast ? [] : [{ prefix: stem, text: "" }])]
+		: [];
+	return teammateTree(theme, teammates.map(specRow), roster, below);
+}
+
+export function teamSpawnLines(theme: ThemeLike, team: string, teammates: TeammateSpecView[], roster: string[] = [], expansion?: { commonPrompt: string; markdownTheme: MarkdownTheme }): TeamLine[] {
 	const header = headerLine(theme, "Team Spawn", theme.fg("accent", team), [theme.fg("muted", plural(teammates.length, "teammate"))]);
-	return [header, ...teammateSpecRows(theme, teammates, roster)];
+	const stem = treeStem(theme, "├");
+	const commonPromptRows: TeamLine[] = expansion
+		? [`${treeConnector(theme, "├")}${theme.fg("accent", "common prompt")}`, treeQuote(stem, theme, expansion.commonPrompt, expansion.markdownTheme), { prefix: stem, text: "" }]
+		: [];
+	return [header, ...commonPromptRows, ...teammateSpecRows(theme, teammates, roster, expansion?.markdownTheme)];
 }
 
-export function teamAddLines(theme: ThemeLike, team: string, teammates: TeammateSpecView[], memberCount: number, roster: string[] = []): string[] {
+export function teamAddLines(theme: ThemeLike, team: string, teammates: TeammateSpecView[], memberCount: number, roster: string[] = [], expandedMarkdownTheme?: MarkdownTheme): TeamLine[] {
 	const header = headerLine(theme, "Team Add", theme.fg("accent", team), [
 		theme.fg("muted", `${teammates.length} added`),
 		theme.fg("muted", plural(memberCount, "member")),
 	]);
-	return [header, ...teammateSpecRows(theme, teammates, roster)];
+	return [header, ...teammateSpecRows(theme, teammates, roster, expandedMarkdownTheme)];
 }
 
-export interface ResumedMemberView {
-	name: string;
+export interface ResumedMemberView extends TeammateView {
 	restored?: boolean;
 	live: boolean;
 	active: boolean;
 }
 
-export function teamResumeLines(theme: ThemeLike, team: string, resumed: ResumedMemberView[], teammateCount: number, roster: string[] = []): string[] {
+export function teamResumeLines(theme: ThemeLike, team: string, resumed: ResumedMemberView[], teammateCount: number, roster: string[] = []): TeamLine[] {
 	const resumedCount = resumed.filter((member) => member.restored !== undefined).length;
 	const countText = resumedCount === teammateCount ? `${resumedCount} resumed` : `${resumedCount} of ${teammateCount} resumed`;
 	const header = headerLine(theme, "Team Resume", theme.fg("accent", team), [theme.fg("muted", countText)]);
 	if (resumed.length === 0) return [header, `${treeConnector(theme, "└")}${theme.fg("muted", "no stopped teammates")}`];
-	const nameWidth = Math.max(...resumed.map((member) => member.name.length));
-	const words = resumed.map((member) => member.restored === undefined ? member.active ? "working" : member.live ? "idle" : "stopped" : member.restored ? "resumed" : "restarted");
-	const wordWidth = Math.max(...words.map((word) => word.length));
-	const rows = resumed.map((member, index) => {
-		const branch = index === resumed.length - 1 ? "└" : "├";
-		const word = words[index];
-		const note = member.restored === undefined ? "" : `${member.restored ? "history restored" : "empty session"}, ${member.active ? "working" : "idle"}`;
-		return `${treeConnector(theme, branch)}${theme.fg(actorHueToken(member.name, roster), padVisible(member.name, nameWidth))}  ${theme.fg(statusWordToken(word), padVisible(word, wordWidth))}  ${theme.fg("muted", note)}`;
-	});
-	return [header, ...rows];
+	const rows = resumed.map(({ restored, active, ...member }) => ({
+		...member,
+		status: restored === undefined ? active ? "working" : member.live ? "idle" : "stopped" : restored ? "resumed" : "restarted",
+		note: restored === undefined ? "" : `${restored ? "history restored" : "empty session"}, ${active ? "working" : "idle"}`,
+	}));
+	return [header, ...teammateTree(theme, rows, roster, (row, stem) => (row.note ? [`${stem}${theme.fg("muted", row.note)}`] : []))];
 }
 
-export interface TeamListMemberView {
-	name: string;
+export interface TeamListMemberView extends TeammateView {
 	live: boolean;
-	canManageOwnTeams: boolean;
 }
 
 export interface TeamListTeamView {
@@ -279,10 +301,9 @@ export interface TeamListTeamView {
 }
 
 function teamListMemberName(theme: ThemeLike, teamView: TeamListTeamView, member: TeamListMemberView, roster: string[]): string {
-	let name = theme.fg(actorHueToken(member.name, roster), member.name);
-	if (teamView.state === "active" && !member.live) name = `${DIM_SGR_OPEN}${name}${DIM_SGR_CLOSE}`;
-	if (member.canManageOwnTeams) name += theme.fg("dim", glyphs().diamond);
-	return name;
+	const hued = theme.fg(actorHueToken(member.name, roster), member.name);
+	const name = teamView.state === "active" && !member.live ? `${DIM_SGR_OPEN}${hued}${DIM_SGR_CLOSE}` : hued;
+	return [name, inlineFact(theme, "manager", member)].filter((part) => part.length > 0).join(" ");
 }
 
 function teamListTimestamp(teamView: TeamListTeamView): string {
@@ -290,20 +311,23 @@ function teamListTimestamp(teamView: TeamListTeamView): string {
 	return `updated ${relativeTime(Date.parse(teamView.updatedAt), Date.now())}`;
 }
 
-export function teamListLines(theme: ThemeLike, teamViews: TeamListTeamView[], roster: string[] = []): TeamLine[] {
+/** Collapsed, each team lists its teammate names inline. Expanded, each teammate gets its own fact row. */
+export function teamListLines(theme: ThemeLike, teamViews: TeamListTeamView[], roster: string[] = [], expanded = false, unreadableCount = 0): TeamLine[] {
 	const activeCount = teamViews.filter((teamView) => teamView.state === "active").length;
 	const stats = [theme.fg("muted", plural(teamViews.length, "team"))];
 	if (activeCount > 0) stats.push(theme.fg("success", `${activeCount} active`));
+	if (unreadableCount > 0) stats.push(theme.fg("warning", `${unreadableCount} unreadable`));
 	const header = headerLine(theme, "Team List", "", stats);
 	if (teamViews.length === 0) return [header, `${treeConnector(theme, "└")}${theme.fg("muted", "no teams")}`];
 	const nameWidth = Math.max(...teamViews.map((teamView) => teamView.name.length));
 	const stateWidth = Math.max(...teamViews.map((teamView) => teamView.state.length));
-	const rows: TeamLine[] = teamViews.map((teamView, index) => {
+	const rows: TeamLine[] = teamViews.flatMap((teamView, index) => {
 		const branch = index === teamViews.length - 1 ? "└" : "├";
-		const rosterText = teamView.members.map((member) => teamListMemberName(theme, teamView, member, roster)).join(theme.fg("muted", glyphs().dot));
+		const rosterText = expanded ? "" : teamView.members.map((member) => teamListMemberName(theme, teamView, member, roster)).join(theme.fg("muted", glyphs().dot));
 		const staleLease = teamView.leaseState === "stale" ? `${dimDot(theme)}${theme.fg("error", "stale lease")}` : "";
 		const left = `${treeConnector(theme, branch)}${theme.fg("accent", padVisible(teamView.name, nameWidth))}  ${theme.fg(statusWordToken(teamView.state), padVisible(teamView.state, stateWidth))}  ${rosterText}${staleLease}`;
-		return { left, right: theme.fg("dim", teamListTimestamp(teamView)) };
+		const memberRows = expanded ? teammateTree(theme, teamView.members, roster, undefined, treeStem(theme, branch)) : [];
+		return [{ left, right: theme.fg("dim", teamListTimestamp(teamView)) }, ...memberRows];
 	});
 	return [header, ...rows];
 }
@@ -372,20 +396,6 @@ export function scheduleReminderLines(theme: ThemeLike, options: { delayMinutes:
 	const lineLimit = options.expanded ? Number.POSITIVE_INFINITY : SEND_PREVIEW_LINES;
 	return [header, ...quotedBody(theme, options.message, { lineLimit, barToken: "muted" })];
 }
-
-const TEAMMATE_HUE_TOKENS = ["mdCode", "customMessageLabel", "mdHeading"] as const;
-
-/**
- * actorHueToken("main", ["scout"]) === "accent"; actorHueToken("scout", ["scout"]) === "mdCode"
- */
-export function actorHueToken(name: string, roster: string[]): string {
-	if (name === "main") return "accent";
-	const index = roster.indexOf(name);
-	return index === -1 ? "text" : TEAMMATE_HUE_TOKENS[index % TEAMMATE_HUE_TOKENS.length]!;
-}
-
-const DIM_SGR_OPEN = "\x1b[2m";
-const DIM_SGR_CLOSE = "\x1b[22m";
 
 type LogIcon = "chevron" | "arrow" | "bullet" | "diamond" | "warn" | "fail";
 
@@ -766,9 +776,10 @@ function callBodyFor(tool: TeamToolName, theme: ThemeLike, args: Record<string, 
 	return callBody(theme, "Team Shutdown", accentTeam(theme, args.team));
 }
 
-function resultLinesFor(tool: TeamToolName, theme: ThemeLike, args: Record<string, unknown>, details: Record<string, unknown>, expanded: boolean, roster: string[]): TeamLine[] {
+function resultLinesFor(tool: TeamToolName, theme: ThemeLike, args: Record<string, unknown>, details: Record<string, unknown>, expanded: boolean, roster: string[], markdownTheme?: MarkdownTheme): TeamLine[] {
 	if (tool === "team_spawn") {
-		return teamSpawnLines(theme, String(details.teamName), details.teammates as TeammateSpecView[], roster);
+		const expansion = expanded ? { commonPrompt: args.commonPrompt as string, markdownTheme: markdownTheme! } : undefined;
+		return teamSpawnLines(theme, String(details.teamName), details.teammates as TeammateSpecView[], roster, expansion);
 	}
 	if (tool === "team_list") {
 		const teamViews = ((details.teams ?? []) as Array<Record<string, unknown>>).map((entry) => ({
@@ -779,15 +790,15 @@ function resultLinesFor(tool: TeamToolName, theme: ThemeLike, args: Record<strin
 			updatedAt: String(entry.updatedAt),
 			expiresAt: entry.expiresAt as string | undefined,
 		}));
-		return teamListLines(theme, teamViews, roster);
+		return teamListLines(theme, teamViews, roster, expanded, ((details.unreadableManifests ?? []) as unknown[]).length);
 	}
 	if (tool === "team_resume") {
-		const teammates = (details.teammates as Array<{ name: string; contextRestored?: boolean; live: boolean; active: boolean }>).map((member) => ({ name: member.name, restored: member.contextRestored, live: member.live, active: member.active }));
+		const teammates = (details.teammates as Array<ResumedMemberView & { contextRestored?: boolean }>).map(({ contextRestored, ...member }) => ({ ...member, restored: contextRestored }));
 		return teamResumeLines(theme, String(details.teamName), teammates, teammates.length, roster);
 	}
 	if (tool === "team_add_teammates") {
 		const memberCount = Object.keys((details.status ?? {}) as Record<string, unknown>).length;
-		return teamAddLines(theme, String(details.teamName), (args.teammates ?? []) as TeammateSpecView[], memberCount, roster);
+		return teamAddLines(theme, String(details.teamName), details.addedTeammates as TeammateSpecView[], memberCount, roster, expanded ? markdownTheme! : undefined);
 	}
 	if (tool === "team_send_message") {
 		return teamSendLines(theme, {
@@ -798,8 +809,8 @@ function resultLinesFor(tool: TeamToolName, theme: ThemeLike, args: Record<strin
 		}, roster);
 	}
 	if (tool === "team_status") {
-		if (details.teams) return allTeamsStatusLines(theme, details.teams as Array<{ teamName: string; status: Record<string, TeamStatusView> }>, roster);
-		return teamStatusLines(theme, String(details.teamName), details.status as Record<string, TeamStatusView>, roster);
+		if (details.teams) return allTeamsStatusLines(theme, details.teams as Array<{ teamName: string; status: Record<string, TeamStatusView>; teammates?: Record<string, TeammateView> }>, roster);
+		return teamStatusLines(theme, String(details.teamName), details.status as Record<string, TeamStatusView>, roster, details.teammates as Record<string, TeammateView> | undefined);
 	}
 	if (tool === "team_log") {
 		const filters = (details.filters ?? {}) as Record<string, unknown>;
@@ -840,7 +851,7 @@ export function renderTeamToolResult(
 		const bar = `  ${theme.fg("muted", glyphs().codeBar)} `;
 		return new QuotedMarkdownView(header, message, bar, markdownTheme, options.expanded, theme);
 	}
-	return new TeamLines(resultLinesFor(tool, theme, args, details, options.expanded, roster), options.expanded ? "wrap" : "clip");
+	return new TeamLines(resultLinesFor(tool, theme, args, details, options.expanded, roster, markdownTheme), options.expanded ? "wrap" : "clip");
 }
 
 export function renderReminderToolCall(args: Record<string, unknown>, theme: ThemeLike, context: ToolRenderContextLike) {

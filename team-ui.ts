@@ -2,12 +2,13 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, SelectList, sliceByColumn, truncateToWidth, visibleWidth, type Component, type SelectItem, type TUI } from "@earendil-works/pi-tui";
 
 import {
-	actorHueToken,
+	memberRows,
 	relativeTimeText,
-	statusWordToken,
+	clipTeamLines,
 	teamLineText,
 	teamLogLines,
 	teamMessageLines,
+	type TeammateView,
 	type TeamMessageDetails,
 	type TeamStatusView,
 	type ThemeLike,
@@ -21,12 +22,19 @@ export interface TeamSnapshot {
 	transports: readonly ("rpc" | "herdr")[];
 	roster: string[];
 	statuses: Record<string, TeamStatusView>;
+	teammates: Record<string, TeammateView>;
 	log: TeamLogEntry[];
 }
 
 export type TeamSnapshotSource = () => readonly TeamSnapshot[];
 
 const RECENT_STATUS_LIMIT = 5;
+/** A fact row, the status phrase row, and an empty row before the next member. */
+const STATUS_ROWS_PER_MEMBER = 3;
+/** Messages keeps its sender row, one body row, and the omission marker inside its borders. */
+const MESSAGES_MINIMUM_HEIGHT = 5;
+/** Team Log keeps one row inside its borders. */
+const LOG_MINIMUM_HEIGHT = 3;
 
 type ZoomableWidget = "messages" | "log";
 
@@ -80,28 +88,6 @@ function recentStatuses(statuses: Record<string, TeamStatusView>, limit: number)
 	return Object.entries(statuses)
 		.sort(([, left], [, right]) => Date.parse(right.updated) - Date.parse(left.updated))
 		.slice(0, limit);
-}
-
-function padVisible(text: string, width: number): string {
-	return `${text}${" ".repeat(Math.max(0, width - visibleWidth(text)))}`;
-}
-
-function statusRows(theme: ThemeLike, statuses: Array<[string, TeamStatusView]>, roster: string[], width: number): string[] {
-	const contentWidth = Math.max(0, width - 1);
-	const nameWidth = Math.max(0, ...statuses.map(([name]) => visibleWidth(name)));
-	const wordWidth = Math.max(0, ...statuses.map(([, status]) => visibleWidth(status.word)));
-	const updatedTexts = statuses.map(([, status]) => relativeTimeText(status.updated));
-	const timestampWidth = Math.max(0, ...updatedTexts.map((text) => visibleWidth(text)));
-	const phraseWidth = Math.max(0, contentWidth - nameWidth - wordWidth - timestampWidth - 6);
-
-	return statuses.map(([name, status], index) => {
-		const styledName = theme.fg(actorHueToken(name, roster), name);
-		const styledWord = theme.fg(statusWordToken(status.word), status.word);
-		const updatedText = updatedTexts[index]!;
-		const timestamp = theme.fg("dim", `${" ".repeat(Math.max(0, timestampWidth - visibleWidth(updatedText)))}${updatedText}`);
-		const phrase = middleTruncateToWidth(status.phrase, phraseWidth, true);
-		return `${padVisible(styledName, nameWidth)}  ${padVisible(styledWord, wordWidth)}  ${phrase}  ${timestamp}`;
-	});
 }
 
 function limitMessageRows(lines: string[], height: number): string[] {
@@ -324,15 +310,15 @@ class TeamOverviewOverlay implements Component {
 		const contentWidth = Math.max(1, width - 2);
 		const contentHeight = Math.max(1, height - 2);
 		const headerHeight = Math.min(3, Math.max(1, contentHeight - 3));
-		const desiredStatusHeight = Math.min(Object.keys(team.statuses).length, RECENT_STATUS_LIMIT) + 2;
-		const statusHeight = Math.max(1, Math.min(desiredStatusHeight, contentHeight - headerHeight - 2));
+		const statusBudget = contentHeight - headerHeight - MESSAGES_MINIMUM_HEIGHT - LOG_MINIMUM_HEIGHT;
+		const statusCount = Math.max(0, Math.min(Object.keys(team.statuses).length, RECENT_STATUS_LIMIT, Math.floor((statusBudget - 1) / STATUS_ROWS_PER_MEMBER)));
+		const statusHeight = Math.max(1, statusCount * STATUS_ROWS_PER_MEMBER + 1);
 		const feedHeight = contentHeight - headerHeight - statusHeight;
-		const messageHeight = Math.max(1, Math.min(feedHeight - 1, Math.round(feedHeight * 0.55)));
+		const messageHeight = Math.max(1, Math.min(feedHeight - LOG_MINIMUM_HEIGHT, Math.max(MESSAGES_MINIMUM_HEIGHT, Math.round(feedHeight * 0.55))));
 		const logHeight = feedHeight - messageHeight;
 
-		const statusContentHeight = Math.max(0, statusHeight - 2);
-		const statuses = recentStatuses(team.statuses, Math.min(RECENT_STATUS_LIMIT, statusContentHeight));
-		const statusLines = statusRows(this.theme, statuses, team.roster, Math.max(0, contentWidth - 2));
+		const statuses = recentStatuses(team.statuses, statusCount);
+		const statusLines = clipTeamLines(memberRows(this.theme, Object.fromEntries(statuses), team.teammates, team.roster), Math.max(1, contentWidth - 3));
 
 		const messages = this.messageWidget(team, messageHeight - 2);
 		const log = this.logWidget(team, logHeight - 2);

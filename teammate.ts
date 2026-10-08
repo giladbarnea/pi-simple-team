@@ -1,11 +1,12 @@
-export type ThinkingLevel = "low" | "medium" | "high" | "xhigh" | "max";
+/** Main requests one of `low` to `max`. Pi can run a teammate at `off` or `minimal` when the model supports less. */
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface Teammate {
 	name: string;
 	systemPrompt: string;
 	model: string;
 	thinking?: ThinkingLevel;
-	inheritMainContext?: boolean;
+	forkContext?: boolean;
 	canManageOwnTeams?: boolean;
 	showOnHerdrPane?: boolean;
 	extensionPaths?: string[];
@@ -17,4 +18,5 @@ export type TeammateRecord = Required<Omit<Teammate, "extensionPaths">> & {
 	sessionFile: string;
 	live: boolean;
 	active: boolean;
+	contextPercent?: number;
 };

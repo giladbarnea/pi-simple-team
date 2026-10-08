@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Container, type TUI } from "@earendil-works/pi-tui";
@@ -7,7 +7,7 @@ import { initTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-age
 import type { MarkdownTheme } from "@earendil-works/pi-tui";
 
 import { stableRenderWidth, stripAnsi, visibleLength } from "../render-support/ansi.ts";
-import { GLYPHS } from "../render-support/glyphs.ts";
+import { GLYPHS, recordProjectTrust } from "../render-support/glyphs.ts";
 import {
 	TeamLines,
 	actorHueToken,
@@ -105,42 +105,55 @@ describe("teamStatusLines", () => {
 		reviewer: { word: "waiting", phrase: "Standing by", updated: "July 16, 23:01:10" },
 	};
 
-	test("renders a stat-line header and one tree row per member", () => {
+	test("renders a stat-line header and, per member, a fact row, a phrase row, and an empty row before the next", () => {
 		const lines = teamStatusLines(identityTheme, "demo-team", statuses).map(teamLineText);
-		expect(lines).toHaveLength(4);
+		expect(lines).toHaveLength(9);
 		expect(lines[0]).toContain("Team Status demo-team");
 		expect(lines[0]).toContain("3 members");
 		expect(lines[0]).toContain("1 working");
 		expect(lines[1]).toContain(g.tree.mid.trim());
-		expect(lines[3]).toContain(g.tree.last.trim());
+		expect(lines[2]).toContain("Running gates");
+		expect(lines[3]).toBe(`  ${g.tree.stem.trim()}`);
+		expect(lines[7]).toContain(g.tree.last.trim());
+		expect(lines[8]).toContain("Standing by");
 	});
 
 	test("aligns the status word column across rows", () => {
 		const lines = teamStatusLines(identityTheme, "demo-team", statuses).map(teamLineText);
-		const wordColumns = [lines[1]!.indexOf("working"), lines[2]!.indexOf("waiting"), lines[3]!.indexOf("waiting")];
+		const wordColumns = [lines[1]!.indexOf("working"), lines[4]!.indexOf("waiting"), lines[7]!.indexOf("waiting")];
 		expect(new Set(wordColumns).size).toBe(1);
 	});
 
 	test("colors each status word by its semantic token", () => {
 		const lines = teamStatusLines(taggingTheme, "demo-team", statuses).map(teamLineText);
 		expect(lines[1]).toContain("«success:working");
-		expect(lines[2]).toContain("«warning:waiting");
+		expect(lines[4]).toContain("«warning:waiting");
 	});
 
 	test("uses the Team Log actor colors for member names", () => {
 		const lines = teamStatusLines(taggingTheme, "demo-team", statuses, ["implementer", "reviewer"]).map(teamLineText);
 		expect(lines[1]).toContain("«mdCode:implementer");
-		expect(lines[2]).toContain("«accent:main");
-		expect(lines[3]).toContain("«customMessageLabel:reviewer");
+		expect(lines[4]).toContain("«accent:main");
+		expect(lines[7]).toContain("«customMessageLabel:reviewer");
 	});
 
-	test("renders ISO updated timestamps as relative time", () => {
+	test("renders ISO updated timestamps as relative time on the phrase row", () => {
 		const lines = teamStatusLines(identityTheme, "demo-team", {
 			implementer: { word: "working", phrase: "Running gates", updated: new Date(Date.now() - 12.5 * 60_000).toISOString() },
 			main: { word: "waiting", phrase: "Standing by", updated: new Date(Date.now() - 2.5 * 60_000).toISOString() },
 		}).map(teamLineText);
-		expect(lines[1]).toEndWith("12m ago");
-		expect(lines[2]).toEndWith("2m ago");
+		expect(lines[2]).toEndWith("12m ago");
+		expect(lines[5]).toEndWith("2m ago");
+	});
+
+	test("shows each teammate's facts after its status word, and dims a stopped teammate's name", () => {
+		const teammates = {
+			implementer: { name: "implementer", live: true, model: "openai-codex/gpt-6-luna", thinking: "high", contextPercent: 16, forkContext: true },
+			reviewer: { name: "reviewer", live: false, model: "openai-codex/gpt-6-luna", thinking: "low" },
+		};
+		const lines = teamStatusLines(identityTheme, "demo-team", statuses, [], teammates).map(teamLineText);
+		expect(lines[1]).toMatch(/implementer +working +openai-codex\/gpt-6-luna +▂16% context +⑂ fork +high$/);
+		expect(lines[7]).toContain("\u001b[2mreviewer");
 	});
 });
 
@@ -153,8 +166,8 @@ describe("allTeamsStatusLines", () => {
 		expect(lines[0]).toContain("2 teams");
 		expect(lines[1]).toContain("alpha");
 		expect(lines[2]).toContain("waiting");
-		expect(lines[3]).toContain("beta");
-		expect(lines[4]).toContain("working");
+		expect(lines[4]).toContain("beta");
+		expect(lines[5]).toContain("working");
 	});
 
 	test("keeps member colors across teams", () => {
@@ -176,7 +189,7 @@ describe("teamSpawnLines", () => {
 		const lines = teamSpawnLines(identityTheme, "demo-team", [
 			{ name: "implementer", model: "claude-bridge/claude-opus-4-6", thinking: "xhigh" },
 			{ name: "reviewer", model: "claude-bridge/claude-sonnet-5", thinking: "high" },
-		]);
+		]).map(teamLineText);
 		expect(lines[0]).toContain("Team Spawn demo-team");
 		expect(lines[0]).toContain("2 teammates");
 		expect(lines[1]).toContain("claude-bridge/claude-opus-4-6");
@@ -189,9 +202,155 @@ describe("teamSpawnLines", () => {
 			{ name: "implementer", model: "model-a" },
 			{ name: "reviewer", model: "model-b" },
 		];
-		const lines = teamSpawnLines(taggingTheme, "demo-team", teammates, ["implementer", "reviewer"]);
+		const lines = teamSpawnLines(taggingTheme, "demo-team", teammates, ["implementer", "reviewer"]).map(teamLineText);
 		expect(lines[1]).toContain("«mdCode:implementer");
 		expect(lines[2]).toContain("«customMessageLabel:reviewer");
+	});
+});
+
+describe("teammate fact rows", () => {
+	const everything = { name: "alpha", model: "openai-codex/gpt-6-astra", thinking: "high", contextPercent: 16, forkContext: true, canManageOwnTeams: true, showOnHerdrPane: true, systemPrompt: "" };
+	const rowAt = (theme: ThemeLike, width: number, teammate = everything) => new TeamLines(teamSpawnLines(theme, "t", [teammate]), "clip").render(width)[1]!;
+
+	test("narrowing shortens labels, then drops their icons, then keeps icons alone, then hides facts", () => {
+		const rows: string[] = [];
+		for (let width = 200; width >= 12; width--) {
+			const row = rowAt(identityTheme, width);
+			if (rows.at(-1) !== row) rows.push(row);
+		}
+		const tree = `  ${g.tree.last}`;
+		expect(rows).toEqual([
+			`${tree}alpha  openai-codex/gpt-6-astra  ▂16% context  ⑂ fork  〒 team manager  high  ⧉ herdr pane`,
+			`${tree}alpha  openai-codex/gpt-6-astra  ▂16% context  ⑂ fork  〒 team manager  high  ⧉ herdr`,
+			`${tree}alpha  openai-codex/gpt-6-astra  ▂16% context  ⑂ fork  〒 manager  high  ⧉ herdr`,
+			`${tree}alpha  openai-codex/gpt-6-astra  ▂16% ctx  ⑂ fork  〒 manager  high  ⧉ herdr`,
+			`${tree}alpha  gpt-6-astra  ▂16% ctx  ⑂ fork  〒 manager  high  ⧉ herdr`,
+			`${tree}alpha  gpt-6-astra  ▂16% ctx  ⑂ fork  〒 manager  high  herdr`,
+			`${tree}alpha  gpt-6-astra  ▂16% ctx  ⑂ fork  manager  high  herdr`,
+			`${tree}alpha  gpt-6-astra  ▂16% ctx  fork  manager  high  herdr`,
+			`${tree}alpha  gpt-6-astra  ▂16% ctx  fork  manager  high  ⧉`,
+			`${tree}alpha  gpt-6-astra  ▂16% ctx  fork  〒  high  ⧉`,
+			`${tree}alpha  gpt-6-astra  ▂16% ctx  ⑂  〒  high  ⧉`,
+			`${tree}alpha  gpt-6-astra  ▂16%  ⑂  〒  high  ⧉`,
+			`${tree}alpha  gpt-6-astra  ▂16%  ⑂  〒  high`,
+			`${tree}alpha  gpt-6-astra  ▂16%  ⑂  〒`,
+			`${tree}alpha  gpt-6-astra  ▂16%  ⑂`,
+			`${tree}alpha  gpt-6-astra  ▂16%`,
+			`${tree}alpha  gpt-6-astra`,
+			`${tree}alpha`,
+		]);
+	});
+
+	test("shrinks a fact for every row at once, so columns stay aligned", () => {
+		const lines = new TeamLines(teamSpawnLines(identityTheme, "t", [everything, { ...everything, name: "b", forkContext: false }]), "clip").render(60);
+		expect(lines[1]!.indexOf("high")).toBe(lines[2]!.indexOf("high"));
+		expect(lines[2]).not.toContain("⑂");
+	});
+
+	test("expanded views shrink fact rows the same way instead of wrapping them", () => {
+		const args = { teamName: "t", commonPrompt: "Be kind.", teammates: [everything] };
+		const lines = renderTeamToolResult("team_spawn", { details: { teamName: "t", teammates: [everything] } }, { expanded: true }, identityTheme, { args }, identityMarkdownTheme).render(40);
+		const row = lines.findIndex((line) => line.includes("alpha"));
+		expect(lines[row]).toBe(`  ${g.tree.last}alpha  gpt-6-astra  ▂16%  ⑂  〒`);
+		expect(lines[row + 1]).toContain("▌");
+	});
+
+	test("without truecolor theme values, the gauge and percent take the nearest heat stop's token", () => {
+		expect(rowAt(taggingTheme, 200, { ...everything, contextPercent: 95 })).toContain("«error:█95%»«muted: context»");
+		expect(rowAt(taggingTheme, 200, { ...everything, contextPercent: 10 })).toContain("«success:▁10%»");
+	});
+
+	test("with truecolor theme values, the heat blends between stops", () => {
+		const rgb: Record<string, string> = { success: "0;200;0", warning: "200;200;0", error: "200;0;0", dim: "100;100;100" };
+		const theme = { ...taggingTheme, getFgAnsi: (token: string) => `\u001b[38;2;${rgb[token]}m`, getColorMode: () => "truecolor" };
+		expect(rowAt(theme, 200, { ...everything, contextPercent: 55 })).toContain("\u001b[38;2;100;200;0m▅55%\u001b[39m");
+		expect(rowAt({ ...theme, getColorMode: () => "256color" }, 200, { ...everything, contextPercent: 55 })).toContain("«success:▅55%»");
+	});
+
+	test("ASCII glyphs show every fact as text, with no icons or gauge", () => {
+		writeFileSync(join(testDirectory, "settings.json"), JSON.stringify({ vstack: { extensionManager: { config: { "@vanillagreen/pi-tool-renderer": { glyphStyle: "ascii" } } } } }));
+		recordProjectTrust({ cwd: testDirectory });
+		try {
+			expect(rowAt(identityTheme, 200)).toEndWith("alpha  openai-codex/gpt-6-astra  16% ctx  fork  manager  high  herdr");
+		} finally {
+			rmSync(join(testDirectory, "settings.json"));
+			recordProjectTrust({ cwd: testDirectory });
+		}
+	});
+});
+
+describe("Team Spawn result", () => {
+	const teammates = [
+		{ name: "implementer", model: "model-a", thinking: "high", systemPrompt: "Build it.\nTest it.", forkContext: false, canManageOwnTeams: true, showOnHerdrPane: true },
+		{ name: "reviewer", model: "model-b", thinking: "low", systemPrompt: "Review it.", forkContext: false, canManageOwnTeams: false, showOnHerdrPane: false },
+	];
+	const args = { teamName: "demo-team", commonPrompt: "Be kind.", teammates };
+	const render = (expanded: boolean) =>
+		renderTeamToolResult("team_spawn", { details: { teamName: "demo-team", teammates } }, { expanded }, identityTheme, { args }, identityMarkdownTheme).render(80);
+
+	test("expanded renders prompts as Markdown", () => {
+		const boldMarkdownTheme = { ...identityMarkdownTheme, bold: (text: string) => `<b>${text}</b>` };
+		const markdownTeammates = [{ ...teammates[1], systemPrompt: "**Review** it." }];
+		const markdownArgs = { teamName: "demo-team", commonPrompt: "Be **kind**.", teammates: markdownTeammates };
+		const text = renderTeamToolResult("team_spawn", { details: { teamName: "demo-team", teammates: markdownTeammates } }, { expanded: true }, identityTheme, { args: markdownArgs }, boldMarkdownTheme)
+			.render(80)
+			.join("\n");
+		expect(text).toContain("<b>kind</b>");
+		expect(text).toContain("<b>Review</b> it.");
+		expect(text).not.toContain("**");
+	});
+
+	test("expanded shows each teammate's full system prompt under its row", () => {
+		const lines = render(true);
+		const implementerRow = lines.findIndex((line) => line.includes("implementer"));
+		expect(lines.slice(implementerRow + 1).join("\n")).toContain("Build it.");
+		expect(lines.join("\n")).toContain("Test it.");
+		expect(lines.at(-1)).toContain("Review it.");
+	});
+
+	test("expanded shows the common prompt as the first tree entry", () => {
+		const lines = render(true);
+		expect(lines[1]).toContain("common prompt");
+		expect(lines[2]).toContain("Be kind.");
+	});
+
+	test("labels the common prompt in the team name's accent color", () => {
+		const lines = renderTeamToolResult("team_spawn", { details: { teamName: "demo-team", teammates } }, { expanded: true }, taggingTheme, { args }, identityMarkdownTheme).render(200);
+		expect(lines[1]).toContain("\u00abaccent:common prompt\u00bb");
+	});
+
+	test("expanded separates each teammate with an empty tree row", () => {
+		const lines = render(true);
+		const implementerRow = lines.findIndex((line) => line.includes("implementer"));
+		const reviewerRow = lines.findIndex((line) => line.includes("reviewer"));
+		expect(lines[implementerRow - 1]).toBe("  \u2502");
+		expect(lines[reviewerRow - 1]).toBe("  \u2502");
+	});
+
+	test("expanded names only the flags a teammate has set, in full, on its name row", () => {
+		const lines = render(true);
+		const implementerRow = lines.find((line) => line.includes("implementer"))!;
+		expect(implementerRow).toContain("〒 team manager");
+		expect(implementerRow).toContain("⧉ herdr pane");
+		expect(lines.join("\n")).not.toContain("fork");
+		const reviewerRow = lines.findIndex((line) => line.includes("reviewer"));
+		expect(lines[reviewerRow]).not.toContain("〒");
+		expect(lines[reviewerRow + 1]).toContain("Review it.");
+	});
+
+	test("collapsed keeps one row per teammate and hides prompts", () => {
+		const lines = render(false);
+		expect(lines).toHaveLength(3);
+		expect(lines.join("\n")).not.toContain("Be kind.");
+		expect(lines.join("\n")).not.toContain("Build it.");
+	});
+
+	test("Team Add expands the same way for the added teammates", () => {
+		const addArgs = { team: "demo-team", teammates: [teammates[0]] };
+		const details = { teamName: "demo-team", status: { implementer: {}, reviewer: {} }, addedTeammates: [teammates[0]] };
+		const lines = renderTeamToolResult("team_add_teammates", { details }, { expanded: true }, identityTheme, { args: addArgs }, identityMarkdownTheme).render(80);
+		expect(lines.find((line) => line.includes("implementer"))).toContain("〒 team manager");
+		expect(lines.join("\n")).toContain("Test it.");
 	});
 });
 
@@ -200,7 +359,7 @@ describe("teamAddLines", () => {
 		const lines = teamAddLines(identityTheme, "demo-team", [
 			{ name: "security-scout", model: "anthropic/claude-sonnet-5", thinking: "high" },
 			{ name: "release", model: "anthropic/claude-sonnet-5" },
-		], 5);
+		], 5).map(teamLineText);
 		expect(lines[0]).toContain("Team Add demo-team");
 		expect(lines[0]).toContain("2 added");
 		expect(lines[0]).toContain("5 members");
@@ -210,7 +369,7 @@ describe("teamAddLines", () => {
 	});
 
 	test("colors added teammate names from the session roster", () => {
-		const lines = teamAddLines(taggingTheme, "demo-team", [{ name: "scout", model: "model-a" }], 3, ["scout"]);
+		const lines = teamAddLines(taggingTheme, "demo-team", [{ name: "scout", model: "model-a" }], 3, ["scout"]).map(teamLineText);
 		expect(lines[1]).toContain("«mdCode:scout");
 	});
 });
@@ -220,23 +379,23 @@ describe("teamResumeLines", () => {
 		const lines = teamResumeLines(identityTheme, "demo-team", [
 			{ name: "scout", restored: true, live: true, active: false },
 			{ name: "reviewer", restored: false, live: true, active: false },
-		], 3);
+		], 3).map(teamLineText);
 		expect(lines[0]).toContain("Team Resume demo-team");
 		expect(lines[0]).toContain("2 of 3 resumed");
 		expect(lines[1]).toContain("resumed");
-		expect(lines[1]).toContain("history restored");
-		expect(lines[2]).toContain("restarted");
-		expect(lines[2]).toContain("empty session");
+		expect(lines[2]).toContain("history restored");
+		expect(lines[3]).toContain("restarted");
+		expect(lines[4]).toContain("empty session");
 	});
 
 	test("a full resume drops the of-count", () => {
-		const lines = teamResumeLines(identityTheme, "demo-team", [{ name: "scout", restored: true, live: true, active: false }], 1);
+		const lines = teamResumeLines(identityTheme, "demo-team", [{ name: "scout", restored: true, live: true, active: false }], 1).map(teamLineText);
 		expect(lines[0]).toContain("1 resumed");
 		expect(lines[0]).not.toContain(" of ");
 	});
 
 	test("shows a muted row when nothing was stopped", () => {
-		const lines = teamResumeLines(identityTheme, "demo-team", [], 2);
+		const lines = teamResumeLines(identityTheme, "demo-team", [], 2).map(teamLineText);
 		expect(lines[0]).toContain("0 of 2 resumed");
 		expect(lines[1]).toContain("no stopped teammates");
 	});
@@ -283,7 +442,7 @@ describe("teamListLines", () => {
 		expect(lines[1]).toContain("«success:active");
 		expect(lines[1]).toContain("«mdCode:scout»");
 		expect(lines[1]).toContain("«customMessageLabel:reviewer»");
-		expect(lines[1]).toContain(`«dim:${g.diamond}»`);
+		expect(lines[1]).toContain("«customMessageLabel:reviewer»\u001b[22m «muted:〒»");
 		expect(lines[2]).toContain("«muted:dormant");
 		expect(lines[2]).toContain("«error:stale lease»");
 	});
@@ -292,6 +451,20 @@ describe("teamListLines", () => {
 		const lines = teamListLines(identityTheme, teams).map(teamLineText);
 		expect(lines[1]).toContain("\u001b[2mreviewer\u001b[22m");
 		expect(lines[2]).not.toContain("\u001b[2m");
+	});
+
+	test("expanded gives each teammate its own fact row under its team", () => {
+		const detailed = [{ ...teams[0]!, members: [{ name: "scout", live: true, model: "openai-codex/gpt-6-luna", thinking: "low", canManageOwnTeams: false }, { name: "reviewer", live: false, model: "openai-codex/gpt-6-luna", thinking: "high", canManageOwnTeams: true }] }];
+		const lines = teamListLines(identityTheme, detailed, [], true).map(teamLineText);
+		expect(lines).toHaveLength(4);
+		expect(lines[1]).not.toContain("scout");
+		expect(lines[2]).toMatch(/scout +openai-codex\/gpt-6-luna +low$/);
+		expect(lines[3]).toContain("\u001b[2mreviewer");
+		expect(lines[3]).toContain("〒 team manager");
+	});
+
+	test("counts unreadable manifests in the header", () => {
+		expect(teamListLines(taggingTheme, [], [], false, 2).map(teamLineText)[0]).toContain("«warning:2 unreadable»");
 	});
 
 	test("shows an empty state when no teams exist", () => {
@@ -701,7 +874,7 @@ describe("renderTeamToolResult", () => {
 	});
 
 	test("right-aligns Team Status timestamps and truncates phrases to the remaining width", () => {
-		const width = 80;
+		const width = 60;
 		const component = renderTeamToolResult(
 			"team_status",
 			{
@@ -721,7 +894,7 @@ describe("renderTeamToolResult", () => {
 			identityTheme,
 			{},
 		);
-		const rows = component.render(width).slice(1);
+		const rows = component.render(width).slice(1).filter((_row, index) => index % 3 === 1);
 		const plainRows = rows.map(stripAnsi);
 
 		expect(rows).toHaveLength(2);
@@ -758,12 +931,12 @@ describe("renderTeamToolResult", () => {
 		expect(lines[0]).toContain("2 of 3 resumed");
 		expect(lines[1]).toContain("«mdCode:scout");
 		expect(lines[1]).toContain("«success:resumed");
-		expect(lines[1]).toContain("history restored");
-		expect(lines[2]).toContain("«customMessageLabel:reviewer»");
-		expect(lines[2]).toContain("«warning:restarted");
-		expect(lines[2]).toContain("empty session");
-		expect(lines[3]).toContain("release");
-		expect(lines[3]).toContain("working");
+		expect(lines[2]).toContain("history restored");
+		expect(lines[3]).toContain("«customMessageLabel:reviewer»");
+		expect(lines[3]).toContain("«warning:restarted");
+		expect(lines[4]).toContain("empty session");
+		expect(lines[5]).toContain("release");
+		expect(lines[5]).toContain("working");
 	});
 
 	test("keeps a teammate color consistent across Team Status and Team Log", () => {

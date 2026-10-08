@@ -75,6 +75,12 @@ const sessionFile = sessionArgumentIndex === -1
   ? path.join(process.env.PI_SIMPLE_TEAM_TEST_HERDR_SESSIONS, process.env.PI_SIMPLE_TEAM_MEMBER + "-" + process.pid + ".jsonl")
   : args[sessionArgumentIndex + 1];
 const sessionId = path.basename(sessionFile, ".jsonl");
+// Like Pi, a resumed session keeps the model and thinking level it ran with.
+const settingsPath = sessionFile + ".settings.json";
+const runtimeFacts = sessionArgumentIndex === -1
+  ? { model: args[args.indexOf("--model") + 1], thinking: args[args.indexOf("--thinking") + 1], contextPercent: null }
+  : JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+fs.writeFileSync(settingsPath, JSON.stringify(runtimeFacts));
 record({ type: "pi_start", executable: process.argv[1], args, sessionId, sessionFile });
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -120,6 +126,11 @@ const server = http.createServer(async (request, response) => {
     response.writeHead(503); response.end("planned delivery failure"); return;
   }
   if (body.args.message === "publish-failure-to-peer") await parent("team_send_message", { targets: ["recipient"], message: "reject-this-message" });
+  if (body.args.message === "report-runtime-facts") {
+    await parent("event", { event: { type: "runtime_facts", model: "fake/fake-model", thinking: "off", contextPercent: 57.4 } });
+    response.end(JSON.stringify({ accepted: true }));
+    return;
+  }
   if (body.args.triggerTurn === false) {
     response.end(JSON.stringify({ accepted: true }));
     return;
@@ -137,7 +148,7 @@ server.listen(0, "127.0.0.1", async () => {
   const url = process.env.PI_SIMPLE_TEAM_TEST_CHILD_BAD_REGISTER ? "http://localhost:1234/deliver" : "http://127.0.0.1:" + address.port + "/deliver";
   try {
     if (process.env.PI_SIMPLE_TEAM_TEST_REGISTRATION_GATE) await fetch(process.env.PI_SIMPLE_TEAM_TEST_REGISTRATION_GATE + "?name=" + process.env.PI_SIMPLE_TEAM_MEMBER);
-    await parent("register", { url, sessionId, sessionFile });
+    await parent("register", { url, sessionId, sessionFile, ...runtimeFacts });
     record({ type: "ready", url });
   } catch (error) {
     record({ type: "register_error", error: String(error) });
@@ -341,6 +352,8 @@ async function startChildRuntimeForTest(failingLifecycleEvents: number): Promise
 	registerChildTools(api as unknown as ExtensionAPI, config);
 	await handlers.get("session_start")?.({}, {
 		shutdown: () => undefined,
+		model: { provider: "fake", id: "fake-model" },
+		thinkingLevel: "high",
 		getContextUsage: () => ({ tokens: 87_000, contextWindow: 272_000, percent: 31.985 }),
 		sessionManager: {
 			getSessionId: () => "visible-child-test-session-id",
@@ -387,12 +400,12 @@ describe("unified child runtime", () => {
 		}
 	});
 
-	test("automatic kickoff gives an inheriting teammate its own identity and assignment", async () => {
+	test("automatic kickoff gives a forked teammate its own identity and assignment", async () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();
 		const assignment = "Write the assigned marker yourself, then tell main.";
 		try {
-			await host.execute("team_spawn", { teamName: "fork-assignment", commonPrompt: "Main coordinates the work.", teammates: [{ name: "copier", systemPrompt: assignment, model: "fake/fake-model", inheritMainContext: true }] });
+			await host.execute("team_spawn", { teamName: "fork-assignment", commonPrompt: "Main coordinates the work.", teammates: [{ name: "copier", systemPrompt: assignment, model: "fake/fake-model", forkContext: true }] });
 			const delivery = lines(fake.eventsPath).find((entry) => entry.type === "delivery");
 			const message = String(((delivery?.body as JsonRecord)?.args as JsonRecord)?.message);
 			assert.ok(message.includes("copier") && message.includes(assignment), `The latest instruction must identify the teammate and its own assignment. Got: ${message}`);
@@ -530,7 +543,7 @@ describe("unified child runtime", () => {
 	test("list returns a complete teammate record without parallel name or session identity fields", async () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();
-		const specification = { name: "probe", systemPrompt: "Remember these instructions.", model: "fake/fake-model", thinking: "high", inheritMainContext: false, canManageOwnTeams: true, showOnHerdrPane: false };
+		const specification = { name: "probe", systemPrompt: "Remember these instructions.", model: "fake/fake-model", thinking: "high", forkContext: false, canManageOwnTeams: true, showOnHerdrPane: false };
 		try {
 			const spawned = await host.execute("team_spawn", { teamName: "listed-record", commonPrompt: "Shared instructions.", startIdle: true, teammates: [specification] });
 			const listed = await host.execute("team_list", {});
@@ -577,7 +590,7 @@ describe("unified child runtime", () => {
 	test("spawn accepts the reviewed input names and returns one durable teammate identity", async () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();
-		const parameters = { teamName: "public-spawn", commonPrompt: "Shared instructions.", startIdle: true, teammates: [{ name: "probe", systemPrompt: "Individual instructions.", model: "fake/fake-model", inheritMainContext: false, canManageOwnTeams: false }] };
+		const parameters = { teamName: "public-spawn", commonPrompt: "Shared instructions.", startIdle: true, teammates: [{ name: "probe", systemPrompt: "Individual instructions.", model: "fake/fake-model", forkContext: false, canManageOwnTeams: false }] };
 		try {
 			const schema = host.tools.get("team_spawn")?.parameters;
 			assert.ok(schema, "Spawn must be registered.");
@@ -882,6 +895,40 @@ describe("unified child runtime", () => {
 		}
 	});
 
+	test("main keeps each teammate's latest reported runtime facts for every view", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		try {
+			await host.execute("team_spawn", {
+				teamName: "rpc-context-stream",
+				startIdle: true, commonPrompt: "test",
+				teammates: [{ name: "scout", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" }],
+			});
+			await host.execute("team_send_message", { targets: ["scout"], message: "report-runtime-facts" });
+			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "parent" && entry.tool === "event"));
+			await new Promise((resolve) => setTimeout(resolve, 25));
+			const listed = await host.execute("team_list", {});
+			const team = (listed.details?.teams as JsonRecord[]).find((candidate) => candidate.teamName === "rpc-context-stream")!;
+			const listedTeammate = (team.teammates as JsonRecord[])[0];
+			assert.deepEqual(
+				{ thinking: listedTeammate?.thinking, contextPercent: listedTeammate?.contextPercent },
+				{ thinking: "off", contextPercent: 57.4 },
+				"The teammate record must show the thinking level the teammate runs at, not the requested one.",
+			);
+			const status = await host.execute("team_status", { team: "rpc-context-stream" });
+			const statusTeammate = (status.details?.teammates as JsonRecord).scout as JsonRecord;
+			assert.deepEqual(
+				{ thinking: statusTeammate.thinking, contextPercent: statusTeammate.contextPercent },
+				{ thinking: "off", contextPercent: 57.4 },
+				"Team Status renders from the same teammate facts.",
+			);
+			assert.doesNotMatch(status.content[0]!.text, /contextPercent/, "The view-only facts must stay out of the model-facing status.");
+		} finally {
+			await host.shutdown();
+			fake.restore();
+		}
+	});
+
 	test("team_send_message reaches an RPC teammate through its delivery runtime and its events flow back", async () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();
@@ -988,6 +1035,49 @@ describe("visible Herdr teammates", () => {
 		} finally {
 			await host.shutdown();
 			fake.restore();
+		}
+	});
+
+	test("reports its runtime facts with registration and after every change", async () => {
+		const child = await startChildRuntimeForTest(0);
+		const runningWith = (model: string, thinkingLevel: string, percent: number | null) => ({
+			model: { provider: "fake", id: model },
+			thinkingLevel,
+			getContextUsage: () => ({ tokens: percent === null ? null : 1, contextWindow: 272_000, percent }),
+		});
+		try {
+			const register = child.requests.find((request) => request.tool === "register");
+			assert.deepEqual(
+				{ model: register?.args.model, thinking: register?.args.thinking, contextPercent: register?.args.contextPercent },
+				{ model: "fake/fake-model", thinking: "high", contextPercent: 31.985 },
+				"Registration must carry the model, thinking level, and context usage the child starts with.",
+			);
+			const changes: Array<[string, ReturnType<typeof runningWith>]> = [
+				["turn_end", runningWith("fake-model", "high", 40.2)],
+				["session_compact", runningWith("fake-model", "high", null)],
+				["model_select", runningWith("other-model", "high", 41)],
+				["thinking_level_select", runningWith("other-model", "low", 41)],
+				["session_tree", runningWith("other-model", "low", 12)],
+			];
+			for (const [eventName, context] of changes) {
+				const handler = child.handlers.get(eventName);
+				assert.ok(handler, `Expected the child to report its runtime facts on ${eventName}.`);
+				await handler({}, context);
+			}
+			await waitFor(() => child.requests.filter((request) => request.tool === "event").length === changes.length);
+			assert.deepEqual(
+				child.requests.filter((request) => request.tool === "event").map((request) => request.args.event),
+				[
+					{ type: "runtime_facts", model: "fake/fake-model", thinking: "high", contextPercent: 40.2 },
+					{ type: "runtime_facts", model: "fake/fake-model", thinking: "high", contextPercent: null },
+					{ type: "runtime_facts", model: "fake/other-model", thinking: "high", contextPercent: 41 },
+					{ type: "runtime_facts", model: "fake/other-model", thinking: "low", contextPercent: 41 },
+					{ type: "runtime_facts", model: "fake/other-model", thinking: "low", contextPercent: 12 },
+				],
+				"A compaction makes the usage unknown until the next response, so it must clear the reported value.",
+			);
+		} finally {
+			await child.close();
 		}
 	});
 
@@ -1100,7 +1190,7 @@ describe("visible Herdr teammates", () => {
 		}
 	});
 
-	test("rejects inherited context for an ephemeral main session", async () => {
+	test("rejects a context fork for an ephemeral main session", async () => {
 		const host = new ExtensionHost();
 		try {
 			await assert.rejects(
@@ -1109,11 +1199,11 @@ describe("visible Herdr teammates", () => {
 					{
 						teamName: "ephemeral-team",
 						startIdle: true, commonPrompt: "test",
-						teammates: [{ name: "inheritor", systemPrompt: "wait", model: "fake/fake-model", inheritMainContext: true }],
+						teammates: [{ name: "forker", systemPrompt: "wait", model: "fake/fake-model", forkContext: true }],
 					},
 					{ ...fakeMainContext, sessionManager: { getSessionFile: () => undefined } },
 				),
-				/inheritMainContext requires a saved main session/,
+				/forkContext requires a saved main session/,
 			);
 		} finally {
 			await host.shutdown();
@@ -1139,16 +1229,16 @@ describe("visible Herdr teammates", () => {
 		}
 	});
 
-	test("passes the main session fork only to inheriting visible teammates", async () => {
+	test("passes the main session fork only to forked visible teammates", async () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();
 		try {
 			await host.execute("team_spawn", {
-				teamName: "inherited-visible-team",
+				teamName: "forked-visible-team",
 				startIdle: true, commonPrompt: "test",
 				showOnHerdrPanes: true,
 				teammates: [
-					{ name: "inheritor", systemPrompt: "wait", model: "fake/fake-model", thinking: "low", inheritMainContext: true },
+					{ name: "forker", systemPrompt: "wait", model: "fake/fake-model", thinking: "low", forkContext: true },
 					{ name: "fresh", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" },
 				],
 			});
