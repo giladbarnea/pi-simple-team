@@ -154,7 +154,10 @@ const extensionApi = {
 		void (async () => {
 			await activityHandlers.get("agent_start")?.({}, extensionContext);
 			fs.appendFileSync(path.join(root, "turns.jsonl"), JSON.stringify({ member, message: message.content }) + "\n");
-			if (message.content.includes("FINISH_ACTIVITY_TEST")) await activityHandlers.get("agent_settled")?.({ aborted: false });
+			if (message.content.includes("FINISH_ACTIVITY_TEST")) {
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				await activityHandlers.get("agent_settled")?.({ aborted: false });
+			}
 		})();
 	},
 };
@@ -365,6 +368,14 @@ test("idle resume reports the complete team and work that was already active", a
 		assert.equal(listedMember(listed, "main-activity-activity", "persisted")?.active, true, "List must use the same activity meaning as lifecycle results.");
 		await host.execute("team_send_message", { targets: ["persisted"], message: "FINISH_ACTIVITY_TEST" });
 		await waitForFakePiTurns(root, 2);
+		const settlementQuery = { targets: ["persisted"], kind: ["agent_settled"] };
+		const settlementDeadline = Date.now() + 3_000;
+		let settlementLog = await host.execute("team_log", settlementQuery);
+		while (settlementLog.details?.returned === 0 && Date.now() < settlementDeadline) {
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			settlementLog = await host.execute("team_log", settlementQuery);
+		}
+		assert.equal(settlementLog.details?.returned, 1, "The parent must receive the settlement callback before checking idle resume.");
 		const settled = await host.execute("team_resume", { team: "activity", startIdle: true });
 		assert.equal(settled.details?.started, false, "After the runtime settles, a live process must not count as active work.");
 		assert.deepEqual(settled.details?.alreadyActiveTeammates, [], "Settled teammates must not be reported as already active.");
