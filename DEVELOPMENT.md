@@ -25,7 +25,7 @@ Reproduce / baseline tests run first thing.
 We do high quality TDD. Load related skills.
 Not everything can be tested programmatically, though. We lean on manual tests for that reason.
 
-Run `bun test` for the default suite. Run `PI_SIMPLE_TEAM_TEST_REAL_PI=1 bun test` to include real-Pi checks. The lifecycle and idle-context checks use local model endpoints. The small RPC connectivity check uses `openai-codex/gpt-5.6-luna` with low thinking.
+Run `bun test` for the default suite. `npm test` runs the same suite; the parent repository's Pi compatibility automation discovers it. Run `PI_SIMPLE_TEAM_TEST_REAL_PI=1 bun test` to include real-Pi checks. The lifecycle and idle-context checks use local model endpoints. The small RPC connectivity check uses `openai-codex/gpt-5.6-luna` with low thinking.
 
 Never let tests inherit live `PI_SIMPLE_TEAM_*` routing or credentials. The settlement regression uses Pi 1.1.0 or newer with local model responses and no discovered extensions:
 
