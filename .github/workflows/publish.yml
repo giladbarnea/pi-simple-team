@@ -55,6 +55,9 @@ jobs:
 
           echo "version=$release_version" >> "$GITHUB_OUTPUT"
 
+      - name: Install dependencies
+        run: npm ci
+
       - name: Publish ${{ steps.release.outputs.version }}
         run: npm publish
 
@@ -76,6 +79,9 @@ jobs:
           registry-url: https://npm.pkg.github.com
           scope: "@giladbarnea"
           package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Publish ${{ needs.publish.outputs.version }}
         run: npm publish

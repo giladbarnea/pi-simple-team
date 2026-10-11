@@ -44,6 +44,8 @@ Requires Pi 1.1.0 or newer.
 pi install npm:@giladbarnea/pi-simple-team
 ```
 
+Communication skills from [`soft-skills`](https://www.npmjs.com/package/soft-skills) are included and available through Pi's normal skill discovery.
+
 ## Using `pi-simple-team`
 
 Tell your main agent:
@@ -265,4 +267,4 @@ Message tools return `published: true` when the extension accepts a message for 
 
 ---
 
-[^1]: `skills/ai-to-delegated/references/leading-leaders.md`
+[^1]: [Captain](https://github.com/giladbarnea/soft-skills/blob/main/plugins/soft-skills/skills/ai-to-delegated/coordination/leading-leaders.md) in the `ai-to-delegated` skill.

@@ -23,7 +23,6 @@
   "files": [
     "*.ts",
     "render-support",
-    "skills",
     "screenshots/1.png",
     "screenshots/2.png",
     "screenshots/abstract-tool-output-preview.png",
@@ -39,6 +38,12 @@
   "scripts": {
     "test": "bun test"
   },
+  "dependencies": {
+    "soft-skills": "2.1.6"
+  },
+  "bundledDependencies": [
+    "soft-skills"
+  ],
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": ">=1.1.0",
@@ -51,6 +56,9 @@
   "pi": {
     "extensions": [
       "./index.ts"
+    ],
+    "skills": [
+      "node_modules/soft-skills/plugins/soft-skills/skills"
     ],
     "image": "https://raw.githubusercontent.com/giladbarnea/pi-simple-team/main/screenshots/abstract-tool-output-preview-640.png"
   },
