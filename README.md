@@ -6,12 +6,14 @@
 
 > **The team extension with no features.**
 
-[![pi extension](https://img.shields.io/badge/pi-extension-blueviolet)](https://github.com/earendil-works/pi)
-[![npm version](https://img.shields.io/npm/v/%40giladbarnea%2Fpi-simple-team?logo=npm)](https://www.npmjs.com/package/@giladbarnea/pi-simple-team)
-[![tests](https://img.shields.io/github/actions/workflow/status/giladbarnea/pi-simple-team/test.yml?branch=main&label=tests&logo=github)](https://github.com/giladbarnea/pi-simple-team/actions/workflows/test.yml)
-[![license](https://img.shields.io/github/license/giladbarnea/pi-simple-team)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![tested with Bun](https://img.shields.io/badge/tested_with-Bun-14151A?logo=bun&logoColor=white)](https://bun.sh/)
+<p align="center">
+  <a href="https://github.com/earendil-works/pi"><img alt="Pi extension" src="https://shieldcn.dev/badge/pi-extension.svg?variant=outline" /></a>
+  <a href="https://www.npmjs.com/package/@giladbarnea/pi-simple-team"><img alt="npm version" src="https://shieldcn.dev/npm/%40giladbarnea%2Fpi-simple-team.svg?variant=outline" /></a>
+  <a href="https://github.com/giladbarnea/pi-simple-team/actions/workflows/test.yml"><img alt="test status" src="https://shieldcn.dev/github/ci/giladbarnea/pi-simple-team.svg?workflow=test.yml&amp;branch=main&amp;variant=outline" /></a>
+  <a href="LICENSE"><img alt="license" src="https://shieldcn.dev/github/license/giladbarnea/pi-simple-team.svg?variant=outline" /></a>
+  <a href="https://www.typescriptlang.org/"><img alt="TypeScript" src="https://shieldcn.dev/badge/typescript.svg?logo=typescript&amp;variant=outline" /></a>
+  <a href="https://bun.sh/"><img alt="tested with Bun" src="https://shieldcn.dev/badge/tested_with-Bun.svg?logo=bun&amp;variant=outline" /></a>
+</p>
 
 **No roles. No org chart. No mailboxes. No routing rules.**
 
@@ -57,7 +59,9 @@ You:
 > Create an implementer-reviewer team to complete `PLAN.md`.
 
 Main agent:
-> Pair created. They'll loop through it together. They'll let me know when they're done.
+> Created an `implementer` and `reviewer` loop:
+> - `implementer` will keep fixing until `reviewer` is satisfied.
+> - I will let you know when they are done.
 
 [![A team appears, receives direction, and starts working](screenshots/abstract-tool-output-preview-640.png)](screenshots/abstract-tool-output-preview.png)
 
@@ -71,10 +75,10 @@ Main agent:
 <br>
 
 <p align="center">
-  <a href="screenshots/team-status-multiple.png"><img src="screenshots/team-status-multiple.png" width="48%" alt="Status outputs for several parallel teams"></a>
+  <a href="screenshots/team-status-multiple.png"><img src="screenshots/team-status-multiple.png" width="100%" alt="Status outputs for several parallel teams"></a>
   </p>
   <p align="center">
-  <a href="screenshots/team-log-multiple.png"><img src="screenshots/team-log-multiple.png" width="48%" alt="Event log outputs for two parallel teams"></a>
+  <a href="screenshots/team-log-multiple.png"><img src="screenshots/team-log-multiple.png" width="100%" alt="Event log outputs for two parallel teams"></a>
 </p>
 
 </details>
@@ -169,7 +173,7 @@ This means **teammates (and thus, teams) survive shutdown.**
 
 Have a teammate do work, exit Pi entirely, come back tomorrow in a brand-new session, and ask main to get you that teammate by its Pi session id. Everything it learned stays intact.
 
-You can even `/resume` a teammate session directly if you ever want a cozy one-on-one.
+You can even `/resume` a teammate session directly if you ever want a cozy one-on-one, or run `pi --session <teammate-session-id>`.
 
 ## 🪾 It’s teams all the way down (optionally)
 
@@ -189,9 +193,13 @@ This technique plays even nicer if your main assumes the captain rank[^1].
 
 ## 🧬 Graphs engineer themselves
 
-**Because** it does nothing special, `pi-simple-team` can **construct any agentic graph you need:**
+**Because** it does nothing special, `pi-simple-team` can **construct any agentic graph you need.**
 
-You tell main:
+Tell main:
+> 1. Break `PLAN.md` into a task graph. Include loops with success criteria and run independent tasks in parallel.
+> 2. Create a team that carries out that task graph.
+
+Or give main a concrete team goal:
 > **Team goal:**
 > 1. Map the database for all customer ⟷ purchases money streams.
 > 2. Feed the new knowledge into the memory layer.
