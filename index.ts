@@ -6,7 +6,6 @@ import http from "node:http";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineTool, type ContextUsage, type ExtensionAPI, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import { bundledSkillsInstruction } from "./bundled-skill.ts";
 import { formatContextWindowReport, requireKnownContextUsage, type KnownContextUsage } from "./context-window.ts";
 import { formatScopedModelGuidance, validateTeammateModels, type ModelReference } from "./model-preflight.ts";
 import { composeTeamBriefing } from "./team-briefing.ts";
@@ -155,14 +154,14 @@ function lifecycleInstruction(startIdle: boolean): string {
 	const nextAction = startIdle
 		? `All teammates are currently idle. Use \`team_send_message\` to start idle teammates, or \`team_resume\` for stopped teammates. After the team starts work: ${reminderOffer}`
 		: `Teammates will message you with milestones or requests for help. Avoid repeated status polling and shell sleeps. Set your status to explain what you expect from them. If you have no independent work, tell the user and end your turn. ${reminderOffer}`;
-	return `${bundledSkillsInstruction}\n\n${nextAction}`;
+	return nextAction;
 }
 
 /** @example lifecycleResult(emptyTeam).started // false */
 function lifecycleResult(team: TeamState): JsonRecord {
 	const teammates = [...team.members.values()].map(teammateRecord);
 	const started = teammates.some((teammate) => teammate.active);
-	return { ...teamIdentity(team), started, teammates, instruction: teammates.length > 0 ? lifecycleInstruction(!started) : bundledSkillsInstruction };
+	return { ...teamIdentity(team), started, teammates, instruction: teammates.length > 0 ? lifecycleInstruction(!started) : "" };
 }
 
 /** @example mainMessageResult(team).published // true */

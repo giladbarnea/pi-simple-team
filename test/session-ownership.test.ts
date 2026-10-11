@@ -9,7 +9,6 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 
-import { bundledAiToDelegatedSkillPath, bundledAiToLeaderSkillPath, bundledSkillsInstruction } from "../bundled-skill.ts";
 import { registerChildTools } from "../child-tools.ts";
 import teamExtension from "../index.ts";
 import type { TeamLogEntry } from "../teamlog.ts";
@@ -658,26 +657,25 @@ describe("schedule_reminder", () => {
 	});
 });
 
-describe("bundled skill guidance", () => {
-	test("team_spawn returns the skill instruction to main", async () => {
+describe("lifecycle guidance", () => {
+	test("team_spawn keeps skill loading out of its instructions", async () => {
+		const fakePi = installFakePi();
 		const host = new ExtensionHost();
 
 		try {
 			const result = await host.executeResult("team_spawn", {
-				teamName: "skill-guidance-team",
-				startIdle: true, commonPrompt: "Skill guidance test.",
-				teammates: [],
+				teamName: "lifecycle-guidance-team",
+				startIdle: true, commonPrompt: "Lifecycle guidance test.",
+				teammates: [{ name: "worker", systemPrompt: "Wait.", model: "fake/fake-model" }],
 			});
 			const content = JSON.parse(result.content[0]!.text) as JsonRecord;
 
-			assert.ok(String(content.instruction).startsWith(bundledSkillsInstruction), "The result must retain the bundled skill instruction.");
+			assert.match(String(content.instruction), /currently idle/, "The result must retain normal lifecycle guidance.");
+			assert.doesNotMatch(String(content.instruction), /skill/i, "Skill discovery must come from Pi, not lifecycle instructions.");
 			assert.equal(result.details?.instruction, content.instruction, "Rendered and model-facing instructions must match.");
-			for (const skillPath of [bundledAiToLeaderSkillPath, bundledAiToDelegatedSkillPath]) {
-				assert.equal(path.isAbsolute(skillPath), true, `Expected an absolute bundled skill path. Got: ${skillPath}`);
-				assert.equal(fs.existsSync(skillPath), true, `Expected the bundled skill file to exist at ${skillPath}`);
-			}
 		} finally {
 			await host.shutdown();
+			fakePi.restore();
 		}
 	});
 });

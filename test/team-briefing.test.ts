@@ -1,5 +1,4 @@
 import { describe, test, expect } from "bun:test";
-import { bundledSkillsInstruction } from "../bundled-skill.ts";
 import { composeTeamBriefing } from "../team-briefing.ts";
 
 function prompt(): string {
@@ -16,11 +15,9 @@ describe("custom briefing participant list", () => {
 		expect(participantPrompt("Reviewer")).toContain("Participants: main, Implementer, Reviewer.");
 	});
 
-	test("instructs every teammate to read the bundled ai-to-leader and ai-to-delegated skills", () => {
-		expect(participantPrompt("Implementer")).toContain(bundledSkillsInstruction);
-		expect(participantPrompt("Reviewer")).toContain(bundledSkillsInstruction);
-		expect(bundledSkillsInstruction).toContain("ai-to-leader");
-		expect(bundledSkillsInstruction).toContain("ai-to-delegated");
+	test("keeps skill loading out of teammate briefings", () => {
+		expect(participantPrompt("Implementer")).not.toMatch(/skill/i);
+		expect(participantPrompt("Reviewer")).not.toMatch(/skill/i);
 	});
 });
 

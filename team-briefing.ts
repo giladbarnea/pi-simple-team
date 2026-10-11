@@ -1,5 +1,3 @@
-import { bundledSkillsInstruction } from "./bundled-skill.ts";
-
 /** Compose the one-time custom team briefing. @example composeTeamBriefing("review", "Shared", "scout", "Inspect", []).includes("<team-system-message>") // true */
 export function composeTeamBriefing(
 	teamName: string,
@@ -10,7 +8,6 @@ export function composeTeamBriefing(
 	canManageOwnTeams = false,
 ): string {
 	return [
-		bundledSkillsInstruction,
 		`<team-system-message>\n${teamPrompt.trim()}\n</team-system-message>`,
 		`<your-specific-system-message>\n${teammatePrompt.trim()}\n</your-specific-system-message>`,
 		`You are ${teammateName}, a teammate on team ${teamName}.`,

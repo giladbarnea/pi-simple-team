@@ -7,6 +7,8 @@ Read all the root docs. Understand the developer’s request. Then dispatch a Lu
 
 This extension is published to npm automatically on push to main. If the repository version matches npm, the workflow advances one patch. An explicitly higher version is preserved. An older version fails before publication. Version-specific release notes live in `releases/<version>.md`. Pi.dev references the npm package.
 
+The publish jobs run `npm ci` first so the npm tarball includes the bundled `soft-skills` dependency.
+
 ## Product design
 
 **> Everything comes down to design, user experience, empowering the user with actual productivity added value, and instilling trust as they use the extension more.** Every development, product and design decision has to be justified by that touchstone.
