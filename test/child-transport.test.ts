@@ -1143,16 +1143,17 @@ describe("visible Herdr teammates", () => {
 
 	test("resolves an interrupted delivery when session shutdown replaces agent_settled", async () => {
 		const child = await startChildRuntimeForTest(0);
+		const interruption = Promise.withResolvers<void>();
 		try {
-			await child.handlers.get("agent_start")?.({}, { abort: () => undefined });
+			await child.handlers.get("agent_start")?.({}, { abort: () => interruption.resolve() });
 			const register = child.requests.find((request) => request.tool === "register");
 			assert.ok(register);
 			const delivery = fetch(String(register.args.url), {
 				method: "POST",
-				headers: { "content-type": "application/json" },
+				headers: { "content-type": "application/json", connection: "close" },
 				body: JSON.stringify({ token: "child-token", tool: "deliver", args: { interrupt: true, formattedMessage: "message", team: "child-team", from: "main", to: "reviewer", sentAt: "now", message: "message" } }),
 			});
-			await new Promise((resolve) => setTimeout(resolve, 20));
+			await interruption.promise;
 			await child.close();
 			assert.equal((await delivery).status, 200);
 		} finally {
