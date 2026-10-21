@@ -13,6 +13,19 @@ const teamMessageType = "pi-simple-team";
 const defaultInterruptWaitTimeoutMilliseconds = 25_000;
 const lifecycleCallbackRetryAttempts = 3;
 
+/** Every tool a teammate registers in registerChildTools. */
+export const childToolNames = ["get_context_window_usage", "team_send_message", "send_main_message", "team_status"] as const;
+
+/**
+ * Pi 1.3 restores the tool loadout recorded in a resumed or forked transcript, and again after /tree. A teammate
+ * forked from main inherits main's loadout, which never declared teammate-only tools such as send_main_message.
+ */
+function activateChildTools(pi: ExtensionAPI): void {
+	const activeTools = pi.getActiveTools();
+	const missingTools = childToolNames.filter((name) => !activeTools.includes(name));
+	if (missingTools.length > 0) pi.setActiveTools([...activeTools, ...missingTools]);
+}
+
 export interface ChildRuntimeConfig {
 	callbackUrl: string;
 	callbackToken: string;
@@ -185,7 +198,10 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 	pi.on("session_compact", (_event, context) => { void reportRuntimeFacts(context); });
 	pi.on("model_select", (_event, context) => { void reportRuntimeFacts(context); });
 	pi.on("thinking_level_select", (_event, context) => { void reportRuntimeFacts(context); });
-	pi.on("session_tree", (_event, context) => { void reportRuntimeFacts(context); });
+	pi.on("session_tree", (_event, context) => {
+		activateChildTools(pi);
+		void reportRuntimeFacts(context);
+	});
 	pi.on("tool_execution_start", (event) => {
 		notifyParent({ type: "tool_execution_start", toolCallId: event.toolCallId, toolName: event.toolName, args: event.args });
 	});
@@ -193,6 +209,7 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 		notifyParent({ type: "tool_execution_end", toolCallId: event.toolCallId, toolName: event.toolName, isError: event.isError, result: event.result });
 	});
 	pi.on("session_start", async (_event, context) => {
+		activateChildTools(pi);
 		server = http.createServer((request, response) => {
 			void (async () => {
 				try {

@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { childToolNames } from "../child-tools.ts";
 import teamExtension from "../index.ts";
 import { teamLogLines } from "../render.ts";
 import type { TeamLogEntry } from "../teamlog.ts";
@@ -29,13 +30,13 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 	const agentDirectory = path.join(directory, "agent");
 	fs.mkdirSync(agentDirectory);
 	let requestCount = 0;
-	const modelRequests: Array<{ messages: Array<{ role: string; content: unknown }> }> = [];
+	const modelRequests: Array<{ messages: Array<{ role: string; content: unknown }>; tools?: Array<{ function?: { name?: string } }> }> = [];
 	let releaseRetry: () => void = () => undefined;
 	const retryGate = new Promise<void>((resolve) => { releaseRetry = resolve; });
 	const provider = Bun.serve({
 		hostname: "127.0.0.1", port: 0,
 		async fetch(request: Request): Promise<Response> {
-			modelRequests.push(await request.json() as { messages: Array<{ role: string; content: unknown }> });
+			modelRequests.push(await request.json() as (typeof modelRequests)[number]);
 			requestCount += 1;
 			if (scenario === "error") return Response.json({ error: { message: "Invalid API key fixture" } }, { status: 401 });
 			if (scenario === "retry" && requestCount === 1) return Response.json({ error: { message: "overloaded fixture" } }, { status: 503 });
@@ -158,6 +159,25 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("teammate settl
 			assert.equal(current.match(/FORK_SPECIFIC/g)?.length, 1, "The current assignment is not duplicated.");
 			assert.ok(JSON.stringify(messages.filter((message) => message.role === "system")).includes("OLD_PARENT_SYSTEM"), "The mitigation must not rewrite inherited system messages.");
 			assert.equal(fs.readFileSync(parent.sessionFile, "utf8"), preserved, "The source transcript must remain byte-for-byte unchanged.");
+		} finally {
+			await fork?.close();
+			await parent.close();
+		}
+	}, 30000);
+
+	test("a fork of a transcript that never declared teammate tools still offers every team tool in its first request", async () => {
+		const parent = await startTeam("complete", false);
+		let fork: Awaited<ReturnType<typeof startTeam>> | undefined;
+		try {
+			await waitFor(async () => parent.requests() === 1 && !(await parent.active()), "the parent history to materialize");
+			await parent.stop();
+			const entries = fs.readFileSync(parent.sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line) as JsonRecord);
+			// Main's own tool loadout never declares send_main_message. Pi 1.3 restores a forked transcript's loadout.
+			fs.appendFileSync(parent.sessionFile, JSON.stringify({ type: "message", id: "main-loadout", parentId: entries.at(-1)!.id, timestamp: new Date().toISOString(), message: { role: "system", content: "", toolsRemoved: [{ name: "send_main_message" }], timestamp: Date.now() } }) + "\n");
+			fork = await startTeam("complete", false, { automaticStart: true, parentSessionFile: parent.sessionFile });
+			await waitFor(async () => fork!.requests() === 1 && !(await fork!.active()), "the fork's first request");
+			const declaredTools = (fork.modelRequests[0].tools ?? []).map((tool) => tool.function?.name);
+			for (const toolName of childToolNames) assert.ok(declaredTools.includes(toolName), `A forked teammate must be able to call ${toolName}. Declared tools: ${JSON.stringify(declaredTools)}`);
 		} finally {
 			await fork?.close();
 			await parent.close();

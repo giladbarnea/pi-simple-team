@@ -365,6 +365,8 @@ class ExtensionHost {
 			registerCommand: () => undefined,
 			registerMessageRenderer: () => undefined,
 			registerTool: (tool: RegisteredTool) => this.tools.set(tool.name, tool),
+			getActiveTools: () => [...this.tools.keys()],
+			setActiveTools: () => undefined,
 			sendMessage: (message: RecordedMessage, options: RecordedMessage["options"]) => {
 				this.messages.push({ ...message, options });
 				onMessage();

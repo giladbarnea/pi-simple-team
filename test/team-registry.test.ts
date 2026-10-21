@@ -45,6 +45,8 @@ class ExtensionHost {
 			registerCommand: () => undefined,
 			registerMessageRenderer: () => undefined,
 			registerTool: (tool: RegisteredTool) => this.tools.set(tool.name, tool),
+			getActiveTools: () => [...this.tools.keys()],
+			setActiveTools: () => undefined,
 			sendMessage: () => undefined,
 		} as unknown as ExtensionAPI;
 
@@ -148,6 +150,8 @@ const extensionApi = {
 	registerCommand: () => undefined,
 	registerMessageRenderer: () => undefined,
 	registerTool: (tool) => registeredTools.set(tool.name, tool),
+	getActiveTools: () => [...registeredTools.keys()],
+	setActiveTools: () => undefined,
 	// Custom-message work starts without a user-prompt lifecycle hook.
 	sendMessage: (message, options) => {
 		if (options.triggerTurn === false) return;

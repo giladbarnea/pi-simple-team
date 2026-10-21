@@ -9,7 +9,7 @@ import type { Component, TUI } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 import teamExtension from "../index.ts";
-import { registerChildTools } from "../child-tools.ts";
+import { childToolNames, registerChildTools } from "../child-tools.ts";
 
 type JsonRecord = Record<string, unknown>;
 type ToolResult = { content: Array<{ type: string; text: string }>; details?: JsonRecord };
@@ -43,6 +43,8 @@ class ExtensionHost {
 			registerCommand: (name: string, command: { handler: (args: string, context: ExtensionCommandContext) => Promise<void> }) => this.commands.set(name, command),
 			registerMessageRenderer: () => undefined,
 			registerTool: (tool: RegisteredTool) => this.tools.set(tool.name, tool),
+			getActiveTools: () => [...this.tools.keys()],
+			setActiveTools: () => undefined,
 			sendMessage: (message: JsonRecord) => { this.messages.push(message); },
 		} as unknown as ExtensionAPI;
 		teamExtension(api);
@@ -347,6 +349,8 @@ async function startChildRuntimeForTest(failingLifecycleEvents: number): Promise
 		on: (event: string, handler: ChildHandler) => handlers.set(event, handler),
 		registerMessageRenderer: () => undefined,
 		registerTool: () => undefined,
+		getActiveTools: () => [...childToolNames],
+		setActiveTools: () => undefined,
 		sendMessage: (message: JsonRecord) => messages.push(message),
 	};
 	registerChildTools(api as unknown as ExtensionAPI, config);
@@ -377,6 +381,58 @@ async function startChildRuntimeForTest(failingLifecycleEvents: number): Promise
 }
 
 describe("unified child runtime", () => {
+	test("a teammate activates every team tool that its restored tool loadout lacks before it registers", async () => {
+		const receiver = await startChildCallbackReceiver(0);
+		const handlers = new Map<string, ChildHandler>();
+		const registeredTools: string[] = [];
+		// Pi 1.3 gives a forked teammate main's recorded loadout, which never declared send_main_message.
+		let activeTools = ["read", "bash", "team_status", "team_send_message"];
+		let registeredBeforeActivation: boolean | undefined;
+		const api = {
+			on: (event: string, handler: ChildHandler) => handlers.set(event, handler),
+			registerMessageRenderer: () => undefined,
+			registerTool: (tool: { name: string }) => registeredTools.push(tool.name),
+			getActiveTools: () => [...activeTools],
+			setActiveTools: (toolNames: string[]) => {
+				registeredBeforeActivation = receiver.requests.some((request) => request.tool === "register");
+				activeTools = toolNames;
+			},
+			sendMessage: () => undefined,
+		};
+		registerChildTools(api as unknown as ExtensionAPI, {
+			callbackUrl: receiver.url,
+			callbackToken: "child-token",
+			teamName: "child-team",
+			teammateName: "reviewer",
+			participants: ["main", "reviewer"],
+			canManageOwnTeams: false,
+		});
+		try {
+			assert.deepEqual(registeredTools, [...childToolNames], "childToolNames must list exactly the tools a teammate registers.");
+			await handlers.get("session_start")?.({}, {
+				shutdown: () => undefined,
+				model: { provider: "fake", id: "fake-model" },
+				thinkingLevel: "high",
+				getContextUsage: () => ({ tokens: 1_000, contextWindow: 272_000, percent: 0.4 }),
+				sessionManager: {
+					getBranch: () => [],
+					getSessionId: () => "forked-child-session-id",
+					getSessionFile: () => "/tmp/forked-child-session.jsonl",
+				},
+			});
+			assert.deepEqual(
+				activeTools,
+				["read", "bash", "team_status", "team_send_message", "get_context_window_usage", "send_main_message"],
+				"A teammate must keep its restored tools and gain every missing team tool.",
+			);
+			assert.equal(registeredBeforeActivation, false, "Team tools must be active before registration lets main start the teammate's work.");
+			assert.ok(receiver.requests.some((request) => request.tool === "register"), "The teammate must still register with main.");
+		} finally {
+			await handlers.get("session_shutdown")?.({ reason: "quit" });
+			await receiver.close();
+		}
+	});
+
 	test("forwards the cancellation flag from both final settlement outcomes", async () => {
 		const child = await startChildRuntimeForTest(0);
 		try {
