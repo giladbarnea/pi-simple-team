@@ -65,8 +65,13 @@ function readRequiredChildRuntimeConfig(): ChildRuntimeConfig {
 	};
 }
 
+/**
+ * Main marks only the process it starts with PI_SIMPLE_TEAM_CHILD=1. That process claims the teammate identity for its PID, which
+ * survives Pi's in-process reloads and session replacements. Subprocesses inherit the environment, not the claim, so they run as main.
+ */
 export function readChildRuntimeConfig(): ChildRuntimeConfig | undefined {
-	if (process.env.PI_SIMPLE_TEAM_CHILD !== "1") return undefined;
+	if (process.env.PI_SIMPLE_TEAM_CHILD === "1") process.env.PI_SIMPLE_TEAM_CHILD = String(process.pid);
+	if (process.env.PI_SIMPLE_TEAM_CHILD !== String(process.pid)) return undefined;
 	return readRequiredChildRuntimeConfig();
 }
 

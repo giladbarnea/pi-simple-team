@@ -1,5 +1,5 @@
 ---
-updated: 2026-10-01
+updated: 2026-11-02
 status: current
 audience: AI agents and maintainers
 ---
@@ -68,6 +68,8 @@ RPC teammates start with `pi --mode rpc`. Children disable discovered extensions
 A normal child registers only parent-team member tools. A child with `canManageOwnTeams: true` also registers manager tools in the same runtime.
 
 Every child runs the same runtime regardless of transport: it starts a local delivery server, then registers that server and its session identity through the parent callback. Startup completes only after registration.
+
+The team environment marks only the process that main starts. On first load, that process claims the teammate identity for its process ID, so Pi reloads and session replacements keep it. Subprocesses inherit the environment but not the claim. A `pi` process that a teammate starts therefore runs as an ordinary main session and cannot register as the teammate.
 
 Registration also carries the child's runtime facts: the model and thinking level it actually runs with, and its context usage. The child reports them again after each turn, compaction, model change, thinking change, and branch change. It also reports them after it records an idle delivery, before it acknowledges that delivery, so a lifecycle result already shows the new usage. The parent stores these facts on the teammate, where they replace the requested model and thinking level. Pi can clamp the thinking level to the model, for example to `off` for a model that cannot reason. Every record and view reads the stored facts. A compaction makes the usage unknown, which clears the stored percent.
 
