@@ -1,4 +1,4 @@
-<img src="screenshots/pi-simple-team-banner.png" alt="A dark wireframe room in a starry void" width="100%">
+![A dark wireframe room in a starry void](https://raw.githubusercontent.com/giladbarnea/pi-simple-team/main/screenshots/pi-simple-team-banner.png)
 
 <div align="center">
 
@@ -6,14 +6,12 @@
 
 > **The team extension with no features.**
 
-<p align="center">
-  <a href="https://github.com/earendil-works/pi"><img alt="Pi extension" src="https://shieldcn.dev/badge/pi-extension.svg?variant=outline" /></a>
-  <a href="https://www.npmjs.com/package/@giladbarnea/pi-simple-team"><img alt="npm version" src="https://shieldcn.dev/npm/%40giladbarnea%2Fpi-simple-team.svg?variant=outline" /></a>
-  <a href="https://github.com/giladbarnea/pi-simple-team/actions/workflows/test.yml"><img alt="test status" src="https://shieldcn.dev/github/ci/giladbarnea/pi-simple-team.svg?workflow=test.yml&amp;branch=main&amp;variant=outline" /></a>
-  <a href="LICENSE"><img alt="license" src="https://shieldcn.dev/github/license/giladbarnea/pi-simple-team.svg?variant=outline" /></a>
-  <a href="https://www.typescriptlang.org/"><img alt="TypeScript" src="https://shieldcn.dev/badge/typescript.svg?logo=typescript&amp;variant=outline" /></a>
-  <a href="https://bun.sh/"><img alt="tested with Bun" src="https://shieldcn.dev/badge/tested_with-Bun.svg?logo=bun&amp;variant=outline" /></a>
-</p>
+[![Pi extension](https://shieldcn.dev/badge/pi-extension.svg?variant=outline)](https://github.com/earendil-works/pi)
+[![npm version](https://shieldcn.dev/npm/%40giladbarnea%2Fpi-simple-team.svg?variant=outline)](https://www.npmjs.com/package/@giladbarnea/pi-simple-team)
+[![test status](https://shieldcn.dev/github/ci/giladbarnea/pi-simple-team.svg?workflow=test.yml&branch=main&variant=outline)](https://github.com/giladbarnea/pi-simple-team/actions/workflows/test.yml)
+[![license](https://shieldcn.dev/github/license/giladbarnea/pi-simple-team.svg?variant=outline)](https://github.com/giladbarnea/pi-simple-team/blob/main/LICENSE)
+[![TypeScript](https://shieldcn.dev/badge/typescript.svg?logo=typescript&variant=outline)](https://www.typescriptlang.org/)
+[![tested with Bun](https://shieldcn.dev/badge/tested_with-Bun.svg?logo=bun&variant=outline)](https://bun.sh/)
 
 **No roles. No org chart. No mailboxes. No routing rules.**
 
@@ -63,7 +61,7 @@ Main agent:
 > - `implementer` will keep fixing until `reviewer` is satisfied.
 > - I will let you know when they are done.
 
-[![A team appears, receives direction, and starts working](screenshots/abstract-tool-output-preview-640.png)](screenshots/abstract-tool-output-preview.png)
+[![A team appears, receives direction, and starts working](https://raw.githubusercontent.com/giladbarnea/pi-simple-team/main/screenshots/abstract-tool-output-preview-640.png)](https://raw.githubusercontent.com/giladbarnea/pi-simple-team/main/screenshots/abstract-tool-output-preview.png)
 
 <div align="center"><em>Spawn, direct, and follow a team from the normal Pi conversation.</em></div>
 
@@ -74,12 +72,9 @@ Main agent:
 
 <br>
 
-<p align="center">
-  <a href="screenshots/team-status-multiple.png"><img src="screenshots/team-status-multiple.png" width="100%" alt="Status outputs for several parallel teams"></a>
-  </p>
-  <p align="center">
-  <a href="screenshots/team-log-multiple.png"><img src="screenshots/team-log-multiple.png" width="100%" alt="Event log outputs for two parallel teams"></a>
-</p>
+[![Status outputs for several parallel teams](https://raw.githubusercontent.com/giladbarnea/pi-simple-team/main/screenshots/team-status-multiple.png)](https://raw.githubusercontent.com/giladbarnea/pi-simple-team/main/screenshots/team-status-multiple.png)
+
+[![Event log outputs for two parallel teams](https://raw.githubusercontent.com/giladbarnea/pi-simple-team/main/screenshots/team-log-multiple.png)](https://raw.githubusercontent.com/giladbarnea/pi-simple-team/main/screenshots/team-log-multiple.png)
 
 </details>
 
@@ -91,9 +86,7 @@ The command opens an overlay rolling recent statuses, messages, and a separate e
 
 Up/Down select the messages or log widget. Enter zooms it to the full overlay. Esc goes back.
 
-<a href="screenshots/team-view.png">
-  <img src="screenshots/team-view.png" width="100%" alt="The live team dashboard showing statuses, messages, and recent events">
-</a>
+[![The live team dashboard showing statuses, messages, and recent events](https://raw.githubusercontent.com/giladbarnea/pi-simple-team/main/screenshots/team-view.png)](https://raw.githubusercontent.com/giladbarnea/pi-simple-team/main/screenshots/team-view.png)
 
 <div align="center"><em>The live, read-only <code>/team</code> dashboard.</em></div>
 
@@ -212,7 +205,7 @@ Or give main a concrete team goal:
 
 That prompt creates this graph:
 
-![The team graph: 1-map (Scout and Devil’s advocate) feeding subagent dispatch, feeding 3-eval (Engineer and Performance watcher)](screenshots/team-graph.png)
+![The team graph: 1-map (Scout and Devil’s advocate) feeding subagent dispatch, feeding 3-eval (Engineer and Performance watcher)](https://raw.githubusercontent.com/giladbarnea/pi-simple-team/main/screenshots/team-graph.png)
 
 ## Tools
 
