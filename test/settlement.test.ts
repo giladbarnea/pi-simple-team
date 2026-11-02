@@ -22,7 +22,7 @@ async function waitFor(check: () => Promise<boolean>, label: string): Promise<vo
 	assert.fail(`Timed out waiting for ${label}`);
 }
 
-async function startTeam(scenario: Scenario, startIdle = false, options: { automaticStart?: boolean; parentSessionFile?: string; commonPrompt?: string; teammatePrompt?: string } = {}) {
+async function startTeam(scenario: Scenario, startIdle = false, options: { automaticStart?: boolean; parentSessionFile?: string; commonPrompt?: string; teammatePrompt?: string; teammate?: JsonRecord } = {}) {
 	assert.deepEqual(Object.keys(process.env).filter((name) => name.startsWith("PI_SIMPLE_TEAM_") && name !== "PI_SIMPLE_TEAM_TEST_REAL_PI"), [], "Run settlement tests without live team routing or credentials.");
 	const executable = Bun.which("pi");
 	assert.ok(executable, "The real-Pi check requires Pi 1.1.0 or newer on PATH.");
@@ -30,7 +30,7 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 	const agentDirectory = path.join(directory, "agent");
 	fs.mkdirSync(agentDirectory);
 	let requestCount = 0;
-	const modelRequests: Array<{ messages: Array<{ role: string; content: unknown }>; tools?: Array<{ function?: { name?: string } }> }> = [];
+	const modelRequests: Array<{ messages: Array<{ role: string; content: unknown }>; tools?: Array<{ function?: { name?: string } }>; reasoning_effort?: string }> = [];
 	let releaseRetry: () => void = () => undefined;
 	const retryGate = new Promise<void>((resolve) => { releaseRetry = resolve; });
 	const provider = Bun.serve({
@@ -47,9 +47,12 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 	});
 	fs.writeFileSync(path.join(agentDirectory, "models.json"), JSON.stringify({ providers: { "local-settlement": {
 		baseUrl: `http://127.0.0.1:${provider.port}/v1`, api: "openai-completions", apiKey: "local-fixture",
-		models: [{ id: "probe", name: "Settlement probe", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32000, maxTokens: 1000 }],
+		models: [
+			{ id: "probe", name: "Settlement probe", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32000, maxTokens: 1000 },
+			{ id: "thinker", name: "Settlement thinker", reasoning: true, thinkingLevelMap: { xhigh: "xhigh" }, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32000, maxTokens: 1000 },
+		],
 	} } }));
-	fs.writeFileSync(path.join(agentDirectory, "settings.json"), JSON.stringify({ compaction: { enabled: false }, retry: { enabled: scenario === "retry", maxRetries: 1, baseDelayMs: 10, provider: { maxRetries: 0 } } }));
+	fs.writeFileSync(path.join(agentDirectory, "settings.json"), JSON.stringify({ defaultThinkingLevel: "high", compaction: { enabled: false }, retry: { enabled: scenario === "retry", maxRetries: 1, baseDelayMs: 10, provider: { maxRetries: 0 } } }));
 	const cancellationExtension = path.join(directory, "cancel-after-response.ts");
 	fs.writeFileSync(cancellationExtension, 'export default function (pi) { pi.on("agent_before_settle", (_event, context) => { context.abort(); }); }\n');
 	const launcher = path.join(directory, "pi-launcher");
@@ -64,7 +67,7 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 	const tools = new Map<string, RegisteredTool>();
 	const shutdownHandlers: Array<() => Promise<void>> = [];
 	const context = {
-		cwd: directory, scopedModels: [], modelRegistry: { getAvailable: () => [{ provider: "local-settlement", id: "probe" }] },
+		cwd: directory, scopedModels: [], modelRegistry: { getAvailable: () => [{ provider: "local-settlement", id: "probe" }, { provider: "local-settlement", id: "thinker" }] },
 		sessionManager: { getCwd: () => directory, getSessionId: () => `settlement-${scenario}`, getSessionFile: () => options.parentSessionFile ?? path.join(directory, "main.jsonl") },
 	};
 	const api = {
@@ -93,7 +96,7 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 	};
 	try {
 		teamExtension(api);
-		const spawned = await execute("team_spawn", { teamName: "settlement", startIdle: !options.automaticStart, commonPrompt: options.commonPrompt ?? "Respond once.", teammates: [{ name: "probe", model: "local-settlement/probe", thinking: "low", systemPrompt: options.teammatePrompt ?? "Wait for a message.", forkContext: options.parentSessionFile !== undefined, extensionPaths: scenario === "cancel" ? [cancellationExtension] : [] }] });
+		const spawned = await execute("team_spawn", { teamName: "settlement", startIdle: !options.automaticStart, commonPrompt: options.commonPrompt ?? "Respond once.", teammates: [{ name: "probe", model: "local-settlement/probe", thinking: "low", systemPrompt: options.teammatePrompt ?? "Wait for a message.", forkContext: options.parentSessionFile !== undefined, extensionPaths: scenario === "cancel" ? [cancellationExtension] : [], ...options.teammate }] });
 		if (!startIdle && !options.automaticStart) await execute("team_send_message", { targets: ["probe"], message: "Do the small task." });
 		return {
 			close, releaseRetry, modelRequests, requests: () => requestCount,
@@ -101,6 +104,11 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 			add: async (startIdle: boolean): Promise<ToolResult> => execute("team_add_teammates", { team: "settlement", startIdle, teammates: [{ name: "addition", model: "local-settlement/probe", thinking: "low", systemPrompt: "ADDITION_SPECIFIC" }] }),
 			resume: async (startIdle: boolean, resumptionPrompt?: string): Promise<ToolResult> => execute("team_resume", { team: "settlement", startIdle, ...(resumptionPrompt === undefined ? {} : { resumptionPrompt }) }),
 			sessionFile: String((spawned.details.teammates as JsonRecord[])[0].sessionFile),
+			savedTeammate: (): JsonRecord => {
+				const manifests = path.join(agentDirectory, "pi-simple-team", "teams-v2");
+				const [manifest] = fs.readdirSync(manifests).filter((name) => name.endsWith(".json"));
+				return (JSON.parse(fs.readFileSync(path.join(manifests, manifest), "utf8")).members as JsonRecord[])[0];
+			},
 			log: async (): Promise<ToolResult> => execute("team_log", { targets: ["settlement"], limit: 100 }),
 			send: async (interrupt: boolean, recipient = "probe"): Promise<ToolResult> => execute("team_send_message", { targets: [recipient], message: "Continue with this message.", interrupt }),
 			active: async (): Promise<boolean> => {
@@ -250,6 +258,41 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("teammate settl
 			assert.ok(messages.some((message) => JSON.stringify(message.content).includes("Respond once.") && JSON.stringify(message.content).includes("Wait for a message.")), "Both saved definitions must still reach the resumed model.");
 		} finally {
 			await child.close();
+		}
+	}, 30000);
+
+	test.each([
+		{ fork: true, model: "local-settlement/thinker", thinking: "xhigh", runsAt: "xhigh" },
+		{ fork: false, model: "local-settlement/thinker", thinking: "xhigh", runsAt: "xhigh" },
+		{ fork: true, model: "local-settlement/thinker", thinking: "default", runsAt: "xhigh" },
+		{ fork: false, model: "local-settlement/probe", thinking: "xhigh", runsAt: "off" },
+	])("resume keeps the thinking level a teammate runs at: fork=$fork model=$model thinking=$thinking", async ({ fork, model, thinking, runsAt }) => {
+		const effort = (request: { reasoning_effort?: string }): string => request.reasoning_effort ?? "off";
+		// As in issue 26, main's own history records high.
+		const parent = fork ? await startTeam("complete", false, { teammate: { model: "local-settlement/thinker", thinking: "high" } }) : undefined;
+		let child: Awaited<ReturnType<typeof startTeam>> | undefined;
+		try {
+			if (parent) {
+				await waitFor(async () => parent.requests() === 1 && !(await parent.active()), "main's history at high thinking");
+				assert.equal(effort(parent.modelRequests[0]), "high", "The fixture's main history must run at high.");
+				await parent.stop();
+			}
+			const team = await startTeam("complete", false, { automaticStart: true, parentSessionFile: parent?.sessionFile, teammate: { model, thinking: thinking === "default" ? undefined : thinking } });
+			child = team;
+			await waitFor(async () => team.requests() === 1 && !(await team.active()), "the first turn");
+			assert.equal(effort(team.modelRequests[0]), runsAt, "The fixture's teammate must start at its configured level.");
+			await team.stop();
+			const resumed = await team.resume(false);
+			await waitFor(async () => team.requests() === 2 && !(await team.active()), "the resumed turn");
+			await team.stop();
+			assert.deepEqual(
+				{ runsAt: effort(team.modelRequests[1]), reported: (resumed.details.teammates as JsonRecord[])[0].thinking, saved: team.savedTeammate().thinking },
+				{ runsAt, reported: runsAt, saved: runsAt },
+				"A resumed teammate must run at, report, and save the thinking level it was configured with.",
+			);
+		} finally {
+			await child?.close();
+			await parent?.close();
 		}
 	}, 30000);
 

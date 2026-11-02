@@ -168,14 +168,17 @@ const extensionApi = {
 const { default: teamExtension } = await import(extensionPath);
 teamExtension(extensionApi);
 
-// Like Pi, a resumed session keeps the model and thinking level it ran with.
+// Like Pi, a session records its launch model and thinking level only when it is new.
+// Resume restores them, and a --thinking flag overrides the recorded level without recording it.
 const settingsPath = sessionFile + ".settings.json";
 const launchSettings = () => {
 	const model = process.argv[process.argv.indexOf("--model") + 1].split("/");
 	return { model: { provider: model[0], id: model[1] }, thinkingLevel: process.argv[process.argv.indexOf("--thinking") + 1] };
 };
-const runtimeSettings = requestedSessionFile ? JSON.parse(fs.readFileSync(settingsPath, "utf8")) : launchSettings();
-fs.writeFileSync(settingsPath, JSON.stringify(runtimeSettings));
+if (!requestedSessionFile) fs.writeFileSync(settingsPath, JSON.stringify(launchSettings()));
+const recordedSettings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+const thinkingArgumentIndex = process.argv.indexOf("--thinking");
+const runtimeSettings = thinkingArgumentIndex === -1 ? recordedSettings : { ...recordedSettings, thinkingLevel: process.argv[thinkingArgumentIndex + 1] };
 const extensionContext = {
 	cwd: process.cwd(),
 	shutdown: () => process.exit(1),
@@ -1700,6 +1703,43 @@ test("explicit teammate extensions survive shutdown and resume without enabling 
 			assert.equal(invocation.args.includes("--no-extensions"), true, "Discovered extensions must remain disabled.");
 			assert.equal(invocation.args[invocation.args.indexOf(extensionPath) - 1], "-e", "Each runtime must explicitly load the saved replay extension.");
 		}
+	} finally {
+		await host?.shutdown();
+		restoreFakePi();
+		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("resume keeps a teammate's saved thinking level when its session records another level", async () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-team-resume-thinking-"));
+	const agentDirectory = path.join(root, "agent");
+	const projectDirectory = path.join(root, "project");
+	fs.mkdirSync(agentDirectory);
+	fs.mkdirSync(projectDirectory);
+	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreFakePi = installFakePi(root);
+	let host: ExtensionHost | undefined;
+	try {
+		const { default: teamExtension } = await import("../index.ts");
+		host = new ExtensionHost(teamExtension, makeContext("main-thinking", projectDirectory));
+		await host.start();
+		await host.execute("team_spawn", { teamName: "thinking", commonPrompt: "Wait.", startIdle: true,
+			teammates: [{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "xhigh" }] });
+		await host.execute("team_shutdown", { team: "thinking" });
+		// A forked Pi session keeps main's recorded level, not the --thinking level the teammate ran at (issue 26).
+		const recordedSettings = String(listedMember(await host.execute("team_list", {}), "main-thinking-thinking", "persisted")?.sessionFile) + ".settings.json";
+		fs.writeFileSync(recordedSettings, JSON.stringify({ ...JSON.parse(fs.readFileSync(recordedSettings, "utf8")), thinkingLevel: "high" }));
+		const resumed = await host.execute("team_resume", { team: "thinking", startIdle: true });
+		await host.execute("team_shutdown", { team: "thinking" });
+		const manifest = JSON.parse(fs.readFileSync(path.join(agentDirectory, "pi-simple-team", "teams-v2", "main-thinking-thinking.json"), "utf8")) as { members: JsonRecord[] };
+		assert.deepEqual(
+			{ reported: (resumed.details?.teammates as JsonRecord[])[0].thinking, saved: manifest.members[0].thinking },
+			{ reported: "xhigh", saved: "xhigh" },
+			"A resumed teammate must report and save its configured thinking level, not the level its session file records.",
+		);
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();

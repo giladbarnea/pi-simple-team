@@ -77,7 +77,7 @@ const sessionFile = sessionArgumentIndex === -1
   ? path.join(process.env.PI_SIMPLE_TEAM_TEST_HERDR_SESSIONS, process.env.PI_SIMPLE_TEAM_MEMBER + "-" + process.pid + ".jsonl")
   : args[sessionArgumentIndex + 1];
 const sessionId = path.basename(sessionFile, ".jsonl");
-// Like Pi, a resumed session keeps the model and thinking level it ran with.
+// A resumed session reports the facts it recorded at spawn.
 const settingsPath = sessionFile + ".settings.json";
 const runtimeFacts = sessionArgumentIndex === -1
   ? { model: args[args.indexOf("--model") + 1], thinking: args[args.indexOf("--thinking") + 1], contextPercent: null }
@@ -1434,6 +1434,7 @@ describe("visible Herdr teammates", () => {
 			const command = lines(fake.eventsPath).filter((entry) => entry.type === "pi_start").at(-1)?.args as string[];
 			assert.equal(command[command.indexOf("--session") + 1], reviewerSession.sessionFile, `Expected visible resume to use the durable session file. Got: ${JSON.stringify(command)}`);
 			assert.equal(command.includes("--model"), false, `Expected the persisted session to restore its own model. Got: ${JSON.stringify(command)}`);
+			assert.equal(command[command.indexOf("--thinking") + 1], "low", `Expected visible resume to pass the saved thinking level, which a forked session does not record. Got: ${JSON.stringify(command)}`);
 		} finally {
 			await resumingHost?.shutdown();
 			await originHost.shutdown();

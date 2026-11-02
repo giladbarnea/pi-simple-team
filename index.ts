@@ -494,13 +494,21 @@ interface ChildStartOptions {
 	signal?: AbortSignal;
 }
 
+/**
+ * Resume lets Pi restore the session's model. It passes the saved thinking level because Pi records `--thinking` only in a new session, so a fork keeps main's level.
+ * @example launchSettingArguments({ model: "openai-codex/gpt-6-luna", thinking: "xhigh" }, { sessionFile: "/sessions/a.jsonl" }) // ["--thinking", "xhigh"]
+ */
+function launchSettingArguments(teammate: Pick<TeammateState, "model" | "thinking">, options: ChildStartOptions): string[] {
+	const thinkingArguments = ["--thinking", teammate.thinking];
+	return options.sessionFile ? thinkingArguments : ["--model", teammate.model, ...thinkingArguments];
+}
+
 function attachRpcTeammate(team: TeamState, teammate: TeammateState, participants: string[], options: ChildStartOptions): void {
 	const sessionArgs = options.sessionFile
 		? ["--session", options.sessionFile]
 		: teammate.forkContext && !options.restartEmpty
 			? ["--fork", team.mainSessionFile!]
 			: [];
-	const modelArgs = options.sessionFile ? [] : ["--model", teammate.model, "--thinking", teammate.thinking];
 	const args = [
 		"--mode",
 		"rpc",
@@ -511,7 +519,7 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 		...teammate.extensionPaths.flatMap(extensionPath => ["-e", extensionPath]),
 		"--no-prompt-templates",
 		"--no-themes",
-		...modelArgs,
+		...launchSettingArguments(teammate, options),
 	];
 	const proc = childProcess.spawn(team.parentPiExecutable, args, {
 		cwd: team.projectDirectory ?? process.cwd(),
@@ -559,7 +567,6 @@ async function attachHerdrTeammate(
 		: teammate.forkContext && !options.restartEmpty
 			? ["--fork", team.mainSessionFile!]
 			: [];
-	const modelArgs = options.sessionFile ? [] : ["--model", teammate.model, "--thinking", teammate.thinking];
 	const args = ["pane", "split", "--pane", herdrParentPaneId, "--direction", "right", "--no-focus", "--cwd", team.projectDirectory ?? process.cwd()];
 	for (const [name, value] of Object.entries(environment)) {
 		if (value !== undefined) args.push("--env", `${name}=${value}`);
@@ -574,7 +581,7 @@ async function attachHerdrTeammate(
 		"-e",
 		teamLiteExtensionPath,
 		...teammate.extensionPaths.flatMap(extensionPath => ["-e", extensionPath]),
-		...modelArgs,
+		...launchSettingArguments(teammate, options),
 	].map(shellQuote).join(" ");
 	await runCommand("herdr", ["pane", "run", teammate.paneId, command]);
 	appendSpawnLog(team, teammate);

@@ -1,5 +1,5 @@
 ---
-updated: 2026-11-02
+updated: 2026-11-03
 status: current
 audience: AI agents and maintainers
 ---
@@ -107,7 +107,7 @@ Expiration never removes or changes a Pi session JSONL file.
 
 Resume uses RPC by default. The caller must explicitly request Herdr panes.
 
-A persisted member starts with `pi --session <stored-session-file>`. The extension does not pass the original model or thinking level because Pi restores current session state.
+A persisted member starts with `pi --session <stored-session-file> --thinking <saved-level>`. Pi restores the session's model. Pi records a `--thinking` flag only in a new session, so a fork keeps main's recorded level. Resume therefore passes the saved thinking level.
 
 Selective resume creates a valid partially running team. A later resume can start the remaining stopped members.
 

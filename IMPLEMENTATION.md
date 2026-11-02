@@ -1,5 +1,5 @@
 ---
-updated: 2026-10-01
+updated: 2026-11-03
 status: working
 ---
 
@@ -33,7 +33,7 @@ Every child reports its session identity when it registers its delivery server. 
 
 Pi can report a session file before creating it. A user or assistant message materializes the file. Custom-only idle staging does not.
 
-Resume uses an existing session file without overriding its stored model state. A missing materialized file fails, while a never-materialized session restarts empty.
+Resume uses an existing session file and its stored model. It passes the saved thinking level, which a forked session file does not record. A missing materialized file fails, while a never-materialized session restarts empty.
 
 `team_shutdown` stops runtimes, releases the lease, and leaves a dormant manifest. Registry access removes dormant manifests 30 days after shutdown.
 
