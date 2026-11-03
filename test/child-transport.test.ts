@@ -10,6 +10,7 @@ import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 import teamExtension from "../index.ts";
 import { childToolNames, registerChildTools } from "../child-tools.ts";
+import { loadAsBunStandalonePi, loadWithProcess, useFakePiPackage } from "./pi-launch.ts";
 
 type JsonRecord = Record<string, unknown>;
 type ToolResult = { content: Array<{ type: string; text: string }>; details?: JsonRecord };
@@ -17,6 +18,8 @@ type RegisteredTool = { name: string; parameters: TSchema; execute: (id: string,
 type ExtensionEventHandler = (event: JsonRecord, context: unknown) => Promise<void> | void;
 
 const fakeMainSessionFile = "/tmp/pi-simple-team-main-session.jsonl";
+// The runtime path that main loaded with, later deleted, as when a Homebrew upgrade removes the old Node keg.
+const removedRuntime = "/tmp/pi-simple-team-removed-runtime/bin/node";
 const fakeMainContext = {
 	cwd: process.cwd(),
 	scopedModels: [],
@@ -247,7 +250,11 @@ function installFakeCommands(): { directory: string; logPath: string; eventsPath
 		fs.writeFileSync(executable, content, { mode: 0o755 });
 	}
 	const previous = { executable: process.argv[1]!, path: process.env.PATH, agent: process.env.PI_CODING_AGENT_DIR, tab: process.env.HERDR_TAB_ID, pane: process.env.HERDR_PANE_ID, log: process.env.PI_SIMPLE_TEAM_TEST_HERDR_LOG, events: process.env.PI_SIMPLE_TEAM_TEST_HERDR_EVENTS, sessions: process.env.PI_SIMPLE_TEAM_TEST_HERDR_SESSIONS, children: process.env.PI_SIMPLE_TEAM_TEST_HERDR_CHILDREN, count: process.env.PI_SIMPLE_TEAM_TEST_HERDR_START_COUNT, fail: process.env.PI_SIMPLE_TEAM_TEST_HERDR_FAIL_START, bad: process.env.PI_SIMPLE_TEAM_TEST_CHILD_BAD_REGISTER, notFound: process.env.PI_SIMPLE_TEAM_TEST_HERDR_PANE_NOT_FOUND };
-	process.argv[1] = parentPiExecutable;
+	// Main runs inside an SDK host script. The parent Pi is the fake Pi package's CLI.
+	const sdkHost = path.join(directory, "sdk-host.mjs");
+	fs.writeFileSync(sdkHost, "// An SDK host embeds Pi. It is not Pi.\n");
+	process.argv[1] = sdkHost;
+	const restorePiPackage = useFakePiPackage(directory, "parent-pi");
 	process.env.PATH = `${directory}${path.delimiter}${previous.path ?? ""}`;
 	process.env.PI_CODING_AGENT_DIR = agentDirectory;
 	process.env.HERDR_TAB_ID = "fake-tab";
@@ -267,6 +274,7 @@ function installFakeCommands(): { directory: string; logPath: string; eventsPath
 		parentPiExecutable,
 		restore: () => {
 			process.argv[1] = previous.executable;
+			restorePiPackage();
 			process.env.PATH = previous.path;
 			process.env.PI_CODING_AGENT_DIR = previous.agent;
 			process.env.HERDR_TAB_ID = previous.tab;
@@ -894,9 +902,9 @@ describe("unified child runtime", () => {
 		}
 	});
 
-	test("RPC teammates use the parent Pi executable instead of PATH", async () => {
+	test("RPC teammates start the parent Pi package's CLI, not the host script, PATH, or the parent's removed runtime", async () => {
 		const fake = installFakeCommands();
-		const host = new ExtensionHost();
+		const host = loadWithProcess(removedRuntime, process.argv[1]!, () => new ExtensionHost());
 		try {
 			await host.execute("team_spawn", {
 				teamName: "rpc-parent-pi-team",
@@ -904,8 +912,25 @@ describe("unified child runtime", () => {
 				teammates: [{ name: "scout", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" }],
 			});
 			const piStart = lines(fake.eventsPath).find((entry) => entry.type === "pi_start");
-			assert.equal(piStart?.executable, fake.parentPiExecutable, "Expected the RPC teammate to use the parent Pi executable.");
+			assert.equal(piStart?.executable, fake.parentPiExecutable, "Expected the RPC teammate to start the parent Pi package's CLI.");
 			assert.equal(lines(fake.eventsPath).some((entry) => entry.type === "path_pi_start"), false, "Expected the RPC teammate to ignore the Pi executable from PATH.");
+		} finally {
+			await host.shutdown();
+			fake.restore();
+		}
+	});
+
+	test("a Bun standalone Pi starts RPC teammates with its own executable, not its embedded entry", async () => {
+		const fake = installFakeCommands();
+		const host = loadAsBunStandalonePi(fake.parentPiExecutable, () => new ExtensionHost());
+		try {
+			await host.execute("team_spawn", {
+				teamName: "standalone-parent-pi-team",
+				startIdle: true, commonPrompt: "test",
+				teammates: [{ name: "scout", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" }],
+			});
+			const piStart = lines(fake.eventsPath).find((entry) => entry.type === "pi_start");
+			assert.equal(piStart?.executable, fake.parentPiExecutable, "Expected the RPC teammate to use the standalone Pi executable.");
 		} finally {
 			await host.shutdown();
 			fake.restore();
@@ -1287,9 +1312,9 @@ describe("visible Herdr teammates", () => {
 		}
 	});
 
-	test("Herdr teammates use the parent Pi executable instead of PATH", async () => {
+	test("Herdr teammates start the parent Pi package's CLI, not the host script, PATH, or the parent's removed runtime", async () => {
 		const fake = installFakeCommands();
-		const host = new ExtensionHost();
+		const host = loadWithProcess(removedRuntime, process.argv[1]!, () => new ExtensionHost());
 		try {
 			await host.execute("team_spawn", {
 				teamName: "visible-parent-pi-team",
@@ -1298,7 +1323,7 @@ describe("visible Herdr teammates", () => {
 				teammates: [{ name: "scout", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" }],
 			});
 			const start = lines(fake.eventsPath).find((entry) => entry.type === "pi_start");
-			assert.equal(start?.executable, fake.parentPiExecutable, "Expected Herdr to launch the parent Pi executable.");
+			assert.equal(start?.executable, fake.parentPiExecutable, "Expected Herdr to start the parent Pi package's CLI.");
 			assert.equal(lines(fake.eventsPath).some((entry) => entry.type === "path_pi_start"), false, "Expected the Herdr teammate to ignore the Pi executable from PATH.");
 		} finally {
 			await host.shutdown();

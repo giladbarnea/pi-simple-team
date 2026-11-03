@@ -43,7 +43,9 @@ The process-local `team_log` is not durable. The extension persists no separate 
 
 `team_add_teammates` creates new sessions for a running team owned by the current main session. Individual teammates can request Herdr panes. It does not attach existing Pi sessions.
 
-Herdr creates a pane through `pane split`, labels it, then starts the exact parent Pi executable through `pane run`. Command arguments are shell-quoted independently. This matches Herdr's current separation between pane creation and agent startup.
+Herdr creates a pane through `pane split`, labels it, then starts the parent Pi command through `pane run`. Command arguments are shell-quoted independently. This matches Herdr's current separation between pane creation and agent startup.
+
+RPC and Herdr children start the same Pi as main. A Bun standalone Pi runs its own executable. Otherwise children start the CLI script of the Pi package that loaded the extension, whose `env node` shebang finds the runtime at each start. `process.argv[1]` is not Pi in a Bun standalone executable or an SDK host, so only its Bun embedded-entry marker is read.
 
 Child Pi processes use `--no-extensions` and explicitly load `pi-simple-team` plus saved `extensionPaths`. RPC and Herdr use the same paths. This keeps requested runtime dependencies without loading unrelated discovered extensions.
 

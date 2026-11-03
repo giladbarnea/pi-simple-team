@@ -7,6 +7,7 @@ import { describe, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readChildRuntimeConfig } from "../child-tools.ts";
 import teamExtension from "../index.ts";
+import { loadAsBunStandalonePi } from "./pi-launch.ts";
 import type { TeamLogEntry } from "../teamlog.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -79,10 +80,8 @@ function startHarness() {
 	fs.writeFileSync(path.join(agentDirectory, "settings.json"), JSON.stringify({ compaction: { enabled: false }, retry: { enabled: false } }));
 	const launcher = path.join(directory, "pi-launcher");
 	fs.writeFileSync(launcher, `#!/bin/sh\nexec ${quote(executable)} --no-skills --no-context-files --no-prompt-templates --no-themes "$@"\n`, { mode: 0o755 });
-	const previousExecutable = process.argv[1];
 	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
 	const previousOffline = process.env.PI_OFFLINE;
-	process.argv[1] = launcher;
 	process.env.PI_CODING_AGENT_DIR = agentDirectory;
 	process.env.PI_OFFLINE = "1";
 	const tools = new Map<string, RegisteredTool>();
@@ -107,7 +106,7 @@ function startHarness() {
 		assert.ok(tool, `Missing tool ${name}`);
 		return tool.execute("nested-probe", parameters, new AbortController().signal, undefined, context);
 	};
-	teamExtension(api);
+	loadAsBunStandalonePi(launcher, () => teamExtension(api));
 	return {
 		execute, requests, mainMessages,
 		/** A shell command that starts a nested Pi process with pi-simple-team loaded, as a teammate's script would. */
@@ -123,7 +122,6 @@ function startHarness() {
 		close: async (): Promise<void> => {
 			for (const shutdown of shutdownHandlers) await shutdown();
 			provider.stop(true);
-			process.argv[1] = previousExecutable;
 			if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
 			if (previousOffline === undefined) delete process.env.PI_OFFLINE;

@@ -11,6 +11,7 @@ import { Value } from "typebox/value";
 
 import { registerChildTools } from "../child-tools.ts";
 import teamExtension from "../index.ts";
+import { useFakePiPackage } from "./pi-launch.ts";
 import type { TeamLogEntry } from "../teamlog.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -542,14 +543,13 @@ function installFakePi(): { restore: () => void } {
 	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-test-"));
 	const executable = path.join(directory, "pi");
 	fs.writeFileSync(executable, fakePiScript, { mode: 0o755 });
-	const previousExecutable = process.argv[1]!;
+	const restorePiPackage = useFakePiPackage(directory, "pi");
 	const previousPath = process.env.PATH;
-	process.argv[1] = executable;
 	process.env.PATH = `${directory}${path.delimiter}${previousPath ?? ""}`;
 
 	return {
 		restore: () => {
-			process.argv[1] = previousExecutable;
+			restorePiPackage();
 			process.env.PATH = previousPath;
 			fs.rmSync(directory, { recursive: true, force: true });
 		},

@@ -6,6 +6,7 @@ import { describe, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { childToolNames } from "../child-tools.ts";
 import teamExtension from "../index.ts";
+import { loadAsBunStandalonePi } from "./pi-launch.ts";
 import { teamLogLines } from "../render.ts";
 import type { TeamLogEntry } from "../teamlog.ts";
 
@@ -58,10 +59,8 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 	const launcher = path.join(directory, "pi-launcher");
 	const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 	fs.writeFileSync(launcher, `#!/bin/sh\nexec ${quote(executable)} --no-skills --no-context-files --no-prompt-templates --no-themes "$@"\n`, { mode: 0o755 });
-	const previousExecutable = process.argv[1];
 	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
 	const previousOffline = process.env.PI_OFFLINE;
-	process.argv[1] = launcher;
 	process.env.PI_CODING_AGENT_DIR = agentDirectory;
 	process.env.PI_OFFLINE = "1";
 	const tools = new Map<string, RegisteredTool>();
@@ -87,7 +86,6 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 		releaseRetry();
 		for (const shutdown of shutdownHandlers) await shutdown();
 		provider.stop(true);
-		process.argv[1] = previousExecutable;
 		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
 		if (previousOffline === undefined) delete process.env.PI_OFFLINE;
@@ -95,7 +93,7 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 		fs.rmSync(directory, { recursive: true, force: true });
 	};
 	try {
-		teamExtension(api);
+		loadAsBunStandalonePi(launcher, () => teamExtension(api));
 		const spawned = await execute("team_spawn", { teamName: "settlement", startIdle: !options.automaticStart, commonPrompt: options.commonPrompt ?? "Respond once.", teammates: [{ name: "probe", model: "local-settlement/probe", thinking: "low", systemPrompt: options.teammatePrompt ?? "Wait for a message.", forkContext: options.parentSessionFile !== undefined, extensionPaths: scenario === "cancel" ? [cancellationExtension] : [], ...options.teammate }] });
 		if (!startIdle && !options.automaticStart) await execute("team_send_message", { targets: ["probe"], message: "Do the small task." });
 		return {

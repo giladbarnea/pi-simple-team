@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { setSystemTime, test } from "bun:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { claimTeamLease, releaseTeamLease, type TeamLease } from "../team-registry.ts";
+import { useFakePiPackage } from "./pi-launch.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -284,14 +285,13 @@ function installFakePi(root: string): () => void {
 	fs.mkdirSync(path.join(root, "sessions"));
 	const executable = path.join(executableDirectory, "pi");
 	fs.writeFileSync(executable, fakePiScript, { mode: 0o755 });
-	const previousExecutable = process.argv[1]!;
+	const restorePiPackage = useFakePiPackage(executableDirectory, "pi");
 	const previousPath = process.env.PATH;
 	const previousTestRoot = process.env.PI_SIMPLE_TEAM_TEST_ROOT;
-	process.argv[1] = executable;
 	process.env.PATH = `${executableDirectory}${path.delimiter}${previousPath ?? ""}`;
 	process.env.PI_SIMPLE_TEAM_TEST_ROOT = root;
 	return () => {
-		process.argv[1] = previousExecutable;
+		restorePiPackage();
 		process.env.PATH = previousPath;
 		if (previousTestRoot === undefined) delete process.env.PI_SIMPLE_TEAM_TEST_ROOT;
 		else process.env.PI_SIMPLE_TEAM_TEST_ROOT = previousTestRoot;

@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import teamExtension from "../index.ts";
+import { loadAsBunStandalonePi } from "./pi-launch.ts";
 
 type JsonRecord = Record<string, unknown>;
 type ToolResult = { content: Array<{ type: string; text: string }>; details: JsonRecord };
@@ -50,10 +51,8 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("RPC stderr and
 		const processIdFile = path.join(directory, "child.pid");
 		const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 		fs.writeFileSync(launcher, `#!/bin/sh\nprintf '%s' "$$" > ${quote(processIdFile)}\nprintf '%s\\n' ${quote(diagnostic + " ".repeat(2) + "x".repeat(2000))} >&2\nexec ${quote(executable)} "$@"\n`, { mode: 0o755 });
-		const previousExecutable = process.argv[1];
 		const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
 		const previousOffline = process.env.PI_OFFLINE;
-		process.argv[1] = launcher;
 		process.env.PI_CODING_AGENT_DIR = agentDirectory;
 		process.env.PI_OFFLINE = "1";
 		const tools = new Map<string, RegisteredTool>();
@@ -77,7 +76,7 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("RPC stderr and
 		};
 		const log = async (): Promise<LogEntry[]> => (await execute("team_log", { targets: ["stderr-check"], limit: 100 })).details.entries as LogEntry[];
 		try {
-			teamExtension(api);
+			loadAsBunStandalonePi(launcher, () => teamExtension(api));
 			const spawned = await execute("team_spawn", { teamName: "stderr-check", startIdle: true, commonPrompt: "Follow instructions.", teammates: [{ name: "probe", model: "local-probe/probe", thinking: "low", systemPrompt: "Wait for a message." }] });
 			const listing = await execute("team_list", {});
 			const team = (listing.details.teams as Array<{ teamId: string; teammates: Array<{ name: string; teammateId: string; sessionFile: string }> }>).find((candidate) => candidate.teamId === spawned.details.teamId);
@@ -147,7 +146,6 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("RPC stderr and
 		} finally {
 			for (const shutdown of shutdownHandlers) await shutdown();
 			provider.stop(true);
-			process.argv[1] = previousExecutable;
 			if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
 			if (previousOffline === undefined) delete process.env.PI_OFFLINE;

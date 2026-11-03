@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import http from "node:http";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineTool, type ContextUsage, type ExtensionAPI, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { defineTool, type ContextUsage, type ExtensionAPI, getMarkdownTheme, getPackageDir } from "@earendil-works/pi-coding-agent";
 import { formatContextWindowReport, requireKnownContextUsage, type KnownContextUsage } from "./context-window.ts";
 import { formatScopedModelGuidance, validateTeammateModels, type ModelReference } from "./model-preflight.ts";
 import { composeTeamBriefing } from "./team-briefing.ts";
@@ -71,7 +71,7 @@ interface TeammateState {
 interface TeamState {
 	owner: symbol;
 	ownerPi: ExtensionAPI;
-	parentPiExecutable: string;
+	parentPiCommand: string[];
 	id?: string;
 	name: string;
 	projectDirectory?: string;
@@ -521,7 +521,8 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 		"--no-themes",
 		...launchSettingArguments(teammate, options),
 	];
-	const proc = childProcess.spawn(team.parentPiExecutable, args, {
+	const [executable, ...piArguments] = team.parentPiCommand;
+	const proc = childProcess.spawn(executable, [...piArguments, ...args], {
 		cwd: team.projectDirectory ?? process.cwd(),
 		stdio: ["pipe", "ignore", "pipe"],
 		env: { ...process.env, ...childEnvironmentOverrides(team, teammate, participants) },
@@ -575,7 +576,7 @@ async function attachHerdrTeammate(
 	teammate.paneId = parseHerdrPaneId(result.stdout, teammate.name);
 	await runCommand("herdr", ["pane", "rename", teammate.paneId, teammate.name]);
 	const command = [
-		team.parentPiExecutable,
+		...team.parentPiCommand,
 		...sessionArgs,
 		"--no-extensions",
 		"-e",
@@ -925,11 +926,11 @@ function teammateSchema(modelGuidance: string) {
 	}, { additionalProperties: false });
 }
 
-function restoreTeamState(owner: symbol, ownerPi: ExtensionAPI, parentPiExecutable: string, manifest: TeamManifest, lease: TeamLease): TeamState {
+function restoreTeamState(owner: symbol, ownerPi: ExtensionAPI, parentPiCommand: string[], manifest: TeamManifest, lease: TeamLease): TeamState {
 	const team: TeamState = {
 		owner,
 		ownerPi,
-		parentPiExecutable,
+		parentPiCommand,
 		id: manifest.id,
 		name: manifest.name,
 		projectDirectory: manifest.projectDirectory,
@@ -974,6 +975,18 @@ function sessionFileForResume(teammate: TeammateState): string | undefined {
 	return undefined;
 }
 
+/**
+ * The command that starts another instance of the Pi running this extension, for RPC and Herdr teammates.
+ * A Bun standalone Pi is its own executable and reports an embedded entry. Otherwise, including in an SDK host, it is the Pi package's CLI script.
+ * The script's `env node` shebang finds the runtime at each start, so a removed runtime path, such as an upgraded Homebrew keg, cannot break later starts.
+ * @example piCommand("/$bunfs/root/pi", "/opt/pi/pi", "/opt/pi") // ["/opt/pi/pi"]
+ */
+function piCommand(entry: string, runtime: string, packageDirectory: string): string[] {
+	if (/\$bunfs|~BUN/.test(entry)) return [runtime];
+	const manifest = JSON.parse(fs.readFileSync(path.join(packageDirectory, "package.json"), "utf8")) as { bin: { pi: string } };
+	return [path.join(packageDirectory, manifest.bin.pi)];
+}
+
 export default function (pi: ExtensionAPI) {
 	const childRuntimeConfig = readChildRuntimeConfig();
 	if (childRuntimeConfig) {
@@ -981,8 +994,7 @@ export default function (pi: ExtensionAPI) {
 		if (!childRuntimeConfig.canManageOwnTeams) return;
 	}
 
-	const parentPiExecutable = process.argv[1];
-	if (!parentPiExecutable) throw new Error("pi-simple-team could not locate the parent Pi executable");
+	const parentPiCommand = piCommand(process.argv[1], process.execPath, getPackageDir());
 	const owner = Symbol("pi-simple-team-owner");
 	const reminderTimers = new Set<ReturnType<typeof setTimeout>>();
 	const sessionTeammateRoster = childRuntimeConfig?.participants ?? [];
@@ -1064,7 +1076,7 @@ export default function (pi: ExtensionAPI) {
 					const team: TeamState = {
 						owner,
 						ownerPi: pi,
-						parentPiExecutable,
+						parentPiCommand,
 						id: teamId,
 						name: teamName,
 						projectDirectory,
@@ -1238,7 +1250,7 @@ export default function (pi: ExtensionAPI) {
 					const lease = claimTeamLease(manifest.id, mainSessionId);
 					try {
 						await ensureCallbackServer();
-						team = restoreTeamState(owner, pi, parentPiExecutable, manifest, lease);
+						team = restoreTeamState(owner, pi, parentPiCommand, manifest, lease);
 						teams.set(team.id!, team);
 					} catch (error) {
 						releaseTeamLease(lease);
