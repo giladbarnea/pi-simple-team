@@ -31,6 +31,7 @@ type TeamExtension = (api: ExtensionAPI) => void;
 
 class ExtensionHost {
 	readonly tools = new Map<string, RegisteredTool>();
+	readonly mainMessages: string[] = [];
 	private readonly sessionStartHandlers: ExtensionEventHandler[] = [];
 	private readonly sessionShutdownHandlers: ExtensionEventHandler[] = [];
 
@@ -48,7 +49,7 @@ class ExtensionHost {
 			registerTool: (tool: RegisteredTool) => this.tools.set(tool.name, tool),
 			getActiveTools: () => [...this.tools.keys()],
 			setActiveTools: () => undefined,
-			sendMessage: () => undefined,
+			sendMessage: (message: { content: string }) => this.mainMessages.push(message.content),
 		} as unknown as ExtensionAPI;
 
 		teamExtension(api);
@@ -225,6 +226,14 @@ if (member === "recursive-slow-stop") {
 		})();
 	});
 }
+// Holds a gated teammate before registration until the test opens its gate.
+while (member.startsWith("gated-") && !fs.existsSync(path.join(root, member + ".open"))) {
+	await new Promise((resolve) => setTimeout(resolve, 10));
+}
+if (member === "gated-fail") {
+	process.stderr.write("planned gated readiness failure");
+	process.exit(1);
+}
 for (const handler of sessionStartHandlers) {
 	await handler({ type: "session_start", reason: "startup" }, extensionContext);
 }
@@ -328,6 +337,14 @@ async function waitForFakePiTurns(root: string, expectedCount: number): Promise<
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
 	throw new Error(`Expected ${expectedCount} fake Pi turns. Got: ${JSON.stringify(readFakePiTurns(root))}`);
+}
+
+async function waitForFakePiInvocation(root: string, member: string): Promise<void> {
+	const deadline = Date.now() + 3_000;
+	while (!readFakePiInvocations(root).some((invocation) => invocation.member === member)) {
+		if (Date.now() > deadline) throw new Error(`Expected ${member}'s process to start.`);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
 }
 
 function listedTeam(result: ToolResult, teamId: string): JsonRecord | undefined {
@@ -1016,6 +1033,183 @@ test("team_add_teammates accepts a team name and grows the owned running team", 
 			"Expected team_add_teammates to reject a dormant team even when its manifest remains discoverable.",
 		);
 	} finally {
+		await host?.shutdown();
+		restoreFakePi();
+		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+	}
+});
+
+test("a teammate that is still starting does not turn accepted messages to an existing teammate into failures", async () => {
+	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-add-sibling-test-"));
+	const agentDirectory = path.join(temporaryDirectory, "agent");
+	const projectDirectory = path.join(temporaryDirectory, "project");
+	fs.mkdirSync(agentDirectory);
+	fs.mkdirSync(projectDirectory);
+	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreFakePi = installFakePi(temporaryDirectory);
+	let host: ExtensionHost | undefined;
+	let addition: Promise<ToolResult> | undefined;
+
+	try {
+		const { default: teamExtension } = await import("../index.ts");
+		const teamName = "add-sibling-team";
+		const teamId = `origin-main-session-id-${teamName}`;
+		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
+		await host.start();
+		await host.execute("team_spawn", {
+			teamName,
+			startIdle: true, commonPrompt: "Keep working while the team grows.",
+			teammates: [{ name: "original", systemPrompt: "Work.", model: "fake/fake-model", thinking: "low" }],
+		});
+
+		addition = host.execute("team_add_teammates", { team: teamName, startIdle: true, teammates: [{ name: "gated-start", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }] });
+		await waitForFakePiInvocation(temporaryDirectory, "gated-start");
+
+		await host.execute("team_send_message", { targets: ["original"], message: "First instruction." });
+		await host.execute("team_send_message", { targets: ["original"], message: "Second instruction." });
+		const settledEntries = async (): Promise<JsonRecord[]> => {
+			const settleDeadline = Date.now() + 3_000;
+			while (Date.now() < settleDeadline) {
+				const entries = (await host!.execute("team_log", { targets: ["original"], limit: 100 })).details?.entries as JsonRecord[];
+				if (entries.filter((entry) => entry.kind === "ack").length >= 2 || entries.some((entry) => entry.kind === "error")) return entries;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			throw new Error("Expected both deliveries to original to settle.");
+		};
+		const entries = await settledEntries();
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		assert.deepEqual(
+			readFakePiTurns(temporaryDirectory).filter((turn) => turn.member === "original").map((turn) => turn.message.split("\n")[1]),
+			["First instruction.", "Second instruction."],
+			"Expected the existing teammate to accept and act on both instructions.",
+		);
+		assert.deepEqual(
+			entries.filter((entry) => entry.kind === "error").map((entry) => entry.summary),
+			[],
+			"Expected no delivery or lifecycle error for the existing teammate while its sibling starts.",
+		);
+		assert.deepEqual(
+			host.mainMessages.filter((message) => message.startsWith("Message delivery failed")),
+			[],
+			"Expected main to receive no delivery-failure notification for accepted messages.",
+		);
+		const statuses = (await host.execute("team_status", {})).details?.teams as Array<{ status: Record<string, { word: string }> }>;
+		assert.notEqual(statuses[0]?.status.original?.word, "error", `Expected the existing teammate's status to stay healthy. Got: ${JSON.stringify(statuses)}`);
+
+		fs.writeFileSync(path.join(temporaryDirectory, "gated-start.open"), "1");
+		await addition;
+		const listed = await host.execute("team_list", {});
+		assert.equal(typeof listedMember(listed, teamId, "gated-start")?.teammateId, "string", `Expected the added teammate to persist once registered. Got: ${JSON.stringify(listed.details)}`);
+	} finally {
+		fs.writeFileSync(path.join(temporaryDirectory, "gated-start.open"), "1");
+		await addition?.catch(() => undefined);
+		await host?.shutdown();
+		restoreFakePi();
+		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+	}
+});
+
+test("a failed addition leaves no rolled-back teammate in the manifest after a sibling was persisted", async () => {
+	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-add-rollback-persist-test-"));
+	const agentDirectory = path.join(temporaryDirectory, "agent");
+	const projectDirectory = path.join(temporaryDirectory, "project");
+	fs.mkdirSync(agentDirectory);
+	fs.mkdirSync(projectDirectory);
+	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreFakePi = installFakePi(temporaryDirectory);
+	let host: ExtensionHost | undefined;
+
+	try {
+		const { default: teamExtension } = await import("../index.ts");
+		const teamName = "add-rollback-persist-team";
+		const teamId = `origin-main-session-id-${teamName}`;
+		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
+		await host.start();
+		await host.execute("team_spawn", {
+			teamName,
+			startIdle: true, commonPrompt: "Keep working while an addition fails.",
+			teammates: [{ name: "original", systemPrompt: "Work.", model: "fake/fake-model", thinking: "low" }],
+		});
+
+		const addition = host.execute("team_add_teammates", { team: teamName, startIdle: true, teammates: [
+			{ name: "added-ok", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+			{ name: "gated-fail", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
+		] });
+		const additionOutcome = addition.then(() => "fulfilled", (error: Error) => error.message);
+		await waitForFakePiInvocation(temporaryDirectory, "gated-fail");
+		// A delivery persists the manifest while added-ok is registered and gated-fail is still starting.
+		await host.execute("team_send_message", { targets: ["original"], message: "Persist while the addition starts." });
+		await waitForFakePiTurns(temporaryDirectory, 1);
+		fs.writeFileSync(path.join(temporaryDirectory, "gated-fail.open"), "1");
+		assert.match(await additionOutcome, /gated-fail exited/, "Expected the failed readiness handshake to reject the addition.");
+
+		const listed = await host.execute("team_list", {});
+		assert.deepEqual(
+			(listedTeam(listed, teamId)?.teammates as JsonRecord[] | undefined)?.map((member) => member.name),
+			["original"],
+			`Expected the manifest to drop every rolled-back addition. Got: ${JSON.stringify(listed.details)}`,
+		);
+		const resumed = await host.execute("team_resume", { team: teamName, startIdle: true });
+		assert.deepEqual(
+			(resumed.details?.teammates as JsonRecord[] | undefined)?.map((member) => member.name),
+			["original"],
+			`Expected team_resume to report only the original teammate. Got: ${JSON.stringify(resumed.details)}`,
+		);
+	} finally {
+		fs.writeFileSync(path.join(temporaryDirectory, "gated-fail.open"), "1");
+		await host?.shutdown();
+		restoreFakePi();
+		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+	}
+});
+
+test("team_shutdown during a pending addition stops the team and leaves it dormant", async () => {
+	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-shutdown-pending-add-test-"));
+	const agentDirectory = path.join(temporaryDirectory, "agent");
+	const projectDirectory = path.join(temporaryDirectory, "project");
+	fs.mkdirSync(agentDirectory);
+	fs.mkdirSync(projectDirectory);
+	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreFakePi = installFakePi(temporaryDirectory);
+	let host: ExtensionHost | undefined;
+
+	try {
+		const { default: teamExtension } = await import("../index.ts");
+		const teamName = "shutdown-pending-add-team";
+		const teamId = `origin-main-session-id-${teamName}`;
+		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
+		await host.start();
+		await host.execute("team_spawn", {
+			teamName,
+			startIdle: true, commonPrompt: "Stop while the team grows.",
+			teammates: [{ name: "original", systemPrompt: "Work.", model: "fake/fake-model", thinking: "low" }],
+		});
+
+		const addition = host.execute("team_add_teammates", { team: teamName, startIdle: true, teammates: [{ name: "gated-start", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }] });
+		const additionOutcome = addition.then(() => "fulfilled", (error: Error) => error.message);
+		await waitForFakePiInvocation(temporaryDirectory, "gated-start");
+
+		const stopped = await host.execute("team_shutdown", { team: teamName });
+		assert.equal(stopped.details?.stopped, true, `Expected team_shutdown to report the stopped team. Got: ${JSON.stringify(stopped.details)}`);
+		assert.notEqual(await additionOutcome, "fulfilled", "Expected the interrupted addition not to report success.");
+		const team = listedTeam(await host.execute("team_list", {}), teamId);
+		assert.deepEqual(
+			{ state: team?.state, leaseState: team?.leaseState, teammates: (team?.teammates as JsonRecord[] | undefined)?.map((member) => member.name) },
+			{ state: "dormant", leaseState: "unclaimed", teammates: ["original"] },
+			`Expected a dormant manifest with only registered teammates. Got: ${JSON.stringify(team)}`,
+		);
+	} finally {
+		fs.writeFileSync(path.join(temporaryDirectory, "gated-start.open"), "1");
 		await host?.shutdown();
 		restoreFakePi();
 		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;

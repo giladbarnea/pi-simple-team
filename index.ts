@@ -635,12 +635,17 @@ function manifestMemberFromTeammate(teammate: TeammateState): TeamManifestMember
 	};
 }
 
+/** A teammate that is still starting has no session identity yet. It joins the manifest after it registers, so it cannot fail bookkeeping for its siblings. */
+function registeredManifestMembers(team: TeamState): TeamManifestMember[] {
+	return [...team.members.values()].filter((teammate) => teammate.sessionId).map(manifestMemberFromTeammate);
+}
+
 function persistActiveTeamManifest(team: TeamState): void {
 	if (!team.manifest || !teams.has(team.id ?? team.name)) return;
 	const updatedAt = new Date().toISOString();
 	team.manifest = {
 		...team.manifest,
-		members: [...team.members.values()].map(manifestMemberFromTeammate),
+		members: registeredManifestMembers(team),
 		state: "active",
 		updatedAt,
 		shutdownAt: undefined,
@@ -702,7 +707,7 @@ async function shutdownTeam(team: TeamState): Promise<string[]> {
 			const shutdownAt = new Date().toISOString();
 			team.manifest = {
 				...team.manifest,
-				members: [...team.members.values()].map(manifestMemberFromTeammate),
+				members: registeredManifestMembers(team),
 				state: "dormant",
 				updatedAt: shutdownAt,
 				shutdownAt,
@@ -1377,6 +1382,7 @@ export default function (pi: ExtensionAPI) {
 						team.members.delete(teammate.name);
 						team.statuses.delete(teammate.name);
 					}
+					persistActiveTeamManifest(team);
 					throw error;
 				}
 
