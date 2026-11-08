@@ -737,6 +737,11 @@ test("team_resume rejects an ambiguous team name and asks for the persistent tea
 			/Ambiguous team name.*persistent team ID/i,
 			"Expected team_resume to reject a name shared by multiple current-project teams.",
 		);
+		await assert.rejects(
+			() => resumingHost.execute("team_add_teammates", { startIdle: true, team: teamName, teammates: [{ name: "late", systemPrompt: "Wait.", model: "fake/fake-model" }] }),
+			/Ambiguous team name.*persistent team ID/i,
+			"Expected team_add_teammates to ask for the persistent ID when a name matches several stopped teams.",
+		);
 	} finally {
 		for (const host of hosts.reverse()) await host.shutdown();
 		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -797,6 +802,17 @@ test("an overseeing teammate can discover and resume only teams it created", asy
 			() => overseer.execute("team_resume", { startIdle: true, team: "top-main-session-parent-team" }),
 			/Unknown current-project team/,
 			"Expected the overseeing teammate to reject its dormant parent team as outside its management scope.",
+		);
+		await assert.rejects(
+			() => overseer.execute("team_add_teammates", { startIdle: true, team: "top-main-session-parent-team", teammates: [{ name: "intruder", systemPrompt: "Wait.", model: "fake/fake-model" }] }),
+			/^Error: Unknown team: "top-main-session-parent-team"/,
+			"Expected the overseeing teammate to see a dormant team outside its management scope as unknown, not as resumable.",
+		);
+		await overseer.execute("team_shutdown", { team: "owned-team" });
+		await assert.rejects(
+			() => overseer.execute("team_add_teammates", { startIdle: true, team: "owned-team", teammates: [{ name: "late", systemPrompt: "Wait.", model: "fake/fake-model" }] }),
+			/^Error: Team "owned-team" \(team ID: lead-session-owned-team\) is stopped\. Resume it with team_resume/,
+			"Expected the overseeing teammate to see its own dormant team as stopped.",
 		);
 	} finally {
 		for (const host of hosts.reverse()) await host.shutdown();
@@ -1023,14 +1039,28 @@ test("team_add_teammates accepts a team name and grows the owned running team", 
 		}
 
 		await host.execute("team_shutdown", { team: teamName });
+		const invocationCountAfterShutdown = readFakePiInvocations(temporaryDirectory).length;
+		for (const team of [teamName, teamId]) {
+			await assert.rejects(
+				() =>
+					host!.execute("team_add_teammates", { startIdle: true,
+						team,
+						teammates: [{ name: "too-late", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+					}),
+				(error: Error) => error.message === `Team "${teamName}" (team ID: ${teamId}) is stopped. Resume it with team_resume before adding teammates.`,
+				`Expected team_add_teammates to report the known dormant team ${JSON.stringify(team)} as stopped and requiring team_resume.`,
+			);
+		}
+		assert.equal(readFakePiInvocations(temporaryDirectory).length, invocationCountAfterShutdown, "Expected a stopped-team rejection to start no Pi sessions.");
+		assert.equal(listedTeam(await host.execute("team_list", {}), teamId)?.state, "dormant", "Expected a stopped-team rejection not to resume the team.");
 		await assert.rejects(
 			() =>
 				host!.execute("team_add_teammates", { startIdle: true,
-					team: teamId,
+					team: "never-created",
 					teammates: [{ name: "too-late", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 				}),
-			/active team/i,
-			"Expected team_add_teammates to reject a dormant team even when its manifest remains discoverable.",
+			/^Error: Unknown team: "never-created"\. Available owned team IDs by name: \{\}\./,
+			"Expected team_add_teammates to keep the unknown-team error for a name with no current-project team.",
 		);
 	} finally {
 		await host?.shutdown();

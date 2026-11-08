@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import http from "node:http";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineTool, type ContextUsage, type ExtensionAPI, getMarkdownTheme, getPackageDir } from "@earendil-works/pi-coding-agent";
+import { defineTool, type ContextUsage, type ExtensionAPI, type ExtensionContext, getMarkdownTheme, getPackageDir } from "@earendil-works/pi-coding-agent";
 import { formatContextWindowReport, requireKnownContextUsage, type KnownContextUsage } from "./context-window.ts";
 import { formatScopedModelGuidance, validateTeammateModels, type ModelReference } from "./model-preflight.ts";
 import { composeTeamBriefing } from "./team-briefing.ts";
@@ -1003,6 +1003,18 @@ export default function (pi: ExtensionAPI) {
 	const owner = Symbol("pi-simple-team-owner");
 	const reminderTimers = new Set<ReturnType<typeof setTimeout>>();
 	const sessionTeammateRoster = childRuntimeConfig?.participants ?? [];
+
+	/** Current-project manifests that team_resume can select: all for main, only its own for a managing teammate. */
+	function resumableTeamManifests(context: ExtensionContext, toolName: string): TeamManifest[] {
+		const projectDirectory = context.sessionManager?.getCwd?.() ?? context.cwd;
+		if (!projectDirectory) throw new Error(`${toolName} requires a project directory`);
+		const managerSessionId = childRuntimeConfig ? context.sessionManager?.getSessionId?.() : undefined;
+		if (childRuntimeConfig && !managerSessionId) throw new Error(`${toolName} requires a persistent managing teammate Pi session`);
+		return listTeamManifests(projectDirectory).manifests.filter(
+			(candidate) => !managerSessionId || candidate.originMainSessionId === managerSessionId,
+		);
+	}
+
 	pi.registerMessageRenderer(teamMessageType, (message, options, theme) => renderTeamMessage(message, options, theme, getMarkdownTheme(), sessionTeammateRoster));
 
 	pi.registerCommand("team", {
@@ -1229,14 +1241,7 @@ export default function (pi: ExtensionAPI) {
 			}, { additionalProperties: false }),
 			async execute(_toolCallId, params, signal, _onUpdate, context) {
 				signal?.throwIfAborted();
-				const rawProjectDirectory = context.sessionManager?.getCwd?.() ?? context.cwd;
-				if (!rawProjectDirectory) throw new Error("team_resume requires a project directory");
-				const managerSessionId = childRuntimeConfig ? context.sessionManager?.getSessionId?.() : undefined;
-				if (childRuntimeConfig && !managerSessionId) throw new Error("team_resume requires a persistent managing teammate Pi session");
-				const availableManifests = listTeamManifests(rawProjectDirectory).manifests.filter(
-					(candidate) => !managerSessionId || candidate.originMainSessionId === managerSessionId,
-				);
-				const manifest = resolveTeamIdentifier(availableManifests, params.team);
+				const manifest = resolveTeamIdentifier(resumableTeamManifests(context, "team_resume"), params.team);
 				if (!manifest) throw new Error(`Unknown current-project team: ${JSON.stringify(params.team)}. Call team_list and pass a listed teamId or unique teamName in the team parameter.`);
 				const members = manifest.members;
 				const requestedNames = resolveTeammates(members, params.teammates ?? members.map((member) => member.teammateId)).map((member) => member.name);
@@ -1339,6 +1344,9 @@ export default function (pi: ExtensionAPI) {
 			}, { additionalProperties: false }),
 			async execute(_toolCallId, params, signal, _onUpdate, context) {
 				signal?.throwIfAborted();
+				const ownsSelectedTeam = !params.team || resolveTeamIdentifier([...teams.values()].filter((team) => team.owner === owner), params.team);
+				const stoppedTeam = ownsSelectedTeam ? undefined : resolveTeamIdentifier(resumableTeamManifests(context, "team_add_teammates").filter((manifest) => manifest.state === "dormant"), params.team!);
+				if (stoppedTeam) throw new Error(`Team "${stoppedTeam.name}" (team ID: ${stoppedTeam.id}) is stopped. Resume it with team_resume before adding teammates.`);
 				const team = resolveTeam(owner, params.team);
 				if (!team || !team.manifest || !team.lease || team.manifest.state !== "active") {
 					throw new Error(`team_add_teammates requires a running team owned by this main session: ${params.team}`);
