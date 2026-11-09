@@ -140,6 +140,17 @@ const server = http.createServer(async (request, response) => {
     response.end(JSON.stringify({ accepted: true }));
     return;
   }
+  const settlements = {
+    "fail-this-run": { aborted: false, outcome: "error", errorMessage: "400: quota fixture" },
+    "cancel-this-run": { aborted: true, outcome: "error", errorMessage: "This operation was aborted" },
+    "complete-this-run": { aborted: false, outcome: "completed" },
+  };
+  if (settlements[body.args.message]) {
+    await parent("event", { event: { type: "agent_start" } });
+    await parent("event", { event: { type: "agent_settled", ...settlements[body.args.message] } });
+    response.end(JSON.stringify({ accepted: true }));
+    return;
+  }
   if (body.args.message === "hold-until-released") await fetch(process.env.PI_SIMPLE_TEAM_TEST_DELIVERY_GATE);
   fs.writeFileSync(sessionFile, JSON.stringify({ type: "session", id: sessionId }) + "\n");
   await parent("event", { event: { type: "agent_start" } });
@@ -441,13 +452,21 @@ describe("unified child runtime", () => {
 		}
 	});
 
-	test("forwards the cancellation flag from both final settlement outcomes", async () => {
+	test("forwards the cancellation flag and the last turn's outcome from final settlements", async () => {
 		const child = await startChildRuntimeForTest(0);
+		const context = { model: { provider: "fake", id: "fake-model" }, thinkingLevel: "high", getContextUsage: () => ({ tokens: 1, contextWindow: 272_000, percent: 1 }) };
 		try {
 			await child.handlers.get("agent_settled")?.({ aborted: true });
+			await child.handlers.get("turn_end")?.({ outcome: "error", message: { role: "assistant", stopReason: "error", errorMessage: "400: quota fixture" } }, context);
 			await child.handlers.get("agent_settled")?.({ aborted: false });
-			await waitFor(() => child.requests.filter((request) => request.tool === "event").length === 2);
-			assert.deepEqual(child.requests.filter((request) => request.tool === "event").map((request) => request.args.event), [{ type: "agent_settled", aborted: true }, { type: "agent_settled", aborted: false }], "The shared RPC/Herdr callback must not discard either cancellation value.");
+			await child.handlers.get("agent_start")?.({}, context);
+			await child.handlers.get("agent_settled")?.({ aborted: false });
+			await waitFor(() => child.requests.filter((request) => request.tool === "event").length === 5);
+			assert.deepEqual(child.requests.filter((request) => request.tool === "event" && request.args.event.type === "agent_settled").map((request) => request.args.event), [
+				{ type: "agent_settled", aborted: true, outcome: "completed" },
+				{ type: "agent_settled", aborted: false, outcome: "error", errorMessage: "400: quota fixture" },
+				{ type: "agent_settled", aborted: false, outcome: "completed" },
+			], "The shared RPC/Herdr callback must not discard either cancellation value, and a run's failure must not outlive it.");
 		} finally {
 			await child.close();
 		}
@@ -733,6 +752,35 @@ describe("unified child runtime", () => {
 			await waitFor(() => host.messages.length > 0);
 			const notification = String(host.messages[0]?.content);
 			assert.ok(notification.includes("recipient") && notification.includes("failed-delivery") && notification.includes("reject-this-message") && notification.includes("planned delivery failure"), `The sender needs the team, recipient, original message, and cause. Got: ${notification}`);
+		} finally {
+			await host.shutdown();
+			fake.restore();
+		}
+	});
+
+	test("a failed run sets the teammate's error status with the provider's message until a later run completes", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		const probeStatus = async (): Promise<JsonRecord> => ((await host.execute("team_status", { team: "failed-run" })).details?.status as Record<string, JsonRecord>).probe;
+		const logRows = async (): Promise<JsonRecord[]> => (await host.execute("team_log", { targets: ["failed-run"], limit: 100 })).details?.entries as JsonRecord[];
+		const settlements = (): number => lines(fake.eventsPath).filter((entry) => entry.type === "parent" && entry.tool === "event" && ((entry.args as JsonRecord).event as JsonRecord).type === "agent_settled").length;
+		try {
+			await host.execute("team_spawn", { teamName: "failed-run", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "probe", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+			await host.execute("team_send_message", { targets: ["probe"], message: "fail-this-run" });
+			await waitFor(() => settlements() === 1);
+			const failed = await probeStatus();
+			assert.deepEqual({ word: failed.word, phrase: failed.phrase }, { word: "error", phrase: "400: quota fixture" }, "A failed run must show as an error status carrying the provider's message.");
+			const errorRows = (await logRows()).filter((entry) => entry.kind === "error");
+			assert.deepEqual(errorRows.map((entry) => entry.summary), ["probe run failed: 400: quota fixture"], "The log must record the failed run once with the provider's message.");
+			await host.execute("team_send_message", { targets: ["probe"], message: "cancel-this-run" });
+			await waitFor(() => settlements() === 2);
+			assert.deepEqual(await probeStatus(), failed, "A cancelled run must neither clear the failure nor replace its message.");
+			assert.equal((await logRows()).filter((entry) => entry.kind === "error").length, 1, "A cancelled run must not add an error row.");
+			await host.execute("team_send_message", { targets: ["probe"], message: "complete-this-run" });
+			await waitFor(() => settlements() === 3);
+			const recovered = await probeStatus();
+			assert.deepEqual({ word: recovered.word, phrase: recovered.phrase }, { word: "idle", phrase: "Spawned" }, "A completed run must restore the status the failure replaced.");
+			assert.equal((await logRows()).filter((entry) => entry.kind === "error").length, 1, "A completed run must not add error rows.");
 		} finally {
 			await host.shutdown();
 			fake.restore();
@@ -1163,7 +1211,7 @@ describe("visible Herdr teammates", () => {
 			for (const [eventName, context] of changes) {
 				const handler = child.handlers.get(eventName);
 				assert.ok(handler, `Expected the child to report its runtime facts on ${eventName}.`);
-				await handler({}, context);
+				await handler(eventName === "turn_end" ? { outcome: "completed", message: { role: "assistant", stopReason: "stop" } } : {}, context);
 			}
 			await waitFor(() => child.requests.filter((request) => request.tool === "event").length === changes.length);
 			assert.deepEqual(

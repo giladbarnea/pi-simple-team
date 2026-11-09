@@ -1,5 +1,5 @@
 import * as http from "node:http";
-import { defineTool, getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { defineTool, getMarkdownTheme, type AgentActivityOutcome, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { formatContextWindowReport, requireKnownContextUsage } from "./context-window.ts";
 import { formatModelReference } from "./model-preflight.ts";
@@ -146,6 +146,7 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 	let idleWaiters: Array<() => void> = [];
 	let lifecycleQueue: Promise<void> = Promise.resolve();
 	let lifecycleError: Error | undefined;
+	let lastTurnOutcome: { outcome: AgentActivityOutcome; errorMessage?: string } = { outcome: "completed" };
 
 	const notifyParent = (event: JsonRecord): Promise<void> => {
 		lifecycleQueue = lifecycleQueue.then(async () => {
@@ -189,17 +190,22 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 	pi.on("agent_start", (event, context) => {
 		idle = false;
 		activeContext = context;
+		lastTurnOutcome = { outcome: "completed" };
 		notifyParent({ type: "agent_start" });
 	});
 	pi.on("agent_end", (event) => {
 		notifyParent({ type: "agent_end", messages: event.messages });
 	});
+	/** Pi settles a run on its last turn's outcome, so a retried attempt that then succeeds settles as completed. */
 	pi.on("agent_settled", (event) => {
-		notifyParent({ type: "agent_settled", aborted: event.aborted });
+		notifyParent({ type: "agent_settled", aborted: event.aborted, ...lastTurnOutcome });
 		markIdle();
 	});
 	const reportRuntimeFacts = (context: ExtensionContext): Promise<void> => notifyParent({ type: "runtime_facts", ...runtimeFacts(context) });
-	pi.on("turn_end", (_event, context) => { void reportRuntimeFacts(context); });
+	pi.on("turn_end", (event, context) => {
+		lastTurnOutcome = { outcome: event.outcome, errorMessage: event.message.role === "assistant" ? event.message.errorMessage : undefined };
+		void reportRuntimeFacts(context);
+	});
 	pi.on("session_compact", (_event, context) => { void reportRuntimeFacts(context); });
 	pi.on("model_select", (_event, context) => { void reportRuntimeFacts(context); });
 	pi.on("thinking_level_select", (_event, context) => { void reportRuntimeFacts(context); });

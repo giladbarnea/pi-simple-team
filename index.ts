@@ -42,6 +42,12 @@ interface TeamStatus {
 
 type TeammateTransport = "rpc" | "herdr";
 
+/** The error status a failed run set, and the status it replaced. */
+interface RunFailure {
+	failure: TeamStatus;
+	replaced: TeamStatus;
+}
+
 interface TeammateState {
 	name: string;
 	prompt: string;
@@ -64,6 +70,7 @@ interface TeammateState {
 	alive: boolean;
 	active: boolean;
 	contextPercent?: number;
+	runFailure?: RunFailure;
 	pendingTurnDeliveries: number;
 	deliveryQueue: Promise<void>;
 }
@@ -795,9 +802,30 @@ function applyRuntimeFacts(teammate: TeammateState, facts: JsonRecord): void {
 	teammate.contextPercent = (facts.contextPercent as number | null) ?? undefined;
 }
 
+/**
+ * A failed run shows through the same error status and log row as a failed delivery. A later completed run restores the status the failure replaced, unless the teammate has set its own since.
+ * A cancelled run is neither: Pi can record an aborted run's last turn as an error, so the final cancellation flag decides.
+ */
+function recordRunOutcome(team: TeamState, teammate: TeammateState, event: JsonRecord): void {
+	if (event.aborted === true) return;
+	const current = team.statuses.get(teammate.name)!;
+	if (event.outcome === "error") {
+		const errorMessage = String(event.errorMessage);
+		const failure = status("error", errorMessage);
+		teammate.runFailure = { failure, replaced: current === teammate.runFailure?.failure ? teammate.runFailure.replaced : current };
+		team.statuses.set(teammate.name, failure);
+		appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "error", summary: preview(`${teammate.name} run failed: ${errorMessage}`), details: { error: errorMessage } });
+		return;
+	}
+	if (event.outcome !== "completed" || !teammate.runFailure) return;
+	if (current === teammate.runFailure.failure) team.statuses.set(teammate.name, teammate.runFailure.replaced);
+	teammate.runFailure = undefined;
+}
+
 function handleChildEvent(team: TeamState, teammate: TeammateState, event: JsonRecord): void {
 	if (event.type === "agent_start" || event.type === "work_queued") teammate.active = true;
 	if (event.type === "agent_settled" || event.type === "session_shutdown") teammate.active = false;
+	if (event.type === "agent_settled") recordRunOutcome(team, teammate, event);
 	if (event.type === "runtime_facts") applyRuntimeFacts(teammate, event);
 	if (event.type === "session_shutdown") {
 		teammate.alive = false;

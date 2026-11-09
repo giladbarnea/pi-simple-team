@@ -13,7 +13,9 @@ import type { TeamLogEntry } from "../teamlog.ts";
 type JsonRecord = Record<string, unknown>;
 type ToolResult = { content: Array<{ type: string; text: string }>; details: JsonRecord };
 type RegisteredTool = { name: string; execute: (id: string, params: JsonRecord, signal: AbortSignal, update: undefined, context: unknown) => Promise<ToolResult> };
-type Scenario = "retry" | "cancel" | "complete" | "error" | "interrupt" | "queued";
+type Scenario = "retry" | "cancel" | "cancel-start" | "complete" | "error" | "first-error" | "first-error-cancel" | "interrupt" | "queued";
+
+const firstTurnProviderError = "Third-party apps now draw from your extra usage fixture";
 
 async function waitFor(check: () => Promise<boolean>, label: string): Promise<void> {
 	for (let attempt = 0; attempt < 500; attempt += 1) {
@@ -40,6 +42,7 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 			modelRequests.push(await request.json() as (typeof modelRequests)[number]);
 			requestCount += 1;
 			if (scenario === "error") return Response.json({ error: { message: "Invalid API key fixture" } }, { status: 401 });
+			if ((scenario === "first-error" || scenario === "first-error-cancel") && requestCount === 1) return Response.json({ error: { message: firstTurnProviderError } }, { status: 400 });
 			if (scenario === "retry" && requestCount === 1) return Response.json({ error: { message: "overloaded fixture" } }, { status: 503 });
 			if (scenario === "retry" || ((scenario === "interrupt" || scenario === "queued") && requestCount === 1)) await retryGate;
 			const chunk = (delta: JsonRecord, finishReason: string | null): string => `data: ${JSON.stringify({ id: "settlement-probe", object: "chat.completion.chunk", created: 1, model: "probe", choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`;
@@ -56,6 +59,10 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 	fs.writeFileSync(path.join(agentDirectory, "settings.json"), JSON.stringify({ defaultThinkingLevel: "high", compaction: { enabled: false }, retry: { enabled: scenario === "retry", maxRetries: 1, baseDelayMs: 10, provider: { maxRetries: 0 } } }));
 	const cancellationExtension = path.join(directory, "cancel-after-response.ts");
 	fs.writeFileSync(cancellationExtension, 'export default function (pi) { pi.on("agent_before_settle", (_event, context) => { context.abort(); }); }\n');
+	const cancelNextRunMarker = path.join(directory, "cancel-next-run");
+	const cancelBeforeRequestExtension = path.join(directory, "cancel-before-request.ts");
+	fs.writeFileSync(cancelBeforeRequestExtension, `import * as fs from "node:fs";\nexport default function (pi) { pi.on("agent_start", (_event, context) => { if (fs.existsSync(${JSON.stringify(cancelNextRunMarker)})) { fs.rmSync(${JSON.stringify(cancelNextRunMarker)}); context.abort(); } }); }\n`);
+	const scenarioExtensions: Partial<Record<Scenario, string[]>> = { cancel: [cancellationExtension], "cancel-start": [cancelBeforeRequestExtension], "first-error-cancel": [cancelBeforeRequestExtension] };
 	const launcher = path.join(directory, "pi-launcher");
 	const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 	fs.writeFileSync(launcher, `#!/bin/sh\nexec ${quote(executable)} --no-skills --no-context-files --no-prompt-templates --no-themes "$@"\n`, { mode: 0o755 });
@@ -94,7 +101,7 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 	};
 	try {
 		loadAsBunStandalonePi(launcher, () => teamExtension(api));
-		const spawned = await execute("team_spawn", { teamName: "settlement", startIdle: !options.automaticStart, commonPrompt: options.commonPrompt ?? "Respond once.", teammates: [{ name: "probe", model: "local-settlement/probe", thinking: "low", systemPrompt: options.teammatePrompt ?? "Wait for a message.", forkContext: options.parentSessionFile !== undefined, extensionPaths: scenario === "cancel" ? [cancellationExtension] : [], ...options.teammate }] });
+		const spawned = await execute("team_spawn", { teamName: "settlement", startIdle: !options.automaticStart, commonPrompt: options.commonPrompt ?? "Respond once.", teammates: [{ name: "probe", model: "local-settlement/probe", thinking: "low", systemPrompt: options.teammatePrompt ?? "Wait for a message.", forkContext: options.parentSessionFile !== undefined, extensionPaths: scenarioExtensions[scenario] ?? [], ...options.teammate }] });
 		if (!startIdle && !options.automaticStart) await execute("team_send_message", { targets: ["probe"], message: "Do the small task." });
 		return {
 			close, releaseRetry, modelRequests, requests: () => requestCount,
@@ -108,6 +115,8 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 				return (JSON.parse(fs.readFileSync(path.join(manifests, manifest), "utf8")).members as JsonRecord[])[0];
 			},
 			log: async (): Promise<ToolResult> => execute("team_log", { targets: ["settlement"], limit: 100 }),
+			cancelNextRun: (): void => fs.writeFileSync(cancelNextRunMarker, ""),
+			status: async (): Promise<JsonRecord> => ((await execute("team_status", { team: "settlement" })).details.status as Record<string, JsonRecord>).probe,
 			send: async (interrupt: boolean, recipient = "probe"): Promise<ToolResult> => execute("team_send_message", { targets: [recipient], message: "Continue with this message.", interrupt }),
 			active: async (): Promise<boolean> => {
 				const listing = await execute("team_list", {});
@@ -372,6 +381,63 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("teammate settl
 		}
 	}, 30000);
 
+	test("a failed turn reports the provider's error through the teammate status and log, and a later successful turn clears it", async () => {
+		const child = await startTeam("first-error");
+		try {
+			await waitFor(async () => child.requests() === 1 && !(await child.active()), "the failed first turn to settle");
+			const transcript = fs.readFileSync(child.sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { message?: { role: string; stopReason?: string } });
+			assert.equal(transcript.filter((entry) => entry.message?.role === "assistant").at(-1)?.message?.stopReason, "error", "The fixture must produce an actual provider failure on the first turn.");
+			const failed = await child.status();
+			assert.equal(failed.word, "error", `A teammate whose turn failed must not look idle. Status: ${JSON.stringify(failed)}`);
+			assert.match(String(failed.phrase), new RegExp(firstTurnProviderError), "The status phrase must carry the provider's message.");
+			const failedLog = await child.log();
+			const errorRows = (failedLog.details.entries as TeamLogEntry[]).filter((entry) => entry.kind === "error");
+			assert.equal(errorRows.length, 1, `The log must record the failed turn once as an error. Rows: ${failedLog.content[0].text}`);
+			assert.match(errorRows[0].summary, new RegExp(firstTurnProviderError), "The error row must carry the provider's message.");
+			assert.match(failedLog.content[0].text, new RegExp(firstTurnProviderError), "Main must see the provider's message in team_log.");
+			await child.send(false);
+			await waitFor(async () => child.requests() === 2 && !(await child.active()), "the successful second turn to settle");
+			assert.equal((await child.status()).word, "idle", "A later successful turn must clear the runtime error status.");
+			assert.equal(((await child.log()).details.entries as TeamLogEntry[]).filter((entry) => entry.kind === "error").length, 1, "A successful turn must not add error rows.");
+		} finally {
+			await child.close();
+		}
+	}, 30000);
+
+	test("a run cancelled before its first provider request stays idle without an error status or row", async () => {
+		const child = await startTeam("cancel-start", true);
+		try {
+			child.cancelNextRun();
+			await child.send(false);
+			await waitFor(async () => ((await child.log()).details.entries as TeamLogEntry[]).some((entry) => entry.kind === "agent_settled"), "the cancelled run to settle");
+			assert.equal(child.requests(), 0, "The fixture must cancel before any provider request.");
+			const entries = (await child.log()).details.entries as TeamLogEntry[];
+			assert.deepEqual(entries.filter((entry) => entry.kind === "agent_settled").map((entry) => entry.details), [{ aborted: true }], "The control must be a cancelled settlement.");
+			const cancelled = await child.status();
+			assert.deepEqual({ word: cancelled.word, phrase: cancelled.phrase }, { word: "idle", phrase: "Spawned" }, "A cancelled run is not a failed run.");
+			assert.deepEqual(entries.filter((entry) => entry.kind === "error"), [], "A cancelled run must not log a run failure.");
+		} finally {
+			await child.close();
+		}
+	}, 30000);
+
+	test("cancelling a run after a provider failure keeps the failure's status and message", async () => {
+		const child = await startTeam("first-error-cancel");
+		try {
+			await waitFor(async () => child.requests() === 1 && !(await child.active()), "the failed first turn to settle");
+			const failed = await child.status();
+			assert.equal(failed.word, "error", "The fixture's first turn must fail.");
+			child.cancelNextRun();
+			await child.send(false);
+			await waitFor(async () => ((await child.log()).details.entries as TeamLogEntry[]).filter((entry) => entry.kind === "agent_settled").length === 2, "the cancelled run to settle");
+			assert.equal(child.requests(), 1, "The cancelled run must make no provider request.");
+			assert.deepEqual(await child.status(), failed, "Cancellation must not replace the provider failure's status or message.");
+			assert.equal(((await child.log()).details.entries as TeamLogEntry[]).filter((entry) => entry.kind === "error").length, 1, "Cancellation must not add an error row.");
+		} finally {
+			await child.close();
+		}
+	}, 30000);
+
 	test.each(["interrupt", "queued"] as const)("a %s delivery preserves activity and waits for the correct settlement boundary", async (scenario) => {
 		const child = await startTeam(scenario);
 		try {
@@ -421,6 +487,8 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("teammate settl
 			const entries = (await child.log()).details.entries as TeamLogEntry[];
 			assert.equal(entries.filter((entry) => entry.kind === "agent_end").length, 2, "Both low-level attempts must remain observable.");
 			assert.deepEqual(entries.filter((entry) => entry.kind === "agent_settled").map((entry) => entry.details), [{ aborted: false }], "Recovered retries end with one non-cancelled settlement.");
+			assert.equal(entries.filter((entry) => entry.kind === "error").length, 0, "A failed attempt that Pi retried successfully is not a failed run.");
+			assert.notEqual((await child.status()).word, "error", "A recovered retry must not leave an error status.");
 		} finally {
 			await child.close();
 		}
