@@ -124,6 +124,46 @@ function toolResult(payload: JsonRecord, viewDetails: JsonRecord = {}) {
 	};
 }
 
+const reminderSlugWords = {
+	adjectives: ["amber", "brisk", "calm", "clever", "dusty", "eager", "fuzzy", "gentle", "golden", "hollow", "jolly", "lively", "mellow", "misty", "nimble", "plucky", "quiet", "rapid", "rusty", "silver", "steady", "sunny", "swift", "witty"],
+	nouns: ["badger", "beacon", "cedar", "comet", "falcon", "fern", "harbor", "heron", "lantern", "maple", "meadow", "otter", "pebble", "pine", "quail", "raven", "river", "robin", "sparrow", "spruce", "thistle", "tulip", "walrus", "willow"],
+} as const;
+
+/** A random two-word label that ties a reminder's wake message to its arming. */
+function reminderSlug(): string {
+	const pick = (words: readonly string[]): string => words[crypto.randomInt(words.length)]!;
+	return `${pick(reminderSlugWords.adjectives)}-${pick(reminderSlugWords.nouns)}`;
+}
+
+/**
+ * Formats a moment in the process time zone, with the time zone name the runtime's English locale data provides.
+ * @example humanTime(new Date("2026-11-07T08:47:00Z")) // with TZ=Asia/Jerusalem: "Nov 7, 2026, 10:47am GMT+2"
+ */
+function humanTime(moment: Date): string {
+	const parts = Object.fromEntries(
+		new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true, timeZoneName: "short" })
+			.formatToParts(moment)
+			.map((part) => [part.type, part.value]),
+	) as Record<Intl.DateTimeFormatPartTypes, string>;
+	return `${parts.month} ${parts.day}, ${parts.year}, ${parts.hour}:${parts.minute}${parts.dayPeriod.toLowerCase()} ${parts.timeZoneName}`;
+}
+
+/**
+ * @example humanDuration(3665) // "1h, 1m and 5s"
+ * @example humanDuration(2700) // "45m"
+ * @example humanDuration(0) // "0s"
+ */
+function humanDuration(totalSeconds: number): string {
+	const units = [
+		[Math.floor(totalSeconds / 3600), "h"],
+		[Math.floor((totalSeconds % 3600) / 60), "m"],
+		[totalSeconds % 60, "s"],
+	] as const;
+	const parts = units.filter(([count]) => count > 0).map(([count, unit]) => `${count}${unit}`);
+	if (parts.length === 0) return "0s";
+	return parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+}
+
 /** @example teamIdentity({ name: "review", id: "session-review" }) // { teamName: "review", teamId: "session-review" } */
 function teamIdentity(team: { name: string; id?: string }): { teamName: string; teamId: string } {
 	return { teamName: team.name, teamId: team.id ?? team.name };
@@ -1190,17 +1230,23 @@ export default function (pi: ExtensionAPI) {
 			}, { additionalProperties: false }),
 			async execute(_toolCallId, params) {
 				const delayMilliseconds = params.delayMinutes * 60_000;
-				const scheduledAt = new Date(Date.now() + delayMilliseconds).toISOString();
+				const delaySeconds = Math.round(delayMilliseconds / 1000);
+				const armedAt = new Date();
+				const wakeAt = new Date(armedAt.getTime() + delayMilliseconds);
+				const slug = reminderSlug();
 				const timer = setTimeout(() => {
 					reminderTimers.delete(timer);
 					pi.sendMessage(
-						{ customType: "pi-simple-team-reminder", content: params.message, display: false },
+						{ customType: "pi-simple-team-reminder", content: `Reminder ${slug} wake up: it's ${humanTime(new Date())} now.\n\n${params.message}`, display: false },
 						{ deliverAs: "followUp", triggerTurn: true },
 					);
 				}, delayMilliseconds);
 				reminderTimers.add(timer);
 				timer.unref();
-				return toolResult({ scheduledAt, message: params.message });
+				return {
+					content: [{ type: "text" as const, text: `Armed reminder ${slug}: It's ${humanTime(armedAt)} now. Reminder set in ${delaySeconds} seconds (${humanDuration(delaySeconds)}) for ${humanTime(wakeAt)}.` }],
+					details: { scheduledAt: wakeAt.toISOString(), message: params.message, slug },
+				};
 			},
 		}),
 	);

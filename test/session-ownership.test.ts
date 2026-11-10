@@ -4,7 +4,7 @@ import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { describe, test } from "bun:test";
+import { describe, setSystemTime, test } from "bun:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
@@ -556,38 +556,88 @@ function installFakePi(): { restore: () => void } {
 	};
 }
 
+/** Runs `body` with the system clock at `isoTime` in time zone `timeZone`, then restores both. */
+async function atLocalTime(timeZone: string, isoTime: string, body: () => Promise<void>): Promise<void> {
+	const previousTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+	process.env.TZ = timeZone;
+	setSystemTime(new Date(isoTime));
+	try {
+		await body();
+	} finally {
+		setSystemTime();
+		process.env.TZ = previousTimeZone;
+	}
+}
+
 describe("schedule_reminder", () => {
-	test("returns before waking the manager once with its custom message", async () => {
-		const host = new ExtensionHost();
+	test.each([
+		{
+			now: "2026-11-07T08:47:00Z",
+			delayMinutes: 3665 / 60,
+			armed: "It's Nov 7, 2026, 10:47am GMT+2 now. Reminder set in 3665 seconds (1h, 1m and 5s) for Nov 7, 2026, 11:48am GMT+2.",
+		},
+		{
+			now: "2026-07-07T23:30:00Z",
+			delayMinutes: 45,
+			armed: "It's Jul 8, 2026, 2:30am GMT+3 now. Reminder set in 2700 seconds (45m) for Jul 8, 2026, 3:15am GMT+3.",
+		},
+		{
+			now: "2026-11-07T21:59:30Z",
+			delayMinutes: 0.5,
+			armed: "It's Nov 7, 2026, 11:59pm GMT+2 now. Reminder set in 30 seconds (30s) for Nov 8, 2026, 12:00am GMT+2.",
+		},
+	])("arming at $now tells the agent the local time, the delay and the wake time", async ({ now, delayMinutes, armed }) => {
+		await atLocalTime("Asia/Jerusalem", now, async () => {
+			const host = new ExtensionHost();
+			try {
+				const result = await host.executeResult("schedule_reminder", { delayMinutes, message: "Check the team." });
+				const text = result.content.map((part) => part.text).join("\n");
+				const match = /^Armed reminder ([a-z]+-[a-z]+): (.*)$/s.exec(text);
+				assert.ok(match, `Expected "Armed reminder <slug-slug>: ...". Got: ${text}`);
+				assert.equal(match[2], armed, "Expected the arm text to state the current and wake times in local human-readable form.");
+			} finally {
+				await host.shutdown();
+			}
+		});
+	});
+
+	test("returns before waking the manager once with its custom message and the time computed at wake", async () => {
 		const message = "Check whether the team needs help.";
 
-		try {
-			const result = await host.execute<{ scheduledAt: string; message: string }>("schedule_reminder", {
-				delayMinutes: 0.002,
-				message,
-			});
+		await atLocalTime("Asia/Jerusalem", "2026-11-07T08:47:00Z", async () => {
+			const host = new ExtensionHost();
+			try {
+				const armedResult = await host.executeResult("schedule_reminder", {
+					delayMinutes: 0.002,
+					message,
+				});
+				const result = armedResult.details as { scheduledAt: string; message: string };
+				const slug = /^Armed reminder ([a-z]+-[a-z]+):/.exec(armedResult.content[0]?.text ?? "")?.[1];
+				assert.ok(slug, `Expected the arm text to name the reminder slug. Got: ${armedResult.content[0]?.text}`);
 
-			assert.equal(host.messages.length, 0, "Expected schedule_reminder to return without waiting for its timer.");
-			assert.equal(result.message, message, "Expected the scheduled result to retain the agent-defined message.");
-			assert.ok(Number.isFinite(Date.parse(result.scheduledAt)), `Expected an ISO scheduled time. Got: ${result.scheduledAt}`);
+				assert.equal(host.messages.length, 0, "Expected schedule_reminder to return without waiting for its timer.");
+				assert.equal(result.message, message, "Expected the scheduled result to retain the agent-defined message.");
+				assert.ok(Number.isFinite(Date.parse(result.scheduledAt)), `Expected an ISO scheduled time. Got: ${result.scheduledAt}`);
 
-			await new Promise((resolve) => setTimeout(resolve, 200));
+				setSystemTime(new Date("2026-11-07T10:52:00Z"));
+				await new Promise((resolve) => setTimeout(resolve, 200));
 
-			assert.deepEqual(
-				host.messages,
-				[
-					{
-						customType: "pi-simple-team-reminder",
-						content: message,
-						display: false,
-						options: { deliverAs: "followUp", triggerTurn: true },
-					},
-				],
-				"Expected one custom follow-up message that triggers an idle manager turn.",
-			);
-		} finally {
-			await host.shutdown();
-		}
+				assert.deepEqual(
+					host.messages,
+					[
+						{
+							customType: "pi-simple-team-reminder",
+							content: `Reminder ${slug} wake up: it's Nov 7, 2026, 12:52pm GMT+2 now.\n\n${message}`,
+							display: false,
+							options: { deliverAs: "followUp", triggerTurn: true },
+						},
+					],
+					"Expected one custom follow-up message that names the armed slug, states the time at wake rather than the scheduled time, and carries the custom message.",
+				);
+			} finally {
+				await host.shutdown();
+			}
+		});
 	});
 
 	test("accepts only a positive delay within the single-timer range", async () => {
