@@ -107,6 +107,17 @@ export function relativeTime(epochMilliseconds: number, nowMilliseconds: number)
 }
 
 /**
+ * Log row time: short elapsed time under an hour, absolute time of day from then on.
+ * logRowTime(now - 44 * 60_000, now) === "44m"; logRowTime(now - 20_000, now) === "now"; logRowTime(now - 3_600_000, now) === timeOfDay(now - 3_600_000)
+ */
+export function logRowTime(epochMilliseconds: number, nowMilliseconds: number): string {
+	const elapsed = Math.max(0, nowMilliseconds - epochMilliseconds);
+	if (elapsed >= HOUR_MILLISECONDS) return timeOfDay(epochMilliseconds);
+	if (elapsed < MINUTE_MILLISECONDS) return "now";
+	return formatElapsed(elapsed);
+}
+
+/**
  * futureTime(now + 20 * 86_400_000, now) === "in 2w"
  */
 export function futureTime(epochMilliseconds: number, nowMilliseconds: number): string {

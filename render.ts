@@ -4,7 +4,7 @@ import { padVisible, stableRenderWidth, visibleLength } from "./render-support/a
 import { glyphs } from "./render-support/glyphs.ts";
 import { stackPrefix, toolLabel, treeConnector, treeStem } from "./render-support/theme.ts";
 import { commandExit, plural, renderPendingCall, textContent } from "./render-support/text.ts";
-import { futureTime, monthDay, relativeTime, timeOfDay, type TeamLogEntry } from "./teamlog.ts";
+import { futureTime, logRowTime, monthDay, relativeTime, timeOfDay, type TeamLogEntry } from "./teamlog.ts";
 import { actorHueToken, DIM_SGR_CLOSE, DIM_SGR_OPEN, FactTable, inlineFact, statusWordToken, type FactRow, type TeammateView } from "./teammate-facts.ts";
 
 export { actorHueToken, statusWordToken, type TeammateView };
@@ -604,8 +604,8 @@ function renderLogDetail(theme: ThemeLike, detail: LogDetail, roster: string[]):
 
 const LOG_ROW_INDENT = "  ";
 
-function logChrome(theme: ThemeLike, sequence: number, seqWidth: number, epochMilliseconds: number): string {
-	return theme.fg("borderMuted", `${LOG_ROW_INDENT}${padVisible(`#${sequence}`, seqWidth)} ${timeOfDay(epochMilliseconds)}`);
+function logChrome(theme: ThemeLike, sequence: number, seqWidth: number, time: string, timeWidth: number): string {
+	return theme.fg("borderMuted", `${LOG_ROW_INDENT}${padVisible(`#${sequence}`, seqWidth)} ${padVisible(time, timeWidth)}`);
 }
 
 function sameLocalDay(a: number, b: number): boolean {
@@ -617,17 +617,19 @@ function dayDividerLine(theme: ThemeLike, epochMilliseconds: number): string {
 	return `${LOG_ROW_INDENT}${theme.fg("borderMuted", `${rule.repeat(2)} ${monthDay(epochMilliseconds)} ${rule.repeat(30)}`)}`;
 }
 
-/** Log rows keep an absolute HH:MM:SS grammar; day dividers carry the date whenever a row is not from "today". */
+/** Log rows show short relative time under an hour and absolute HH:MM:SS after; day dividers carry the date whenever a row is not from "today". */
 function actionRows(theme: ThemeLike, actions: LogAction[], roster: string[], nowMilliseconds: number): string[] {
 	const g = glyphs();
 	const seqWidth = Math.max(...actions.map((action) => `#${action.sequence}`.length));
+	const times = actions.map((action) => logRowTime(action.epochMilliseconds, nowMilliseconds));
+	const timeWidth = Math.max(...times.map((time) => time.length));
 	const whoWidth = Math.max(...actions.map((action) => action.who.length));
 	const actionWidth = Math.max(...actions.map((action) => action.action.length));
 	const iconWidth = Math.max(...actions.map((action) => visibleLength(logIconGlyph(action.icon))));
 	const rows: string[] = [];
 	let previousWho: string | undefined;
 	let previousEpoch = nowMilliseconds;
-	for (const action of actions) {
+	for (const [index, action] of actions.entries()) {
 		if (!sameLocalDay(action.epochMilliseconds, previousEpoch)) {
 			rows.push(dayDividerLine(theme, action.epochMilliseconds));
 			previousWho = undefined;
@@ -643,7 +645,7 @@ function actionRows(theme: ThemeLike, actions: LogAction[], roster: string[], no
 			.filter((detail) => detail.style !== "text" || detail.text.length > 0)
 			.map((detail) => renderLogDetail(theme, detail, roster))
 			.join(dot);
-		rows.push(`${logChrome(theme, action.sequence, seqWidth, action.epochMilliseconds)} ${whoStyled}  ${icon} ${actionName}${detailText ? `${dot}${detailText}` : ""}`);
+		rows.push(`${logChrome(theme, action.sequence, seqWidth, times[index]!, timeWidth)} ${whoStyled}  ${icon} ${actionName}${detailText ? `${dot}${detailText}` : ""}`);
 	}
 	return rows;
 }

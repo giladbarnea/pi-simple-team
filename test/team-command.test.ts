@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 
-import { describe, test } from "bun:test";
+import { describe, setSystemTime, test } from "bun:test";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, KeybindingsManager, setKeybindings, TUI_KEYBINDINGS, visibleWidth, type Component, type OverlayOptions, type TUI } from "@earendil-works/pi-tui";
 
 import teamExtension from "../index.ts";
 import { glyphs } from "../render-support/glyphs.ts";
 import { openTeamOverview, type TeamSnapshot } from "../team-ui.ts";
-import type { TeamLogEntry } from "../teamlog.ts";
+import { timeOfDay, type TeamLogEntry } from "../teamlog.ts";
 
 type JsonRecord = Record<string, unknown>;
 type EventHandler = (event: JsonRecord, context: ExtensionContext) => Promise<unknown> | unknown;
@@ -223,6 +223,30 @@ describe("/team", () => {
 				close(component);
 			});
 		} finally {
+			await host.shutdown();
+		}
+	});
+
+	test("log rows under an hour old show short relative time and older rows keep absolute time (issue 37)", async () => {
+		const host = new TeamCommandHost();
+		const now = 1_786_531_200_000 + 3 * 3_600_000;
+		const entries = [
+			logEntry({ sequence: 1, kind: "stderr", summary: "two hours ago", epochMilliseconds: now - 2 * 3_600_000 }),
+			logEntry({ sequence: 2, kind: "stderr", summary: "forty-four minutes ago", epochMilliseconds: now - 44 * 60_000 - 30_000 }),
+			logEntry({ sequence: 3, kind: "stderr", summary: "seconds ago", epochMilliseconds: now - 20_000 }),
+		];
+		setSystemTime(new Date(now));
+		try {
+			await host.openSnapshots(() => [liveSnapshot(entries)], (component) => {
+				const text = component.render(120).join("\n");
+				assert.match(text, new RegExp(`#1 ${timeOfDay(now - 2 * 3_600_000)}`), "Expected the two-hour-old row to keep absolute time.");
+				assert.match(text, /#2 44m\s/, "Expected the 44-minute-old row to show 44m.");
+				assert.match(text, /#3 now\s/, "Expected the sub-minute row to show now.");
+				assert.doesNotMatch(text, new RegExp(`#2 ${timeOfDay(now - 44 * 60_000 - 30_000)}`));
+				close(component);
+			});
+		} finally {
+			setSystemTime();
 			await host.shutdown();
 		}
 	});

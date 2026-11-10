@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -776,6 +776,56 @@ describe("teamLogLines", () => {
 		const lines = teamLogLines(identityTheme, logView(toolPair(false, "total 0")));
 		expect(lines).toHaveLength(2);
 		expect(lines.join("\n")).not.toContain(monthDay(T));
+	});
+
+	describe("row time (issue 37)", () => {
+		const MINUTE = 60_000;
+		const statusAt = (sequence: number, epochMilliseconds: number) =>
+			logEntry({ sequence, kind: "status", teammate: "reviewer", epochMilliseconds, details: { word: "working", phrase: "" } });
+		const rowTime = (line: string) => line.slice("  #10 ".length, line.indexOf(" reviewer")).trim();
+
+		test.each([
+			["44 minutes", 44 * MINUTE + 59_000, "44m"],
+			["1 minute", MINUTE, "1m"],
+			["30 seconds", 30_000, "now"],
+			["59 minutes 59 seconds", 60 * MINUTE - 1_000, "59m"],
+		])("a row %s old shows short relative time", (_label, age, expected) => {
+			const lines = teamLogLines(identityTheme, logView([statusAt(10, T - age)]));
+			expect(rowTime(lines[1]!)).toBe(expected);
+		});
+
+		test.each([
+			["exactly 1 hour", 60 * MINUTE],
+			["3 hours", 180 * MINUTE],
+		])("a row %s old keeps absolute time", (_label, age) => {
+			const lines = teamLogLines(identityTheme, logView([statusAt(10, T - age)]));
+			expect(rowTime(lines[1]!)).toBe(timeOfDay(T - age));
+		});
+
+		test("mixed relative and absolute rows keep the actor column aligned", () => {
+			const lines = teamLogLines(identityTheme, logView([statusAt(10, T - 2 * 60 * MINUTE), statusAt(11, T - 5 * MINUTE), statusAt(12, T)]));
+			const actorColumns = lines.slice(1).map((line) => stripAnsi(line).indexOf("reviewer"));
+			expect(actorColumns).toEqual([actorColumns[0]!, actorColumns[0]!, actorColumns[0]!]);
+			expect(lines[2]).toContain(" 5m ");
+			expect(lines[3]).toContain(" now ");
+		});
+
+		test("the team_log tool renderer shows the same relative row time as the overlay", () => {
+			setSystemTime(new Date(T));
+			try {
+				const text = renderTeamToolResult(
+					"team_log",
+					{ details: { teams: [{ teamName: "demo-team", teamId: "id-1", roster: ["reviewer"], entries: [statusAt(10, T - 2 * 60 * MINUTE), statusAt(11, T - 12 * MINUTE)], totalMatched: 2 }] } },
+					{ expanded: false },
+					identityTheme,
+					{},
+				).render(200).join("\n");
+				expect(text).toContain(`#10 ${timeOfDay(T - 2 * 60 * MINUTE)}`);
+				expect(text).toMatch(/#11 12m\s/);
+			} finally {
+				setSystemTime();
+			}
+		});
 	});
 });
 
