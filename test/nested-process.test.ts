@@ -89,7 +89,7 @@ function startHarness() {
 	const mainMessages: string[] = [];
 	const context = {
 		cwd: directory, scopedModels: [], getContextUsage: () => ({ tokens: 0, contextWindow: 32000, percent: 0 }),
-		modelRegistry: { getAvailable: () => [{ provider: "local-nested", id: "probe" }] },
+		modelRegistry: { getAvailable: () => [{ provider: "local-nested", id: "probe" }], find: () => undefined },
 		sessionManager: { getCwd: () => directory, getSessionId: () => "nested-main", getSessionFile: () => path.join(directory, "main.jsonl") },
 	};
 	const api = {

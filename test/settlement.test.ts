@@ -73,7 +73,7 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 	const tools = new Map<string, RegisteredTool>();
 	const shutdownHandlers: Array<() => Promise<void>> = [];
 	const context = {
-		cwd: directory, scopedModels: [], modelRegistry: { getAvailable: () => [{ provider: "local-settlement", id: "probe" }, { provider: "local-settlement", id: "thinker" }] },
+		cwd: directory, scopedModels: [], modelRegistry: { getAvailable: () => [{ provider: "local-settlement", id: "probe" }, { provider: "local-settlement", id: "thinker" }], find: () => undefined },
 		sessionManager: { getCwd: () => directory, getSessionId: () => `settlement-${scenario}`, getSessionFile: () => options.parentSessionFile ?? path.join(directory, "main.jsonl") },
 	};
 	const api = {

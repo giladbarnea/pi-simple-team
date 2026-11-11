@@ -29,6 +29,8 @@ import {
 	teamStatusLines,
 	type ThemeLike,
 } from "../render.ts";
+import { useModelNames } from "../model-names.ts";
+import { piModelRegistry } from "./model-registry.ts";
 import { monthDay, timeOfDay, type TeamLogEntry } from "../teamlog.ts";
 
 const previousDirectory = process.cwd();
@@ -40,6 +42,8 @@ beforeAll(() => {
 	process.env.PI_CODING_AGENT_DIR = testDirectory;
 	process.chdir(testDirectory);
 	initTheme("dark");
+	// Renderer expectations here use model IDs. Another file's session may have left a real model registry behind.
+	useModelNames({ find: () => undefined });
 });
 
 afterAll(() => {
@@ -211,6 +215,20 @@ describe("teamSpawnLines", () => {
 describe("teammate fact rows", () => {
 	const everything = { name: "alpha", model: "openai-codex/gpt-6-astra", thinking: "high", contextPercent: 16, forkContext: true, canManageOwnTeams: true, showOnHerdrPane: true, systemPrompt: "" };
 	const rowAt = (theme: ThemeLike, width: number, teammate = everything) => new TeamLines(teamSpawnLines(theme, "t", [teammate]), "clip").render(width)[1]!;
+
+	test("a model's Pi name stays in its full and short forms while the row narrows (issue 14)", async () => {
+		useModelNames(await piModelRegistry());
+		try {
+			const rows = new Set<string>();
+			for (let width = 200; width >= 12; width--) rows.add(rowAt(identityTheme, width, { ...everything, model: "anthropic/claude-opus-5-5" }));
+			const withModel = [...rows].filter((row) => row.includes("opus"));
+			expect(withModel.some((row) => row.includes("16% context"))).toBe(true);
+			expect(withModel.some((row) => row.includes("16% ctx"))).toBe(true);
+			expect([...rows].filter((row) => row.includes("claude-opus-5-5"))).toEqual([]);
+		} finally {
+			useModelNames({ find: () => undefined });
+		}
+	});
 
 	test("narrowing shortens labels, then drops their icons, then keeps icons alone, then hides facts", () => {
 		const rows: string[] = [];

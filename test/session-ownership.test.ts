@@ -354,7 +354,7 @@ class ExtensionHost {
 	constructor(onMessage: () => void = () => undefined, scopedModels: ScopedModel[] = []) {
 		this.context = {
 			scopedModels,
-			modelRegistry: { getAvailable: () => fakeAvailableModels },
+			modelRegistry: { getAvailable: () => fakeAvailableModels, find: () => undefined },
 			shutdown: () => undefined,
 		} as unknown as ExtensionContext;
 		const api = {

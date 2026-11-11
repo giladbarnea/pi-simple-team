@@ -3,6 +3,7 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { padVisible } from "./render-support/ansi.ts";
 import { glyphs, glyphStyle } from "./render-support/glyphs.ts";
 import { contextGauge, contextHeat, type HeatTheme } from "./render-support/heat.ts";
+import { piModelName } from "./model-names.ts";
 
 export interface FactTheme extends HeatTheme {
 	bold(text: string): string;
@@ -111,8 +112,8 @@ const LADDERS: Record<FactKey, Ladder> = {
 	},
 	status: { full: (row, paint) => (row.status ? paint.theme.fg(statusWordToken(row.status), row.status) : "") },
 	model: {
-		full: (row, paint) => (row.model ? paint.theme.fg("muted", row.model) : ""),
-		short: (row, paint) => (row.model ? paint.theme.fg("muted", modelTail(row.model)) : ""),
+		full: (row, paint) => (row.model ? paint.theme.fg("muted", piModelName(row.model) ?? row.model) : ""),
+		short: (row, paint) => (row.model ? paint.theme.fg("muted", piModelName(row.model) ?? modelTail(row.model)) : ""),
 	},
 	context: { full: context("context"), short: context("ctx"), bare: context("ctx", false), icon: context("") },
 	fork: flag("forkContext", { full: "⑂ fork", short: "⑂ fork", bare: "fork", icon: "⑂" }),

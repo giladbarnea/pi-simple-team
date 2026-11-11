@@ -239,7 +239,7 @@ Spawn, resume, and add return the complete roster. Results distinguish a live ru
 
 Set `showOnHerdrPane: true` on individual teammates to open their panes. An explicit `showOnHerdrPanes` value on spawn overrides all individual settings.
 
-`extensionPaths` lists trusted, existing absolute extension paths for one teammate. RPC and Herdr launches load them alongside the team runtime, and resume keeps them. Discovered extensions remain disabled. These modules run with the same permissions as Pi.
+`extensionPaths` lists trusted, existing absolute extension paths for one teammate. RPC and Herdr launches load them alongside the team runtime and the extensions a plain `pi` launch in the project discovers, and resume keeps them. The parent's own command-line `-e` extensions and `--no-extensions` are not inherited. An `extensionPaths` entry at a different path from a discovered copy of the same extension stops teammate startup when that extension registers tools or flags. The same path, or a symlink to it, loads once. These modules run with the same permissions as Pi.
 
 Message tools return `published: true` when the extension accepts a message for delivery. If delivery later fails, the sender receives the error automatically.
 
@@ -263,7 +263,7 @@ Message tools return `published: true` when the extension accepts a message for 
 - [x] Resume all or selected teammates from a dormant team.
 - [x] Add teammates after a team has spawned.
 - [x] Let opted-in teammates create and manage teams of their own.
-- [x] Remove teammates from a team.
+- [ ] Remove teammates from a team.
 - [ ] Main triggers `/compact` on select teammate.
 - [ ] Teammates auto-reminded to hand off on low context.
 

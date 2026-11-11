@@ -12,6 +12,7 @@ export function composeTeamBriefing(
 		`<your-specific-system-message>\n${teammatePrompt.trim()}\n</your-specific-system-message>`,
 		`You are ${teammateName}, a teammate on team ${teamName}.`,
 		"Work on your current team assignment. Treat inherited conversation as background for this assignment.",
+		"Do not use tools meant for interaction with a human.",
 		`Participants: main, ${participants.join(", ")}.`,
 		"Use team_send_message to talk to teammates, send_main_message to talk to the main agent, and team_status to set/read public statuses.",
 		"The main agent is the current coordinator. Use the team tools and available session history to share relevant context.",

@@ -23,7 +23,7 @@ const removedRuntime = "/tmp/pi-simple-team-removed-runtime/bin/node";
 const fakeMainContext = {
 	cwd: process.cwd(),
 	scopedModels: [],
-	modelRegistry: { getAvailable: () => [{ provider: "fake", id: "fake-model" }] },
+	modelRegistry: { getAvailable: () => [{ provider: "fake", id: "fake-model" }], find: () => undefined },
 	sessionManager: {
 		getCwd: () => process.cwd(),
 		getSessionFile: () => fakeMainSessionFile,
@@ -1395,7 +1395,7 @@ describe("visible Herdr teammates", () => {
 			const starts = lines(fake.eventsPath).filter((entry) => entry.type === "pi_start");
 			assert.equal(starts.length, 2);
 			const commandFor = (index: number): string[] => starts[index]!.args as string[];
-			assert.deepEqual(commandFor(0).slice(0, 4), ["--fork", fakeMainSessionFile, "--no-extensions", "-e"]);
+			assert.deepEqual(commandFor(0).slice(0, 3), ["--fork", fakeMainSessionFile, "-e"]);
 			assert.equal(commandFor(1).includes("--fork"), false);
 		} finally {
 			await host.shutdown();

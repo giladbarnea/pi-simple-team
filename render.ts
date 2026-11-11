@@ -4,6 +4,7 @@ import { padVisible, stableRenderWidth, visibleLength } from "./render-support/a
 import { glyphs } from "./render-support/glyphs.ts";
 import { stackPrefix, toolLabel, treeConnector, treeStem } from "./render-support/theme.ts";
 import { commandExit, plural, renderPendingCall, textContent } from "./render-support/text.ts";
+import { piModelName } from "./model-names.ts";
 import { futureTime, logRowTime, monthDay, relativeTime, timeOfDay, type TeamLogEntry } from "./teamlog.ts";
 import { actorHueToken, DIM_SGR_CLOSE, DIM_SGR_OPEN, FactTable, inlineFact, statusWordToken, type FactRow, type TeammateView } from "./teammate-facts.ts";
 
@@ -570,7 +571,7 @@ export function foldLogEntries(entries: TeamLogEntry[]): LogAction[] {
 				icon: "diamond",
 				iconToken: "borderMuted",
 				action: "spawn",
-				details: [textDetail(typeof details.model === "string" ? details.model : ""), textDetail(typeof details.thinking === "string" ? details.thinking : "")],
+				details: [textDetail(typeof details.model === "string" ? piModelName(details.model) ?? details.model : ""), textDetail(typeof details.thinking === "string" ? details.thinking : "")],
 			});
 			continue;
 		}

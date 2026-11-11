@@ -66,6 +66,17 @@ function readRequiredChildRuntimeConfig(): ChildRuntimeConfig {
 }
 
 /**
+ * A teammate process inherits discovered extensions, so it can also discover an installed copy of this package at another path.
+ * Only the copy main passed as PI_SIMPLE_TEAM_RUNTIME_PATH registers; another copy stays inert so their tools cannot conflict.
+ * Simulated teammates without that variable load every copy.
+ */
+export function isInertTeamCopy(extensionPath: string): boolean {
+	const runtimePath = process.env.PI_SIMPLE_TEAM_RUNTIME_PATH;
+	const teammateProcess = process.env.PI_SIMPLE_TEAM_CHILD === "1" || process.env.PI_SIMPLE_TEAM_CHILD === String(process.pid);
+	return teammateProcess && runtimePath !== undefined && runtimePath !== extensionPath;
+}
+
+/**
  * Main marks only the process it starts with PI_SIMPLE_TEAM_CHILD=1. That process claims the teammate identity for its PID, which
  * survives Pi's in-process reloads and session replacements. Subprocesses inherit the environment, not the claim, so they run as main.
  */

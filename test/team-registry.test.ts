@@ -4,8 +4,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { setSystemTime, test } from "bun:test";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { claimTeamLease, releaseTeamLease, type TeamLease } from "../team-registry.ts";
+import { piModelRegistry } from "./model-registry.ts";
 import { useFakePiPackage } from "./pi-launch.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -75,14 +76,19 @@ class ExtensionHost {
 	}
 }
 
-function makeContext(sessionId: string, projectDirectory: string): ExtensionContext {
+const FAKE_MODEL_REGISTRY: Pick<ModelRegistry, "getAvailable" | "find"> = {
+	getAvailable: () => [{ provider: "fake", id: "fake-model" }] as ReturnType<ModelRegistry["getAvailable"]>,
+	find: () => undefined,
+};
+
+function makeContext(sessionId: string, projectDirectory: string, modelRegistry = FAKE_MODEL_REGISTRY): ExtensionContext {
 	return {
 		cwd: projectDirectory,
 		hasUI: true,
 		mode: "tui",
 		shutdown: () => undefined,
 		scopedModels: [],
-		modelRegistry: { getAvailable: () => [{ provider: "fake", id: "fake-model" }] },
+		modelRegistry,
 		getContextUsage: () => ({ tokens: 43_210, contextWindow: 200_000, percent: 21.605 }),
 		sessionManager: {
 			getCwd: () => projectDirectory,
@@ -112,7 +118,8 @@ import path from "node:path";
 
 const root = process.env.PI_SIMPLE_TEAM_TEST_ROOT;
 const member = process.env.PI_SIMPLE_TEAM_MEMBER;
-if (member === "conflict-sensitive" && !process.argv.includes("--no-extensions")) {
+// A discovered copy of pi-simple-team stays inert only when main names the runtime it loads with -e.
+if (member === "conflict-sensitive" && process.env.PI_SIMPLE_TEAM_RUNTIME_PATH !== process.argv[process.argv.indexOf("-e") + 1]) {
 	process.stderr.write("conflicting discovered team extension");
 	process.exit(1);
 }
@@ -186,7 +193,7 @@ const extensionContext = {
 	shutdown: () => process.exit(1),
 	...runtimeSettings,
 	getContextUsage: () => ({ tokens: 87_000, contextWindow: 272_000, percent: 31.985 }),
-	modelRegistry: { getAvailable: () => [{ provider: "fake", id: "fake-model" }] },
+	modelRegistry: { getAvailable: () => [{ provider: "fake", id: "fake-model" }], find: () => undefined },
 	sessionManager: {
 		getCwd: () => process.cwd(),
 		getSessionFile: () => sessionFile,
@@ -464,7 +471,7 @@ test("context usage selects same-named teammates by Pi session ID across teams",
 	}
 });
 
-test("team_spawn isolates teammates from conflicting discovered team extensions", async () => {
+test("team_spawn names its team runtime so a discovered copy of the team extension stays inert", async () => {
 	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-extension-conflict-test-"));
 	const agentDirectory = path.join(temporaryDirectory, "agent");
 	const projectDirectory = path.join(temporaryDirectory, "project");
@@ -484,7 +491,7 @@ test("team_spawn isolates teammates from conflicting discovered team extensions"
 			startIdle: true, commonPrompt: "Ignore unrelated team extensions.",
 			teammates: [{ name: "conflict-sensitive", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 		});
-		assert.equal(result.details?.teamId, "origin-main-session-id-isolated-team", `Expected teammate startup to ignore conflicting discovered extensions. Got: ${JSON.stringify(result.details)}`);
+		assert.equal(result.details?.teamId, "origin-main-session-id-isolated-team", `Expected teammate startup to survive a discovered team extension copy. Got: ${JSON.stringify(result.details)}`);
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();
@@ -571,6 +578,51 @@ test("team_spawn returns each durable Pi session identity", async () => {
 			true,
 			`Expected the durable attachment to retain recursive-team oversight. Got: ${JSON.stringify(listed.details)}`,
 		);
+	} finally {
+		await host?.shutdown();
+		restoreFakePi();
+		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+	}
+});
+
+test("team screens show Pi model names while results, the manifest and Pi arguments keep model IDs (issue 14)", async () => {
+	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-model-names-test-"));
+	const agentDirectory = path.join(temporaryDirectory, "agent");
+	const projectDirectory = path.join(temporaryDirectory, "project");
+	fs.mkdirSync(agentDirectory);
+	fs.mkdirSync(projectDirectory);
+	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreFakePi = installFakePi(temporaryDirectory);
+	const plainTheme = { bold: (text: string) => text, fg: (_token: string, text: string) => text };
+	let host: ExtensionHost | undefined;
+
+	try {
+		const { default: teamExtension } = await import("../index.ts");
+		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory, await piModelRegistry()));
+		await host.start();
+		const args = {
+			teamName: "names-team",
+			startIdle: true, commonPrompt: "Wait.",
+			teammates: [{ name: "named", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
+		};
+		const result = await host.execute("team_spawn", args);
+		const listed = await host.execute("team_list", {});
+		const agentFacing = JSON.stringify([result, listed]);
+		assert.match(agentFacing, /fake\/fake-model/, "Expected agent-facing results to carry the model ID.");
+		assert.doesNotMatch(agentFacing, /fake-alias/, `Expected no model name in agent-facing results. Got: ${agentFacing}`);
+		const manifestPath = path.join(agentDirectory, "pi-simple-team", "teams-v2", "origin-main-session-id-names-team.json");
+		const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as { members: JsonRecord[] };
+		assert.equal(manifest.members[0]?.model, "fake/fake-model", "Expected the saved manifest to keep the model ID.");
+		const invocation = readFakePiInvocations(temporaryDirectory)[0];
+		assert.equal(invocation?.args[invocation.args.indexOf("--model") + 1], "fake/fake-model", "Expected Pi to receive the model ID.");
+
+		const tool = host.tools.get("team_spawn") as RegisteredTool & { renderResult: (...parameters: unknown[]) => { render(width: number): string[] } };
+		const namedLine = tool.renderResult(result, { expanded: false }, plainTheme, { args }).render(120).find((line) => line.includes("named")) ?? "";
+		assert.match(namedLine, /named +fake-alias\b/, `Expected the Team Spawn renderer to show the Pi model name. Got: ${namedLine}`);
+		assert.doesNotMatch(namedLine, /fake\/fake-model/);
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();
@@ -1902,7 +1954,7 @@ test("a new extension session discovers a shut-down team in the same project", a
 	}
 });
 
-test("explicit teammate extensions survive shutdown and resume without enabling discovered extensions", async () => {
+test("explicit teammate extensions survive shutdown and resume alongside discovered extensions", async () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-team-explicit-extensions-"));
 	const agentDirectory = path.join(root, "agent");
 	const projectDirectory = path.join(root, "project");
@@ -1924,7 +1976,7 @@ test("explicit teammate extensions survive shutdown and resume without enabling 
 		assert.deepEqual(listedMember(await host.execute("team_list", {}), "main-extensions-replay", "persisted")?.extensionPaths, [extensionPath], "The dormant attachment must retain its explicit runtime dependency.");
 		await host.execute("team_resume", { team: "replay", startIdle: true });
 		for (const invocation of readFakePiInvocations(root)) {
-			assert.equal(invocation.args.includes("--no-extensions"), true, "Discovered extensions must remain disabled.");
+			assert.equal(invocation.args.includes("--no-extensions"), false, "Discovered extensions must load as in a plain pi launch.");
 			assert.equal(invocation.args[invocation.args.indexOf(extensionPath) - 1], "-e", "Each runtime must explicitly load the saved replay extension.");
 		}
 	} finally {

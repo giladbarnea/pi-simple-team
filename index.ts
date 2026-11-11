@@ -7,10 +7,11 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineTool, type ContextUsage, type ExtensionAPI, type ExtensionContext, getMarkdownTheme, getPackageDir } from "@earendil-works/pi-coding-agent";
 import { formatContextWindowReport, requireKnownContextUsage, type KnownContextUsage } from "./context-window.ts";
+import { useModelNames } from "./model-names.ts";
 import { formatScopedModelGuidance, validateTeammateModels, type ModelReference } from "./model-preflight.ts";
 import { composeTeamBriefing } from "./team-briefing.ts";
 import { composeResumptionMessage } from "./resume-message.ts";
-import { callParent, readChildRuntimeConfig, registerChildTools } from "./child-tools.ts";
+import { callParent, isInertTeamCopy, readChildRuntimeConfig, registerChildTools } from "./child-tools.ts";
 import {
 	canonicalProjectDirectory,
 	claimTeamLease,
@@ -29,7 +30,7 @@ import { renderReminderToolCall, renderReminderToolResult, renderTeamMessage, re
 import { openTeamOverview, type TeamSnapshot } from "./team-ui.ts";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { resolveTargets, resolveTeammates, interruptedTeammateIds, targetDescription, interruptDescription, type SelectableTeam } from "./team-selection.ts";
+import { resolveTargets, resolveTeammates, interruptedTeammateIds, findUnknownTarget, unknownTargetMessage, targetDescription, interruptDescription, type DormantTeammateMatch, type SelectableTeam } from "./team-selection.ts";
 import type { Teammate, TeammateRecord, ThinkingLevel } from "./teammate.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -514,6 +515,7 @@ function createTeammateState(teammateSpec: Teammate): TeammateState {
 function childEnvironmentOverrides(team: TeamState, teammate: TeammateState, participants: string[]): Record<string, string> {
 	return {
 		PI_SIMPLE_TEAM_CHILD: "1",
+		PI_SIMPLE_TEAM_RUNTIME_PATH: teamLiteExtensionPath,
 		PI_SIMPLE_TEAM_CALLBACK_URL: callbackUrl,
 		PI_SIMPLE_TEAM_CALLBACK_TOKEN: callbackToken,
 		PI_SIMPLE_TEAM_TEAM: team.id ?? team.name,
@@ -560,7 +562,6 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 		"--mode",
 		"rpc",
 		...sessionArgs,
-		"--no-extensions",
 		"-e",
 		teamLiteExtensionPath,
 		...teammate.extensionPaths.flatMap(extensionPath => ["-e", extensionPath]),
@@ -625,7 +626,6 @@ async function attachHerdrTeammate(
 	const command = [
 		...team.parentPiCommand,
 		...sessionArgs,
-		"--no-extensions",
 		"-e",
 		teamLiteExtensionPath,
 		...teammate.extensionPaths.flatMap(extensionPath => ["-e", extensionPath]),
@@ -995,7 +995,7 @@ function teammateSchema(modelGuidance: string) {
 		forkContext: Type.Optional(Type.Boolean({ description: "Start as a fork of your context window rather than fresh. Defaults to false.", default: false })),
 		canManageOwnTeams: Type.Optional(Type.Boolean({ description: "Allow this teammate to create and manage teams of its own. Defaults to false.", default: false })),
 		showOnHerdrPane: Type.Optional(Type.Boolean({ description: "Open a visible Herdr pane for this teammate. Defaults to false.", default: false })),
-		extensionPaths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true, description: "Trusted extension files or directories to load alongside the team runtime. Use existing absolute paths. Saved for later resume; discovered extensions stay disabled." })),
+		extensionPaths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true, description: "Trusted extension files or directories to load alongside the team runtime. Use existing absolute paths. Saved for later resume; discovered extensions also load." })),
 	}, { additionalProperties: false });
 }
 
@@ -1061,6 +1061,7 @@ function piCommand(entry: string, runtime: string, packageDirectory: string): st
 }
 
 export default function (pi: ExtensionAPI) {
+	if (isInertTeamCopy(teamLiteExtensionPath)) return;
 	const childRuntimeConfig = readChildRuntimeConfig();
 	if (childRuntimeConfig) {
 		registerChildTools(pi, childRuntimeConfig);
@@ -1083,6 +1084,16 @@ export default function (pi: ExtensionAPI) {
 		);
 	}
 
+	/** Stored dormant teammates of resumable current-project teams whose name or session ID is `identifier`. */
+	function dormantTeammateMatches(context: ExtensionContext, identifier: string): DormantTeammateMatch[] {
+		const name = identifier.trim();
+		return resumableTeamManifests(context, "team_send_message")
+			.filter((manifest) => manifest.state === "dormant")
+			.flatMap((manifest) => manifest.members
+				.filter((member) => member.name === name || member.teammateId === name)
+				.map((member) => ({ teamId: manifest.id, teammateId: member.teammateId })));
+	}
+
 	pi.registerMessageRenderer(teamMessageType, (message, options, theme) => renderTeamMessage(message, options, theme, getMarkdownTheme(), sessionTeammateRoster));
 
 	pi.registerCommand("team", {
@@ -1102,13 +1113,14 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", (_event, context) => {
+		useModelNames(context.modelRegistry);
 		const scopedModels = (context as typeof context & { scopedModels?: ReadonlyArray<{ model: ModelReference }> }).scopedModels ?? [];
 		const modelGuidance = formatScopedModelGuidance(scopedModels.map(({ model }) => model));
 		pi.registerTool(
 			defineTool({
 				name: "team_spawn",
 				label: "Team Spawn",
-				description: "Spawn a versatile team of agents. You are automatically part of the team as main. Do not include yourself in teammates. Use `team_resume` to continue an existing team, or `team_add_teammates` to grow one.",
+				description: "Spawn a versatile team of agents. It can also be used as a regular background agent spawn in a one-person team. You are automatically part of the team as main. Do not include yourself in teammates. Use `team_resume` to continue an existing team, or `team_add_teammates` to grow one.",
 				renderShell: "self",
 				renderCall: (args, theme, context) => renderTeamToolCall("team_spawn", args, theme, context, sessionTeammateRoster),
 				renderResult: (result, options, theme, context) => renderTeamToolResult("team_spawn", result, options, theme, context, getMarkdownTheme(), sessionTeammateRoster),
@@ -1494,9 +1506,11 @@ export default function (pi: ExtensionAPI) {
 				message: Type.String({ description: "Message to send" }),
 				interrupt: Type.Optional(Type.Union([Type.Boolean(), Type.Array(Type.String({ minLength: 1 }))], { description: interruptDescription })),
 			}, { additionalProperties: false }),
-			async execute(_toolCallId, params, signal) {
+			async execute(_toolCallId, params, signal, _onUpdate, context) {
 				const parent = childRuntimeConfig ? await callParent(childRuntimeConfig, "team_context", {}, signal) as unknown as SelectableTeam : undefined;
 				const candidates = [...ownedTargetTeams(owner), ...(parent ? [parent] : [])];
+				const unknownTarget = findUnknownTarget(candidates, params.targets);
+				if (unknownTarget !== undefined) throw new Error(unknownTargetMessage(unknownTarget, candidates, dormantTeammateMatches(context, unknownTarget)));
 				const selections = resolveTargets(candidates, params.targets);
 				const interrupted = interruptedTeammateIds(candidates, selections, params.interrupt);
 				const statuses: JsonRecord[] = [];

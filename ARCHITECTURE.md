@@ -63,7 +63,7 @@ The lease protects extension-managed runtimes. Users must still avoid opening a 
 
 RPC is the default transport. Each teammate can request `showOnHerdrPane`. An explicitly supplied team-wide `showOnHerdrPanes` value overrides individual choices; omission preserves them.
 
-RPC teammates start with `pi --mode rpc`. Children disable discovered extensions and load `pi-simple-team` plus their explicit `extensionPaths`. Those paths must exist and be absolute. They persist with the member attachment and load on every RPC or Herdr resume.
+RPC teammates start with `pi --mode rpc`. Children load discovered extensions like a plain `pi` launch, plus `pi-simple-team` and their explicit `extensionPaths`. Only the explicitly loaded `pi-simple-team` copy registers. Those paths must exist and be absolute. They persist with the member attachment and load on every RPC or Herdr resume.
 
 A normal child registers only parent-team member tools. A child with `canManageOwnTeams: true` also registers manager tools in the same runtime.
 

@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 
 import { describe, setSystemTime, test } from "bun:test";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, KeybindingsManager, setKeybindings, TUI_KEYBINDINGS, visibleWidth, type Component, type OverlayOptions, type TUI } from "@earendil-works/pi-tui";
 
 import teamExtension from "../index.ts";
 import { glyphs } from "../render-support/glyphs.ts";
 import { openTeamOverview, type TeamSnapshot } from "../team-ui.ts";
 import { timeOfDay, type TeamLogEntry } from "../teamlog.ts";
+import { piModelRegistry } from "./model-registry.ts";
 
 type JsonRecord = Record<string, unknown>;
 type EventHandler = (event: JsonRecord, context: ExtensionContext) => Promise<unknown> | unknown;
@@ -36,7 +37,7 @@ class TeamCommandHost {
 	readonly context: ExtensionCommandContext;
 	private overlayDriver?: OverlayDriver;
 
-	constructor(rows = 40) {
+	constructor(rows = 40, modelRegistry: Pick<ModelRegistry, "getAvailable" | "find"> = { getAvailable: () => [], find: () => undefined }) {
 		const tui = {
 			terminal: { rows },
 			requestRender: () => undefined,
@@ -63,7 +64,7 @@ class TeamCommandHost {
 			hasUI: true,
 			ui,
 			scopedModels: [],
-			modelRegistry: { getAvailable: () => [] },
+			modelRegistry,
 			sessionManager: { getSessionFile: () => "/tmp/pi-simple-team-test-session.jsonl" },
 		} as unknown as ExtensionCommandContext;
 
@@ -247,6 +248,38 @@ describe("/team", () => {
 			});
 		} finally {
 			setSystemTime();
+			await host.shutdown();
+		}
+	});
+
+	test("team status and log rows show Pi model names from the session's model registry (issue 14)", async () => {
+		const host = new TeamCommandHost(40, await piModelRegistry());
+		const snapshot: TeamSnapshot = {
+			...liveSnapshot([logEntry({ sequence: 1, kind: "spawn", teammate: "aliased", details: { model: "anthropic/claude-opus-5-5", thinking: "high" } })]),
+			roster: ["aliased", "builtin", "unknown"],
+			statuses: {
+				aliased: { word: "working", phrase: "a", updated: "August 12, 10:00:03" },
+				builtin: { word: "working", phrase: "b", updated: "August 12, 10:00:02" },
+				unknown: { word: "working", phrase: "c", updated: "August 12, 10:00:01" },
+			},
+			teammates: {
+				aliased: { name: "aliased", live: true, model: "anthropic/claude-opus-5-5", thinking: "high" },
+				builtin: { name: "builtin", live: true, model: "openai-codex/gpt-6-luna", thinking: "high" },
+				unknown: { name: "unknown", live: true, model: "local-none/unlisted", thinking: "high" },
+			},
+		};
+		try {
+			await host.openSnapshots(() => [snapshot], (component) => {
+				const lines = component.render(120);
+				const row = (name: string) => lines.find((line) => line.includes(` ${name} `)) ?? "";
+				assert.match(row("aliased"), /working +opus +high/, "Expected the user's models.json name for the built-in model.");
+				assert.match(row("builtin"), /working +GPT-6 Luna +high/, "Expected Pi's built-in name.");
+				assert.match(row("unknown"), /working +local-none\/unlisted +high/, "Expected the full ID for a model Pi does not know.");
+				assert.match(lines.join("\n"), /spawn · opus · high/, "Expected the spawn log row to show the model name.");
+				assert.doesNotMatch(lines.join("\n"), /claude-opus-5-5|gpt-6-luna/, "Expected no ID where Pi has a name.");
+				close(component);
+			});
+		} finally {
 			await host.shutdown();
 		}
 	});

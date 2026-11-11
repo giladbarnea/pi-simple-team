@@ -58,7 +58,7 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("RPC stderr and
 		const tools = new Map<string, RegisteredTool>();
 		const shutdownHandlers: Array<() => Promise<void>> = [];
 		const context = {
-			cwd: directory, scopedModels: [], getContextUsage: () => ({ tokens: 0, contextWindow: 32000, percent: 0 }), modelRegistry: { getAvailable: () => [{ provider: "local-probe", id: "probe" }] },
+			cwd: directory, scopedModels: [], getContextUsage: () => ({ tokens: 0, contextWindow: 32000, percent: 0 }), modelRegistry: { getAvailable: () => [{ provider: "local-probe", id: "probe" }], find: () => undefined },
 			sessionManager: { getCwd: () => directory, getSessionId: () => "test-main", getSessionFile: () => path.join(directory, "main.jsonl") },
 		};
 		const api = {

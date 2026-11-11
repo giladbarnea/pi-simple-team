@@ -19,6 +19,10 @@ describe("custom briefing participant list", () => {
 		expect(participantPrompt("Implementer")).not.toMatch(/skill/i);
 		expect(participantPrompt("Reviewer")).not.toMatch(/skill/i);
 	});
+
+	test("tells teammates, who inherit the parent's extensions, not to use tools meant for a human", () => {
+		expect(participantPrompt("Implementer")).toContain("Do not use tools meant for interaction with a human.");
+	});
 });
 
 describe("custom briefing acknowledgement instructions (review issue 2)", () => {
