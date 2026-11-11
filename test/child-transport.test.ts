@@ -115,6 +115,11 @@ async function parent(tool, args) {
   });
   if (!response.ok) throw new Error(await response.text());
 }
+async function quitThenExit(code) {
+  await parent("event", { event: { type: "session_shutdown", reason: "quit" } });
+  await fetch(process.env.PI_SIMPLE_TEAM_TEST_EXIT_GATE);
+  process.exit(code);
+}
 const server = http.createServer(async (request, response) => {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
@@ -140,6 +145,11 @@ const server = http.createServer(async (request, response) => {
     response.end(JSON.stringify({ accepted: true }));
     return;
   }
+  const exits = { "quit-then-exit": () => quitThenExit(143), "quit-slowly": () => quitThenExit(0), "exit-now": () => process.exit(7) };
+  if (exits[body.args.message]) {
+    response.end(JSON.stringify({ accepted: true }), () => setTimeout(exits[body.args.message], 20));
+    return;
+  }
   const settlements = {
     "fail-this-run": { aborted: false, outcome: "error", errorMessage: "400: quota fixture" },
     "cancel-this-run": { aborted: true, outcome: "error", errorMessage: "This operation was aborted" },
@@ -161,17 +171,24 @@ const server = http.createServer(async (request, response) => {
 });
 server.listen(0, "127.0.0.1", async () => {
   const address = server.address();
-  const url = process.env.PI_SIMPLE_TEAM_TEST_CHILD_BAD_REGISTER ? "http://localhost:1234/deliver" : "http://127.0.0.1:" + address.port + "/deliver";
+  const badRegister = process.env.PI_SIMPLE_TEAM_TEST_CHILD_BAD_REGISTER || process.env.PI_SIMPLE_TEAM_TEST_BAD_REGISTER_MEMBER === process.env.PI_SIMPLE_TEAM_MEMBER;
+  const url = badRegister ? "http://localhost:1234/deliver" : "http://127.0.0.1:" + address.port + "/deliver";
   try {
+    if (process.env.PI_SIMPLE_TEAM_TEST_DIE_BEFORE_REGISTER_MEMBER === process.env.PI_SIMPLE_TEAM_MEMBER) process.exit(3);
     if (process.env.PI_SIMPLE_TEAM_TEST_REGISTRATION_GATE) await fetch(process.env.PI_SIMPLE_TEAM_TEST_REGISTRATION_GATE + "?name=" + process.env.PI_SIMPLE_TEAM_MEMBER);
     await parent("register", { url, sessionId, sessionFile, ...runtimeFacts });
     record({ type: "ready", url });
+    if (process.env.PI_SIMPLE_TEAM_TEST_QUIT_AFTER_REGISTER_MEMBER === process.env.PI_SIMPLE_TEAM_MEMBER) void quitThenExit(143);
   } catch (error) {
     record({ type: "register_error", error: String(error) });
     process.exit(1);
   }
 });
-process.on("SIGTERM", () => { server.close(() => process.exit(0)); });
+process.on("SIGTERM", () => {
+  record({ type: "sigterm", member: process.env.PI_SIMPLE_TEAM_MEMBER });
+  if (process.env.PI_SIMPLE_TEAM_TEST_SLOW_STOP_MEMBER === process.env.PI_SIMPLE_TEAM_MEMBER) { setTimeout(() => process.exit(0), 5000); return; }
+  server.close(() => process.exit(0));
+});
 `;
 
 const pathPiScript = String.raw`#!/usr/bin/env node
@@ -772,6 +789,7 @@ describe("unified child runtime", () => {
 			assert.deepEqual({ word: failed.word, phrase: failed.phrase }, { word: "error", phrase: "400: quota fixture" }, "A failed run must show as an error status carrying the provider's message.");
 			const errorRows = (await logRows()).filter((entry) => entry.kind === "error");
 			assert.deepEqual(errorRows.map((entry) => entry.summary), ["probe run failed: 400: quota fixture"], "The log must record the failed run once with the provider's message.");
+			assert.deepEqual(host.messages.map((message) => message.content), [`Teammate "probe" on team "failed-run" (team ID: fake-main-session-id-failed-run) ended its latest run on an error.\nCause: 400: quota fixture\nEarlier steps of that run may have completed. Check the teammate's status and team_log before sending it more work.`], "A failed run must wake main once with the provider's message.");
 			await host.execute("team_send_message", { targets: ["probe"], message: "cancel-this-run" });
 			await waitFor(() => settlements() === 2);
 			assert.deepEqual(await probeStatus(), failed, "A cancelled run must neither clear the failure nor replace its message.");
@@ -781,6 +799,7 @@ describe("unified child runtime", () => {
 			const recovered = await probeStatus();
 			assert.deepEqual({ word: recovered.word, phrase: recovered.phrase }, { word: "idle", phrase: "Spawned" }, "A completed run must restore the status the failure replaced.");
 			assert.equal((await logRows()).filter((entry) => entry.kind === "error").length, 1, "A completed run must not add error rows.");
+			assert.equal(host.messages.length, 1, "Neither a cancelled nor a completed run may notify main.");
 		} finally {
 			await host.shutdown();
 			fake.restore();
@@ -1135,6 +1154,164 @@ describe("unified child runtime", () => {
 	});
 });
 
+const exitNoticeGraceMilliseconds = 2_000;
+
+/** A gate the fake child waits on before it exits, so a test can fix when that exit happens. */
+function startExitGate(): { url: string; release: () => void; close: () => void } {
+	let release: () => void = () => undefined;
+	const opened = new Promise<void>((resolve) => { release = resolve; });
+	const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(): Promise<Response> { await opened; return new Response("exit"); } });
+	return { url: `http://127.0.0.1:${server.port}`, release, close: () => server.stop(true) };
+}
+
+/** Sets test-only fake-child switches for one test, and restores them. */
+function useFakeChildSwitches(switches: Record<string, string>): () => void {
+	const previous = Object.fromEntries(Object.keys(switches).map((name) => [name, process.env[name]]));
+	Object.assign(process.env, switches);
+	return () => {
+		for (const [name, value] of Object.entries(previous)) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+	};
+}
+
+const exitNotices = (host: ExtensionHost): string[] => host.messages.map((message) => String(message.content)).filter((content) => content.includes(") exited.\nCause:"));
+const reportedQuit = (eventsPath: string): boolean => lines(eventsPath).some((entry) => entry.type === "parent" && entry.tool === "event" && ((entry.args as JsonRecord).event as JsonRecord).type === "session_shutdown");
+const receivedSigterm = (eventsPath: string, member: string): boolean => lines(eventsPath).some((entry) => entry.type === "sigterm" && entry.member === member);
+
+describe("unexpected background-teammate exits notify main", () => {
+	test("a registered teammate's own exit notifies once after the grace, and a resume that dies before registering does not", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		const restoreSwitches = useFakeChildSwitches({});
+		try {
+			await host.execute("team_spawn", { teamName: "exits", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "x", systemPrompt: "Wait.", model: "fake/fake-model" }, { name: "y", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+			await host.execute("team_send_message", { targets: ["y"], message: "exit-now" });
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.deepEqual(exitNotices(host), [`Teammate "y" on team "exits" (team ID: fake-main-session-id-exits) exited.\nCause: exited (code=7, signal=null)\nCode 143 or 129 means its Pi shut down after SIGTERM or SIGHUP. Check team_log for its last stderr lines. Use team_resume to restart it.`], "A registered teammate that exits on its own must wake main once.");
+			process.env.PI_SIMPLE_TEAM_TEST_DIE_BEFORE_REGISTER_MEMBER = "y";
+			await assert.rejects(host.execute("team_resume", { team: "exits", teammates: ["y"], startIdle: true }), /exited \(code=3/, "The fixture's resumed teammate must die before it registers.");
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.equal(exitNotices(host).length, 1, "A resumed teammate that dies before registering is a tool error, not an exit notice, even with its session ID known.");
+		} finally {
+			delete process.env.PI_SIMPLE_TEAM_TEST_DIE_BEFORE_REGISTER_MEMBER;
+			restoreSwitches();
+			await host.shutdown();
+			fake.restore();
+		}
+	}, 20_000);
+
+	test("an add rollback that stops an already registered teammate does not notify", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		const restoreSwitches = useFakeChildSwitches({ PI_SIMPLE_TEAM_TEST_BAD_REGISTER_MEMBER: "e" });
+		try {
+			await host.execute("team_spawn", { teamName: "add-rollback", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "x", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+			await assert.rejects(host.execute("team_add_teammates", { team: "add-rollback", startIdle: true, teammates: [{ name: "d", systemPrompt: "Wait.", model: "fake/fake-model" }, { name: "e", systemPrompt: "Wait.", model: "fake/fake-model" }] }));
+			assert.ok(receivedSigterm(fake.eventsPath, "d"), "The rollback must stop the registered teammate d.");
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.deepEqual(exitNotices(host), [], "A stop the runtime asked for is not unexpected.");
+		} finally {
+			restoreSwitches();
+			await host.shutdown();
+			fake.restore();
+		}
+	}, 20_000);
+
+	test("team_shutdown does not notify for a teammate that already shut down and exits during a slow sibling stop", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		const gate = startExitGate();
+		const restoreSwitches = useFakeChildSwitches({ PI_SIMPLE_TEAM_TEST_SLOW_STOP_MEMBER: "b", PI_SIMPLE_TEAM_TEST_EXIT_GATE: gate.url });
+		try {
+			await host.execute("team_spawn", { teamName: "slow-stop", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "a", systemPrompt: "Wait.", model: "fake/fake-model" }, { name: "b", systemPrompt: "Wait.", model: "fake/fake-model", canManageOwnTeams: true }] });
+			await host.execute("team_send_message", { targets: ["a"], message: "quit-then-exit" });
+			await waitFor(() => reportedQuit(fake.eventsPath));
+			await Bun.sleep(100);
+			const stopping = host.execute("team_shutdown", { team: "slow-stop" });
+			await waitFor(() => receivedSigterm(fake.eventsPath, "b"));
+			gate.release();
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.ok(!receivedSigterm(fake.eventsPath, "a"), "The fixture must reach the path where the parent never signals a.");
+			assert.deepEqual(exitNotices(host), [], "An exit while its team is stopping is not unexpected.");
+			await stopping;
+		} finally {
+			restoreSwitches();
+			gate.close();
+			await host.shutdown();
+			fake.restore();
+		}
+	}, 20_000);
+
+	test("a spawn rollback does not notify for a registered teammate that quit before the rollback reached it", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		const gate = startExitGate();
+		const restoreSwitches = useFakeChildSwitches({ PI_SIMPLE_TEAM_TEST_QUIT_AFTER_REGISTER_MEMBER: "a", PI_SIMPLE_TEAM_TEST_SLOW_STOP_MEMBER: "b", PI_SIMPLE_TEAM_TEST_BAD_REGISTER_MEMBER: "c", PI_SIMPLE_TEAM_TEST_EXIT_GATE: gate.url });
+		try {
+			const spawning = host.execute("team_spawn", { teamName: "spawn-rollback", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "a", systemPrompt: "Wait.", model: "fake/fake-model" }, { name: "b", systemPrompt: "Wait.", model: "fake/fake-model", canManageOwnTeams: true }, { name: "c", systemPrompt: "Wait.", model: "fake/fake-model" }] }).then(() => undefined, (error: unknown) => error);
+			await waitFor(() => receivedSigterm(fake.eventsPath, "b"), 5_000);
+			assert.ok(reportedQuit(fake.eventsPath) && !receivedSigterm(fake.eventsPath, "a"), "a must have quit before the rollback reached it, so the parent never signals a.");
+			gate.release();
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.deepEqual(exitNotices(host), [], "An exit during a spawn rollback is not unexpected.");
+			assert.ok(await spawning instanceof Error, "The fixture's spawn must fail on c's registration.");
+		} finally {
+			restoreSwitches();
+			gate.close();
+			await host.shutdown();
+			fake.restore();
+		}
+	}, 20_000);
+
+	test("main's own shutdown does not notify for a later team's teammate that exits while an earlier team stops slowly", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		const gate = startExitGate();
+		const restoreSwitches = useFakeChildSwitches({ PI_SIMPLE_TEAM_TEST_SLOW_STOP_MEMBER: "b", PI_SIMPLE_TEAM_TEST_EXIT_GATE: gate.url });
+		try {
+			await host.execute("team_spawn", { teamName: "first", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "b", systemPrompt: "Wait.", model: "fake/fake-model", canManageOwnTeams: true }] });
+			await host.execute("team_spawn", { teamName: "second", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "a", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+			await host.execute("team_send_message", { targets: ["a"], message: "quit-then-exit" });
+			await waitFor(() => reportedQuit(fake.eventsPath));
+			await Bun.sleep(100);
+			const shuttingDown = host.shutdown();
+			await waitFor(() => receivedSigterm(fake.eventsPath, "b"));
+			gate.release();
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.deepEqual(exitNotices(host), [], "An exit while main shuts down is not unexpected.");
+			await shuttingDown;
+		} finally {
+			restoreSwitches();
+			gate.close();
+			fake.restore();
+		}
+	}, 20_000);
+
+	test("a self-quit's late exit after a resume does not notify", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		const gate = startExitGate();
+		const restoreSwitches = useFakeChildSwitches({ PI_SIMPLE_TEAM_TEST_EXIT_GATE: gate.url });
+		try {
+			await host.execute("team_spawn", { teamName: "quit-resume", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "x", systemPrompt: "Wait.", model: "fake/fake-model" }, { name: "y", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+			await host.execute("team_send_message", { targets: ["y"], message: "quit-slowly" });
+			await waitFor(() => reportedQuit(fake.eventsPath));
+			await Bun.sleep(100);
+			await host.execute("team_resume", { team: "quit-resume", teammates: ["y"], startIdle: true });
+			gate.release();
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.deepEqual(exitNotices(host), [], "The old process's self-quit is judged by its own record, not the resumed process's.");
+		} finally {
+			restoreSwitches();
+			gate.close();
+			await host.shutdown();
+			fake.restore();
+		}
+	}, 20_000);
+});
+
 describe("visible Herdr teammates", () => {
 	test("the live team dashboard reports mixed transports from actual members", async () => {
 		const fake = installFakeCommands();
@@ -1154,6 +1331,20 @@ describe("visible Herdr teammates", () => {
 				component.handleInput?.("\u001b");
 			} } } as unknown as ExtensionCommandContext);
 			assert.match(output, /RPC \+ Herdr/, "The dashboard must not label a mixed team as only RPC.");
+		} finally {
+			await host.shutdown();
+			fake.restore();
+		}
+	});
+
+	test("a failed run of a Herdr pane teammate notifies main through the same parent path", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		try {
+			await host.execute("team_spawn", { teamName: "visible-failure", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "visible", systemPrompt: "Wait.", model: "fake/fake-model", showOnHerdrPane: true }] });
+			await host.execute("team_send_message", { targets: ["visible"], message: "fail-this-run" });
+			await waitFor(() => host.messages.length > 0);
+			assert.match(String(host.messages[0]?.content), /^Teammate "visible" on team "visible-failure" .* ended its latest run on an error\.\nCause: 400: quota fixture\n/, "A Herdr teammate's failed run must reach main like a background teammate's.");
 		} finally {
 			await host.shutdown();
 			fake.restore();

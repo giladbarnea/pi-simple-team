@@ -13,9 +13,11 @@ import type { TeamLogEntry } from "../teamlog.ts";
 type JsonRecord = Record<string, unknown>;
 type ToolResult = { content: Array<{ type: string; text: string }>; details: JsonRecord };
 type RegisteredTool = { name: string; execute: (id: string, params: JsonRecord, signal: AbortSignal, update: undefined, context: unknown) => Promise<ToolResult> };
-type Scenario = "retry" | "cancel" | "cancel-start" | "complete" | "error" | "first-error" | "first-error-cancel" | "interrupt" | "queued";
+type Scenario = "retry" | "cancel" | "cancel-start" | "complete" | "error" | "first-error" | "first-error-cancel" | "interrupt" | "queued" | "rate-limited" | "lifecycle" | "held";
 
 const firstTurnProviderError = "Third-party apps now draw from your extra usage fixture";
+const exitNoticeGraceMilliseconds = 2_000;
+const rateLimitError = { type: "error", error: { type: "rate_limit_error", message: "This request would exceed your account's rate limit. Please try again later." } };
 
 async function waitFor(check: () => Promise<boolean>, label: string): Promise<void> {
 	for (let attempt = 0; attempt < 500; attempt += 1) {
@@ -43,8 +45,9 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 			requestCount += 1;
 			if (scenario === "error") return Response.json({ error: { message: "Invalid API key fixture" } }, { status: 401 });
 			if ((scenario === "first-error" || scenario === "first-error-cancel") && requestCount === 1) return Response.json({ error: { message: firstTurnProviderError } }, { status: 400 });
+			if (scenario === "rate-limited") return Response.json(rateLimitError, { status: 429 });
 			if (scenario === "retry" && requestCount === 1) return Response.json({ error: { message: "overloaded fixture" } }, { status: 503 });
-			if (scenario === "retry" || ((scenario === "interrupt" || scenario === "queued") && requestCount === 1)) await retryGate;
+			if (scenario === "retry" || ((scenario === "interrupt" || scenario === "queued" || scenario === "held") && requestCount === 1)) await retryGate;
 			const chunk = (delta: JsonRecord, finishReason: string | null): string => `data: ${JSON.stringify({ id: "settlement-probe", object: "chat.completion.chunk", created: 1, model: "probe", choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`;
 			return new Response(chunk({ role: "assistant", content: "Successful response." }, null) + chunk({}, "stop") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
 		},
@@ -56,13 +59,17 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 			{ id: "thinker", name: "Settlement thinker", reasoning: true, thinkingLevelMap: { xhigh: "xhigh" }, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32000, maxTokens: 1000 },
 		],
 	} } }));
-	fs.writeFileSync(path.join(agentDirectory, "settings.json"), JSON.stringify({ defaultThinkingLevel: "high", compaction: { enabled: false }, retry: { enabled: scenario === "retry", maxRetries: 1, baseDelayMs: 10, provider: { maxRetries: 0 } } }));
+	fs.writeFileSync(path.join(agentDirectory, "settings.json"), JSON.stringify({ defaultThinkingLevel: "high", compaction: { enabled: false }, retry: { enabled: scenario === "retry" || scenario === "rate-limited", maxRetries: scenario === "rate-limited" ? 3 : 1, baseDelayMs: 10, provider: { maxRetries: 0 } } }));
 	const cancellationExtension = path.join(directory, "cancel-after-response.ts");
 	fs.writeFileSync(cancellationExtension, 'export default function (pi) { pi.on("agent_before_settle", (_event, context) => { context.abort(); }); }\n');
 	const cancelNextRunMarker = path.join(directory, "cancel-next-run");
 	const cancelBeforeRequestExtension = path.join(directory, "cancel-before-request.ts");
 	fs.writeFileSync(cancelBeforeRequestExtension, `import * as fs from "node:fs";\nexport default function (pi) { pi.on("agent_start", (_event, context) => { if (fs.existsSync(${JSON.stringify(cancelNextRunMarker)})) { fs.rmSync(${JSON.stringify(cancelNextRunMarker)}); context.abort(); } }); }\n`);
-	const scenarioExtensions: Partial<Record<Scenario, string[]>> = { cancel: [cancellationExtension], "cancel-start": [cancelBeforeRequestExtension], "first-error-cancel": [cancelBeforeRequestExtension] };
+	const childPidFile = path.join(directory, "child.pid");
+	const quitAfterNextRunMarker = path.join(directory, "quit-after-next-run");
+	const lifecycleExtension = path.join(directory, "lifecycle-probe.ts");
+	fs.writeFileSync(lifecycleExtension, `import * as fs from "node:fs";\nexport default function (pi) {\n\tpi.on("session_start", () => { fs.writeFileSync(${JSON.stringify(childPidFile)}, String(process.pid)); });\n\tpi.on("agent_settled", (_event, context) => { if (fs.existsSync(${JSON.stringify(quitAfterNextRunMarker)})) context.shutdown(); });\n}\n`);
+	const scenarioExtensions: Partial<Record<Scenario, string[]>> = { cancel: [cancellationExtension], "cancel-start": [cancelBeforeRequestExtension], "first-error-cancel": [cancelBeforeRequestExtension], lifecycle: [lifecycleExtension], held: [lifecycleExtension] };
 	const launcher = path.join(directory, "pi-launcher");
 	const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 	fs.writeFileSync(launcher, `#!/bin/sh\nexec ${quote(executable)} --no-skills --no-context-files --no-prompt-templates --no-themes "$@"\n`, { mode: 0o755 });
@@ -72,6 +79,7 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 	process.env.PI_OFFLINE = "1";
 	const tools = new Map<string, RegisteredTool>();
 	const shutdownHandlers: Array<() => Promise<void>> = [];
+	const mainMessages: JsonRecord[] = [];
 	const context = {
 		cwd: directory, scopedModels: [], modelRegistry: { getAvailable: () => [{ provider: "local-settlement", id: "probe" }, { provider: "local-settlement", id: "thinker" }], find: () => undefined },
 		sessionManager: { getCwd: () => directory, getSessionId: () => `settlement-${scenario}`, getSessionFile: () => options.parentSessionFile ?? path.join(directory, "main.jsonl") },
@@ -83,6 +91,7 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 		},
 		registerCommand: () => undefined, registerMessageRenderer: () => undefined,
 		registerTool: (tool: RegisteredTool) => tools.set(tool.name, tool),
+		sendMessage: (message: JsonRecord) => { mainMessages.push(message); },
 	} as unknown as ExtensionAPI;
 	const execute = async (name: string, parameters: JsonRecord): Promise<ToolResult> => {
 		const tool = tools.get(name);
@@ -116,6 +125,9 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 			},
 			log: async (): Promise<ToolResult> => execute("team_log", { targets: ["settlement"], limit: 100 }),
 			cancelNextRun: (): void => fs.writeFileSync(cancelNextRunMarker, ""),
+			quitAfterNextRun: (): void => fs.writeFileSync(quitAfterNextRunMarker, ""),
+			childPid: (): number => Number(fs.readFileSync(childPidFile, "utf8")),
+			notices: (): string[] => mainMessages.map((message) => String(message.content)),
 			status: async (): Promise<JsonRecord> => ((await execute("team_status", { team: "settlement" })).details.status as Record<string, JsonRecord>).probe,
 			send: async (interrupt: boolean, recipient = "probe"): Promise<ToolResult> => execute("team_send_message", { targets: [recipient], message: "Continue with this message.", interrupt }),
 			active: async (): Promise<boolean> => {
@@ -395,10 +407,13 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("teammate settl
 			assert.equal(errorRows.length, 1, `The log must record the failed turn once as an error. Rows: ${failedLog.content[0].text}`);
 			assert.match(errorRows[0].summary, new RegExp(firstTurnProviderError), "The error row must carry the provider's message.");
 			assert.match(failedLog.content[0].text, new RegExp(firstTurnProviderError), "Main must see the provider's message in team_log.");
+			assert.equal(child.notices().length, 1, "A failed run must wake main once.");
+			assert.match(child.notices()[0], new RegExp(`ended its latest run on an error\\.\\nCause: .*${firstTurnProviderError}`), "The notice must carry the provider's message.");
 			await child.send(false);
 			await waitFor(async () => child.requests() === 2 && !(await child.active()), "the successful second turn to settle");
 			assert.equal((await child.status()).word, "idle", "A later successful turn must clear the runtime error status.");
 			assert.equal(((await child.log()).details.entries as TeamLogEntry[]).filter((entry) => entry.kind === "error").length, 1, "A successful turn must not add error rows.");
+			assert.equal(child.notices().length, 1, "A recovery must not notify main again.");
 		} finally {
 			await child.close();
 		}
@@ -416,6 +431,7 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("teammate settl
 			const cancelled = await child.status();
 			assert.deepEqual({ word: cancelled.word, phrase: cancelled.phrase }, { word: "idle", phrase: "Spawned" }, "A cancelled run is not a failed run.");
 			assert.deepEqual(entries.filter((entry) => entry.kind === "error"), [], "A cancelled run must not log a run failure.");
+			assert.deepEqual(child.notices(), [], "A cancelled run must not notify main.");
 		} finally {
 			await child.close();
 		}
@@ -435,6 +451,90 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("teammate settl
 			assert.equal(((await child.log()).details.entries as TeamLogEntry[]).filter((entry) => entry.kind === "error").length, 1, "Cancellation must not add an error row.");
 		} finally {
 			await child.close();
+		}
+	}, 30000);
+
+	test("a run that exhausts Pi's retries on rate limits notifies main once", async () => {
+		const child = await startTeam("rate-limited", false, { automaticStart: true });
+		try {
+			await waitFor(async () => child.requests() === 4 && !(await child.active()), "four rate-limited attempts to settle");
+			assert.equal(child.notices().length, 1, `One failed run must give one notice. Notices: ${JSON.stringify(child.notices())}`);
+			assert.match(child.notices()[0], /ended its latest run on an error\.\nCause: 429: .*rate_limit_error/, "The notice must carry the final 429 message.");
+		} finally {
+			await child.close();
+		}
+	}, 30000);
+
+	test.each([["SIGTERM", 143], ["SIGHUP", 129]] as const)("an outside %s to a registered teammate notifies main once with code %d", async (signal, code) => {
+		const child = await startTeam("lifecycle", false, { automaticStart: true });
+		try {
+			await waitFor(async () => child.requests() === 1 && !(await child.active()), "the first run to settle");
+			process.kill(child.childPid(), signal);
+			await waitFor(async () => ((await child.log()).details.entries as TeamLogEntry[]).some((entry) => entry.kind === "exit" && entry.summary.startsWith("exited")), "the child to exit");
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.deepEqual(child.notices().map((notice) => notice.split("\n")[1]), [`Cause: exited (code=${code}, signal=null)`], "An outside signal must wake main once with the exit code.");
+		} finally {
+			await child.close();
+		}
+	}, 30000);
+
+	test("a SIGKILL during a run gives one exit notice and no failed-run notice", async () => {
+		const child = await startTeam("held");
+		try {
+			await waitFor(async () => child.requests() === 1 && await child.active(), "the held provider request");
+			process.kill(child.childPid(), "SIGKILL");
+			await waitFor(async () => ((await child.log()).details.entries as TeamLogEntry[]).some((entry) => entry.kind === "exit"), "the child to exit");
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.deepEqual(child.notices().map((notice) => notice.split("\n")[1]), ["Cause: exited (code=null, signal=SIGKILL)"], "A killed run has no settlement, so only the exit notifies.");
+		} finally {
+			await child.close();
+		}
+	}, 30000);
+
+	test("a teammate that quits itself sends no notice", async () => {
+		const child = await startTeam("lifecycle", true);
+		try {
+			child.quitAfterNextRun();
+			await child.send(false);
+			await waitFor(async () => ((await child.log()).details.entries as TeamLogEntry[]).some((entry) => entry.kind === "exit" && entry.summary === "exited (code=0, signal=null)"), "the self-quit exit");
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.deepEqual(child.notices(), [], "A self-quit (code 0 after a quit shutdown) is excluded.");
+		} finally {
+			await child.close();
+		}
+	}, 30000);
+
+	test("a SIGHUP to main's whole process group sends no notice when main's shutdown starts after the child exits (stand-in host)", async () => {
+		const executable = Bun.which("pi");
+		assert.ok(executable, "The real-Pi check requires Pi on PATH.");
+		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-team-group-signal-"));
+		try {
+			const host = Bun.spawn(["bun", path.join(import.meta.dir, "group-signal-host.ts"), directory, executable], { stdout: "pipe", stderr: "inherit", env: { ...process.env, PI_CODING_AGENT_DIR: path.join(directory, "agent") }, detached: true });
+			const reader = host.stdout.getReader();
+			let buffered = "";
+			const events: JsonRecord[] = [];
+			const nextEvent = async (): Promise<JsonRecord> => {
+				while (!buffered.includes("\n")) {
+					const { value, done } = await reader.read();
+					if (done) throw new Error(`Host ended early. Output: ${buffered}`);
+					buffered += new TextDecoder().decode(value);
+				}
+				const newline = buffered.indexOf("\n");
+				const event = JSON.parse(buffered.slice(0, newline)) as JsonRecord;
+				buffered = buffered.slice(newline + 1);
+				events.push(event);
+				return event;
+			};
+			assert.equal((await nextEvent()).phase, "ready", "The host must start its teammate first.");
+			process.kill(-host.pid, "SIGHUP");
+			const exited = await nextEvent();
+			assert.equal(exited.phase, "child-exited", `The child must exit before the host's shutdown starts. Events: ${JSON.stringify(events)}`);
+			assert.equal(exited.summary, "exited (code=129, signal=null)", "The group signal must reach the child.");
+			const finished = await nextEvent();
+			assert.deepEqual(finished.notices, [], "An exit caused by main's own group signal must not notify main.");
+			await host.exited;
+		} finally {
+			fs.rmSync(directory, { recursive: true, force: true });
 		}
 	}, 30000);
 

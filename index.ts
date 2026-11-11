@@ -49,6 +49,13 @@ interface RunFailure {
 	replaced: TeamStatus;
 }
 
+/** What one background child process has done. Its exit handler judges that process only, even after a resume starts another. */
+interface RpcProcessRecord {
+	registered: boolean;
+	stopRequested: boolean;
+	quitReported: boolean;
+}
+
 interface TeammateState {
 	name: string;
 	prompt: string;
@@ -63,6 +70,7 @@ interface TeammateState {
 	sessionMaterialized: boolean;
 	lastModelActivityAt?: string;
 	process?: ChildProcess;
+	processRecord?: RpcProcessRecord;
 	paneId?: string;
 	deliveryUrl?: string;
 	ready?: Promise<void>;
@@ -93,6 +101,7 @@ interface TeamState {
 	lease?: TeamLease;
 	log: TeamLogEntry[];
 	nextLogSequence: number;
+	stopping?: boolean;
 }
 
 const teamLiteExtensionPath = fileURLToPath(import.meta.url);
@@ -100,6 +109,8 @@ const thinkingLevels = ["low", "medium", "high", "xhigh", "max"] as const;
 const defaultThinkingLevel = "xhigh" satisfies ThinkingLevel;
 const deliveryTimeoutMilliseconds = 30_000;
 const defaultRpcShutdownGraceMilliseconds = 1_000;
+/** Time for main's own shutdown to mark its teams before an exit notice is sent, for signals that reach main and its teammates together. */
+const exitNoticeGraceMilliseconds = 2_000;
 const teamMessageType = "pi-simple-team";
 const teams = new Map<string, TeamState>();
 const callbackToken = crypto.randomBytes(24).toString("hex");
@@ -334,10 +345,7 @@ function enqueueDelivery(team: TeamState, from: string, recipient: TeammateState
 		const notification = `Message delivery failed for teammate "${recipient.name}" on team "${team.name}" (team ID: ${team.id ?? team.name}).\nOriginal message:\n${message}\nCause: ${errorMessage}\nCheck the teammate's status before retrying.`;
 		try {
 			if (from === "main") {
-				team.ownerPi.sendMessage(
-					{ customType: teamMessageType, content: notification, display: true, details: { team: team.name, from: "runtime", sentAt: new Date().toISOString(), message: notification } },
-					{ deliverAs: "steer", triggerTurn: true },
-				);
+				pushOwnerNotice(team, notification);
 				return;
 			}
 			await deliverToTeammate(team, "runtime", team.members.get(from)!, notification, false);
@@ -345,6 +353,40 @@ function enqueueDelivery(team: TeamState, from: string, recipient: TeammateState
 			appendTeamLog(team, { team: team.name, teammate: from, direction: "runtime", kind: "error", summary: `Could not notify sender "${from}" of delivery failure: ${notificationError instanceof Error ? notificationError.message : String(notificationError)}` });
 		}
 	});
+}
+
+/** Wakes the team owner with a runtime notice. */
+function pushOwnerNotice(team: TeamState, notification: string): void {
+	team.ownerPi.sendMessage(
+		{ customType: teamMessageType, content: notification, display: true, details: { team: team.name, from: "runtime", sentAt: new Date().toISOString(), message: notification } },
+		{ deliverAs: "steer", triggerTurn: true },
+	);
+}
+
+/** A failed run or an exit has no sender, so its notice goes to the team owner. A push that throws becomes an error row. */
+function notifyOwner(team: TeamState, teammate: TeammateState, notification: string): void {
+	try {
+		pushOwnerNotice(team, notification);
+	} catch (error) {
+		appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "error", summary: preview(`Could not notify main about ${teammate.name}: ${error instanceof Error ? error.message : String(error)}`) });
+	}
+}
+
+/**
+ * A notice for an exit nobody asked for. A self-quit (code 0 after a quit shutdown) and a stop by the parent are excluded.
+ * @example isUnexpectedExit({ registered: true, stopRequested: false, quitReported: true }, 143, null) // true
+ */
+function isUnexpectedExit(record: RpcProcessRecord, code: number | null, signal: NodeJS.Signals | null): boolean {
+	const selfQuit = code === 0 && signal === null && record.quitReported;
+	return record.registered && !record.stopRequested && !selfQuit;
+}
+
+/** Waits for main's own shutdown to mark the team first, so a signal that reaches main and its teammates together sends nothing. */
+function scheduleExitNotice(team: TeamState, teammate: TeammateState, code: number | null, signal: NodeJS.Signals | null): void {
+	setTimeout(() => {
+		if (team.stopping || teams.get(team.id ?? team.name) !== team) return;
+		notifyOwner(team, teammate, `Teammate "${teammate.name}" on team "${team.name}" (team ID: ${team.id ?? team.name}) exited.\nCause: exited (code=${code}, signal=${signal})\nCode 143 or 129 means its Pi shut down after SIGTERM or SIGHUP. Check team_log for its last stderr lines. Use team_resume to restart it.`);
+	}, exitNoticeGraceMilliseconds).unref();
 }
 
 async function kickoffTeammates(team: TeamState, teammates: TeammateState[], startIdle: boolean, resumption?: { instructions?: string; emptyRestarts: TeammateState[] }): Promise<void> {
@@ -575,7 +617,9 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 		stdio: ["pipe", "ignore", "pipe"],
 		env: { ...process.env, ...childEnvironmentOverrides(team, teammate, participants) },
 	});
+	const record: RpcProcessRecord = { registered: false, stopRequested: false, quitReported: false };
 	teammate.process = proc;
+	teammate.processRecord = record;
 	teammate.alive = true;
 
 	proc.stderr?.on("data", (chunk: Buffer | string) => {
@@ -587,6 +631,7 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 		teammate.rejectReady?.(new Error(`${teammate.name} exited (code=${code}, signal=${signal})`));
 		team.statuses.set(teammate.name, status("stopped", `Exited code=${code} signal=${signal}`));
 		appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "exit", summary: `exited (code=${code}, signal=${signal})`, details: { code, signal } });
+		if (isUnexpectedExit(record, code, signal)) scheduleExitNotice(team, teammate, code, signal);
 	});
 	appendSpawnLog(team, teammate);
 }
@@ -726,6 +771,7 @@ async function stopRpcTeammate(teammate: TeammateState): Promise<void> {
 			resolve();
 		};
 		processToStop.once("exit", resolveExit);
+		teammate.processRecord!.stopRequested = true;
 		processToStop.kill("SIGTERM");
 		if (!teammate.canManageOwnTeams) {
 			forceKillTimeout = setTimeout(() => processToStop.kill("SIGKILL"), defaultRpcShutdownGraceMilliseconds);
@@ -736,6 +782,7 @@ async function stopRpcTeammate(teammate: TeammateState): Promise<void> {
 }
 
 async function shutdownTeam(team: TeamState): Promise<string[]> {
+	team.stopping = true;
 	const errors: string[] = [];
 	for (const teammate of team.members.values()) {
 		if (teammate.transport === "herdr") {
@@ -855,6 +902,7 @@ function recordRunOutcome(team: TeamState, teammate: TeammateState, event: JsonR
 		teammate.runFailure = { failure, replaced: current === teammate.runFailure?.failure ? teammate.runFailure.replaced : current };
 		team.statuses.set(teammate.name, failure);
 		appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "error", summary: preview(`${teammate.name} run failed: ${errorMessage}`), details: { error: errorMessage } });
+		notifyOwner(team, teammate, `Teammate "${teammate.name}" on team "${team.name}" (team ID: ${team.id ?? team.name}) ended its latest run on an error.\nCause: ${errorMessage}\nEarlier steps of that run may have completed. Check the teammate's status and team_log before sending it more work.`);
 		return;
 	}
 	if (event.outcome !== "completed" || !teammate.runFailure) return;
@@ -871,6 +919,7 @@ function handleChildEvent(team: TeamState, teammate: TeammateState, event: JsonR
 		teammate.alive = false;
 		teammate.deliveryUrl = undefined;
 		if (event.reason === "quit") {
+			if (teammate.processRecord) teammate.processRecord.quitReported = true;
 			team.statuses.set(teammate.name, status("stopped", "Session shut down"));
 			appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "exit", summary: "session shut down", details: { reason: event.reason } });
 		}
@@ -917,6 +966,7 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 			teammate.alive = true;
 			teammate.active = false;
 			team.statuses.set(teammate.name, status("idle", "Spawned"));
+			if (teammate.processRecord) teammate.processRecord.registered = true;
 			teammate.resolveReady?.();
 			writeJson(response, 200, { accepted: true, team: team.name, from });
 			return;
@@ -1106,9 +1156,9 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", async () => {
 		for (const timer of reminderTimers) clearTimeout(timer);
 		reminderTimers.clear();
-		for (const team of [...teams.values()]) {
-			if (team.owner === owner) await shutdownTeam(team);
-		}
+		const ownedTeams = [...teams.values()].filter((team) => team.owner === owner);
+		for (const team of ownedTeams) team.stopping = true;
+		for (const team of ownedTeams) await shutdownTeam(team);
 		closeCallbackServerIfUnused();
 	});
 

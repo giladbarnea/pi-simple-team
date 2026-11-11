@@ -148,7 +148,8 @@ Your main uses `team_log` when it needs to understand the chain of events in hig
 
 Provides main a timestamped, filterable, append-only record of the team’s messages, tool calls, and lifecycle events.
 Attempts can end before retries finish. A separate run row reports final settlement as ended or cancelled. Ended does not imply success.
-A run that ends on a provider error adds an error row with the provider's message and sets the teammate's status to `error` with that message, until a later run completes.
+A run that ends on a provider error adds an error row with the provider's message and sets the teammate's status to `error` with that message, until a later run completes. Main also gets a message saying so.
+A background teammate that exits without being stopped, after it registered, also sends main a message with its exit code. A teammate that quits itself (exit code 0) does not. Herdr pane teammates have no exit message yet.
 
 ### 🌅 Herdr Support
 
