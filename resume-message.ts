@@ -25,3 +25,15 @@ export function composeResumptionMessage(teamName: string, teammateName: string,
 		instructions,
 	].filter((part) => part !== undefined).join("\n\n");
 }
+
+/**
+ * Tell a teammate restarted with new settings what changed, and which teams it manages the restart stopped, so it resumes them.
+ * @example composeSettingsMessage("thinking: high", []) // "Main changed your configuration: thinking: high. You continue in this conversation with these settings."
+ */
+export function composeSettingsMessage(settings: string, stoppedTeams: ReadonlyArray<{ name: string; id: string }>): string {
+	const stopped = stoppedTeams.map((team) => `"${team.name}" (team ID: ${team.id})`).join(", ");
+	return [
+		`Main changed your configuration: ${settings}. You continue in this conversation with these settings.`,
+		stoppedTeams.length > 0 && `Your restart stopped the teams you manage: ${stopped}. Their teammates were idle, and their conversations are kept. Resume them with team_resume when you continue.`,
+	].filter(Boolean).join("\n\n");
+}

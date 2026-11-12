@@ -25,7 +25,7 @@ interface ToolRenderContextLike {
 	toolCallId?: string;
 }
 
-export type TeamToolName = "team_spawn" | "team_list" | "team_resume" | "team_add_teammates" | "team_send_message" | "team_status" | "team_log" | "team_shutdown";
+export type TeamToolName = "team_spawn" | "team_list" | "team_resume" | "team_add_teammates" | "team_update_teammates" | "team_send_message" | "team_status" | "team_log" | "team_shutdown";
 
 export interface TeamStatusView {
 	word: string;
@@ -286,6 +286,18 @@ export function teamResumeLines(theme: ThemeLike, team: string, resumed: Resumed
 		note: restored === undefined ? "" : `${restored ? "history restored" : "empty session"}, ${active ? "working" : "idle"}`,
 	}));
 	return [header, ...teammateTree(theme, rows, roster, (row, stem) => (row.note ? [`${stem}${theme.fg("muted", row.note)}`] : []))];
+}
+
+export interface UpdatedMemberView extends TeammateView {
+	held: boolean;
+}
+
+export function teamUpdateLines(theme: ThemeLike, team: string, targets: UpdatedMemberView[], roster: string[] = []): TeamLine[] {
+	const heldCount = targets.filter((member) => member.held).length;
+	const counts = [`${targets.length - heldCount} updated`, heldCount > 0 && `${heldCount} held`].filter(Boolean).join(", ");
+	const header = headerLine(theme, "Team Update", theme.fg("accent", team), [theme.fg("muted", counts)]);
+	const rows = targets.map(({ held, ...member }) => ({ ...member, status: held ? "held" : "updated", note: held ? "updates when its run settles" : "restarted, history kept" }));
+	return [header, ...teammateTree(theme, rows, roster, (row, stem) => [`${stem}${theme.fg("muted", row.note)}`])];
 }
 
 export interface TeamListMemberView extends TeammateView {
@@ -762,6 +774,10 @@ function callBodyFor(tool: TeamToolName, theme: ThemeLike, args: Record<string, 
 		const teammates = (args.teammates ?? []) as unknown[];
 		return callBody(theme, "Team Add", accentTeam(theme, args.team), [theme.fg("muted", plural(teammates.length, "teammate"))]);
 	}
+	if (tool === "team_update_teammates") {
+		const teammates = (args.teammates ?? []) as unknown[];
+		return callBody(theme, "Team Update", accentTeam(theme, args.team), [theme.fg("muted", plural(teammates.length, "teammate"))]);
+	}
 	if (tool === "team_send_message") {
 		const message = String(args.message ?? "");
 		return callBody(theme, "Team Send", sendTarget(theme, (args.targets ?? []) as string[], roster), sendStats(theme, message, hasInterruption(args.interrupt)));
@@ -802,6 +818,9 @@ function resultLinesFor(tool: TeamToolName, theme: ThemeLike, args: Record<strin
 	if (tool === "team_resume") {
 		const teammates = (details.teammates as Array<ResumedMemberView & { contextRestored?: boolean }>).map(({ contextRestored, ...member }) => ({ ...member, restored: contextRestored }));
 		return teamResumeLines(theme, String(details.teamName), teammates, teammates.length, roster);
+	}
+	if (tool === "team_update_teammates") {
+		return teamUpdateLines(theme, String(details.teamName), details.teammates as UpdatedMemberView[], roster);
 	}
 	if (tool === "team_add_teammates") {
 		const memberCount = Object.keys((details.status ?? {}) as Record<string, unknown>).length;

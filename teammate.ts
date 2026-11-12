@@ -12,6 +12,9 @@ export interface Teammate {
 	extensionPaths?: string[];
 }
 
+/** Settings main can change for an existing teammate. Its instructions and fork choice only matter at creation. */
+export type TeammateUpdate = { teammate: string } & Partial<Pick<Teammate, "model" | "thinking" | "extensionPaths">>;
+
 export type TeammateRecord = Required<Omit<Teammate, "extensionPaths">> & {
 	extensionPaths?: string[];
 	teammateId: string;

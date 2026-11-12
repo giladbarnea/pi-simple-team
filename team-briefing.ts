@@ -16,7 +16,7 @@ export function composeTeamBriefing(
 		`Participants: main, ${participants.join(", ")}.`,
 		"Use team_send_message to talk to teammates, send_main_message to talk to the main agent, and team_status to set/read public statuses.",
 		"The main agent is the current coordinator. Use the team tools and available session history to share relevant context.",
-		canManageOwnTeams && "You can create and manage teams of your own with team_spawn, team_list, team_resume, team_add_teammates, team_send_message, team_status, get_context_window_usage, team_log, and team_shutdown.",
+		canManageOwnTeams && "You can create and manage teams of your own with team_spawn, team_list, team_resume, team_add_teammates, team_update_teammates, team_send_message, team_status, get_context_window_usage, team_log, and team_shutdown.",
 		canManageOwnTeams && "Your manager tools are scoped to teams created by this Pi session. They cannot manage this parent team or teams owned by other sessions.",
 		canManageOwnTeams && "For team_status, omit `team` to operate on this parent team. Set `team` to operate on a team you own.",
 		canManageOwnTeams && "For get_context_window_usage, omit `targets` to get your own usage. Set `targets` to inspect teammates in teams you own.",

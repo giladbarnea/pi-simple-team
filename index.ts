@@ -6,12 +6,12 @@ import http from "node:http";
 import * as net from "node:net";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineTool, type ContextUsage, type ExtensionAPI, type ExtensionContext, getMarkdownTheme, getPackageDir } from "@earendil-works/pi-coding-agent";
+import { defineTool, type ContextUsage, type ExtensionAPI, type ExtensionContext, getMarkdownTheme, getPackageDir, SessionManager } from "@earendil-works/pi-coding-agent";
 import { formatContextWindowReport, requireKnownContextUsage, type KnownContextUsage } from "./context-window.ts";
 import { useModelNames } from "./model-names.ts";
 import { formatScopedModelGuidance, validateTeammateModels, type ModelReference } from "./model-preflight.ts";
 import { composeTeamBriefing } from "./team-briefing.ts";
-import { composeResumptionMessage } from "./resume-message.ts";
+import { composeResumptionMessage, composeSettingsMessage } from "./resume-message.ts";
 import { callParent, isInertTeamCopy, readChildRuntimeConfig, registerChildTools } from "./child-tools.ts";
 import {
 	canonicalProjectDirectory,
@@ -32,7 +32,7 @@ import { openTeamOverview, type TeamSnapshot } from "./team-ui.ts";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { resolveTargets, resolveTeammates, interruptedTeammateIds, findUnknownTarget, unknownTargetMessage, targetDescription, interruptDescription, type DormantTeammateMatch, type SelectableTeam } from "./team-selection.ts";
-import type { Teammate, TeammateRecord, ThinkingLevel } from "./teammate.ts";
+import type { Teammate, TeammateRecord, TeammateUpdate, ThinkingLevel } from "./teammate.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -63,6 +63,8 @@ interface ProcessRecord {
 	/** Set once main has recorded this process's end, so a callback still in flight when it died changes nothing. */
 	ended?: boolean;
 	lifeline?: net.Socket;
+	/** Settings main changed while this process was busy. They apply when it settles, and end with it. */
+	heldUpdate?: TeammateUpdate;
 }
 
 interface TeammateState {
@@ -397,9 +399,11 @@ function isUnexpectedExit(record: ProcessRecord, code: number | null, signal: No
  * Waits for main's own shutdown to mark the team first, so a signal that reaches main and its teammates together sends nothing.
  */
 function scheduleEndNotice(team: TeamState, teammate: TeammateState, happened: string, cause: string, advice: string): void {
+	const heldUpdate = teammate.processRecord?.heldUpdate;
+	const droppedUpdate = heldUpdate ? `\nIts held settings update (${describeSettings(heldUpdate)}) was not applied. Pass it in teammateUpdates when you resume it.` : "";
 	setTimeout(() => {
 		if (team.stopping || teams.get(team.id ?? team.name) !== team) return;
-		notifyOwner(team, teammate, `Teammate "${teammate.name}" on team "${team.name}" (team ID: ${team.id ?? team.name}) ${happened}.\nCause: ${cause}\n${advice}`);
+		notifyOwner(team, teammate, `Teammate "${teammate.name}" on team "${team.name}" (team ID: ${team.id ?? team.name}) ${happened}.\nCause: ${cause}\n${advice}${droppedUpdate}`);
 	}, exitNoticeGraceMilliseconds).unref();
 }
 
@@ -437,12 +441,13 @@ function recordQuit(team: TeamState, teammate: TeammateState, signal: unknown): 
 	scheduleEndNotice(team, teammate, `shut down${afterSignal}`, `its Pi received ${signal} and shut down in order. ${signalReasons[signal as ShutdownSignal]}`, "Use team_resume to restart it if you still need it.");
 }
 
-async function kickoffTeammates(team: TeamState, teammates: TeammateState[], startIdle: boolean, resumption?: { instructions?: string; emptyRestarts: TeammateState[] }): Promise<void> {
+async function kickoffTeammates(team: TeamState, teammates: TeammateState[], startIdle: boolean, resumption?: { instructions?: string; emptyRestarts: TeammateState[]; settings?: ReadonlyMap<string, TeammateUpdate> }): Promise<void> {
 	const outcomes = await Promise.allSettled(teammates.map((teammate) => {
 		const initialize = !resumption || resumption.emptyRestarts.includes(teammate);
 		const message = [
 			initialize && composeTeamBriefing(team.name, team.teamPrompt, teammate.name, teammate.prompt, [...team.members.keys()], teammate.canManageOwnTeams),
 			resumption && composeResumptionMessage(team.name, teammate.name, teammate.lastModelActivityAt, resumption.instructions),
+			resumption?.settings?.has(teammate.name) && composeSettingsMessage(describeSettings(resumption.settings.get(teammate.name)!), []),
 		].filter(Boolean).join("\n\n");
 		return queueDelivery(team, "main", teammate, message, false, !startIdle);
 	}));
@@ -568,13 +573,17 @@ function logStatusDeclaration(team: TeamState, participant: string, word?: strin
 	});
 }
 
+function validateExtensionPaths(extensionPaths: readonly string[]): void {
+	for (const extensionPath of extensionPaths) {
+		if (!path.isAbsolute(extensionPath) || !fs.existsSync(extensionPath)) throw new Error(`Teammate extension must be an existing absolute path: ${extensionPath}`);
+	}
+}
+
 function createTeammateState(teammateSpec: Teammate): TeammateState {
 	const teammateName = compactName(teammateSpec.name);
 	const thinking = teammateSpec.thinking ?? defaultThinkingLevel;
 	const extensionPaths = teammateSpec.extensionPaths ?? [];
-	for (const extensionPath of extensionPaths) {
-		if (!path.isAbsolute(extensionPath) || !fs.existsSync(extensionPath)) throw new Error(`Teammate extension must be an existing absolute path: ${extensionPath}`);
-	}
+	validateExtensionPaths(extensionPaths);
 	let resolveReady: (() => void) | undefined;
 	let rejectReady: ((error: Error) => void) | undefined;
 	const ready = new Promise<void>((resolve, reject) => {
@@ -632,6 +641,8 @@ interface ChildStartOptions {
 	sessionFile?: string;
 	restartEmpty?: boolean;
 	signal?: AbortSignal;
+	/** New settings, recorded once the previous process has ended and before the next one starts. */
+	settings?: TeammateUpdate;
 }
 
 /**
@@ -683,6 +694,106 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 		if (isUnexpectedExit(record, code, signal)) scheduleEndNotice(team, teammate, "exited", `exited (code=${code}, signal=${signal})`, "Code 143 or 129 means its Pi shut down after SIGTERM or SIGHUP. Check team_log for its last stderr lines. Use team_resume to restart it.");
 	});
 	appendSpawnLog(team, teammate);
+}
+
+/**
+ * Resolves and validates main's settings changes, keyed by teammate name, before anything restarts.
+ * @example resolveTeammateUpdates([{ name: "x", teammateId: "s-1" }], [{ teammate: "s-1", thinking: "high" }], []).get("x")?.thinking // "high"
+ */
+function resolveTeammateUpdates(members: readonly { name: string; teammateId: string }[], updates: readonly TeammateUpdate[], availableModels: readonly ModelReference[]): Map<string, TeammateUpdate> {
+	const resolved = new Map<string, TeammateUpdate>();
+	for (const update of updates) {
+		const [member] = resolveTeammates(members, [update.teammate]);
+		if (resolved.has(member.name)) throw new Error(`Duplicate settings for teammate "${member.name}". Combine them into one item.`);
+		if (update.model === undefined && update.thinking === undefined && update.extensionPaths === undefined) throw new Error(`Teammate "${member.name}" has no settings to change. Set model, thinking or extensionPaths.`);
+		validateExtensionPaths(update.extensionPaths ?? []);
+		resolved.set(member.name, update);
+	}
+	validateTeammateModels([...resolved].flatMap(([name, update]) => update.model === undefined ? [] : [{ name, model: update.model }]), availableModels);
+	return resolved;
+}
+
+/**
+ * Records new settings for a stopped teammate: in its session, as Pi records a model or thinking switch, so the next start restores them, and in its saved definition.
+ * Without a saved session there is nothing to record; the next start is a new session that receives the settings as launch arguments.
+ */
+function applyTeammateSettings(teammate: TeammateState, update: TeammateUpdate, sessionFile: string | undefined): void {
+	if (sessionFile) {
+		const session = SessionManager.open(sessionFile);
+		const current = session.buildSessionContext();
+		const slash = update.model?.indexOf("/") ?? -1;
+		if (update.model && update.model !== `${current.model?.provider}/${current.model?.modelId}`) session.appendModelChange(update.model.slice(0, slash), update.model.slice(slash + 1));
+		if (update.thinking && update.thinking !== current.thinkingLevel) session.appendThinkingLevelChange(update.thinking);
+	}
+	teammate.model = update.model ?? teammate.model;
+	teammate.thinking = update.thinking ?? teammate.thinking;
+	teammate.extensionPaths = update.extensionPaths ?? teammate.extensionPaths;
+}
+
+/**
+ * Restarts a live teammate on its own session with new settings, through the start path that ends its previous process or pane first.
+ * It runs after the deliveries already queued for the teammate, and later deliveries reach the restarted runtime. The teammate keeps its status, including a failed run's error.
+ * A teammate without a saved session restarts empty and gets its briefing staged again, as team_resume does.
+ */
+function restartWithSettings(team: TeamState, teammate: TeammateState, update: TeammateUpdate): Promise<void> {
+	const restart = teammate.deliveryQueue.then(async () => {
+		const herdrParentPaneId = teammate.transport === "herdr" ? await validateHerdrAvailability() : undefined;
+		const sessionFile = sessionFileForResume(teammate);
+		const statusBefore = team.statuses.get(teammate.name)!;
+		const stoppedTeams = activeManagedTeams(team, teammate).map((manifest) => ({ name: manifest.name, id: manifest.id }));
+		prepareTeammateStart(teammate, teammate.transport);
+		await startTeammate(team, teammate, [...team.members.keys()], herdrParentPaneId, { sessionFile, restartEmpty: sessionFile === undefined, settings: update });
+		team.statuses.set(teammate.name, statusBefore);
+		persistActiveTeamManifest(team);
+		return { sessionFile, stoppedTeams };
+	});
+	teammate.deliveryQueue = restart.then(() => undefined, () => undefined);
+	return restart.then(async ({ sessionFile, stoppedTeams }) => {
+		if (sessionFile === undefined) await kickoffTeammates(team, [teammate], true);
+		await queueDelivery(team, "main", teammate, composeSettingsMessage(describeSettings(update), stoppedTeams), false, false);
+	});
+}
+
+/**
+ * A managing teammate's running teams, which a restart would stop: its shutdown stops every team it owns.
+ * A running team's manifest is active and its lease is held by a living process. A manager that died abruptly leaves its manifests active behind a stale lease, and those teams run nothing.
+ */
+function activeManagedTeams(team: TeamState, teammate: TeammateState): TeamManifest[] {
+	if (!teammate.canManageOwnTeams || !team.projectDirectory) return [];
+	return listTeamManifests(team.projectDirectory).manifests.filter((manifest) => manifest.originMainSessionId === teammate.sessionId && manifest.state === "active" && readTeamLeaseState(manifest.id).state === "claimed");
+}
+
+/** The managing teammate's own teammates that are working, as their teams' manifests record them, named for main. */
+function activeManagedTeammates(team: TeamState, teammate: TeammateState): string[] {
+	return activeManagedTeams(team, teammate).flatMap((manifest) => manifest.members.filter((member) => member.active).map((member) => `"${member.name}" on team "${manifest.name}"`));
+}
+
+/** Applies a busy teammate's held update once it has settled, with no message waiting and no active team of its own. Main hears about the outcome. */
+function applyHeldUpdate(team: TeamState, teammate: TeammateState): void {
+	const update = teammate.processRecord!.heldUpdate!;
+	teammate.processRecord!.heldUpdate = undefined;
+	void restartWithSettings(team, teammate, update).then(() => {
+		notifyOwner(team, teammate, `Teammate "${teammate.name}" on team "${team.name}" (team ID: ${team.id ?? team.name}) settled, and its held settings update is applied (${describeSettings(update)}). It continues in the same conversation.`);
+	}, (error: unknown) => {
+		const errorMessage = error instanceof Error ? error.message : String(error);
+		team.statuses.set(teammate.name, status("error", errorMessage));
+		appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "error", summary: preview(`held update for ${teammate.name} failed: ${errorMessage}`) });
+		notifyOwner(team, teammate, `The held settings update for teammate "${teammate.name}" on team "${team.name}" (team ID: ${team.id ?? team.name}) failed.\nCause: ${errorMessage}\nCheck the teammate's status. Use team_resume to restart it if it stopped.`);
+	});
+}
+
+/** @example describeSettings({ teammate: "x", model: "local/b", thinking: "high" }) // "model: local/b, thinking: high" */
+function describeSettings(update: TeammateUpdate): string {
+	return [
+		update.model !== undefined && `model: ${update.model}`,
+		update.thinking !== undefined && `thinking: ${update.thinking}`,
+		update.extensionPaths !== undefined && `extensions: ${JSON.stringify(update.extensionPaths)}`,
+	].filter(Boolean).join(", ");
+}
+
+/** @example interruptForUpdateNotice({ teammate: "x", thinking: "high" }) // "Main interrupted your run to update your configuration (thinking: high). Your conversation continues after a restart." */
+function interruptForUpdateNotice(update: TeammateUpdate): string {
+	return `Main interrupted your run to update your configuration (${describeSettings(update)}). Your conversation continues after a restart.`;
 }
 
 function parseHerdrPaneId(stdout: string, teammateName: string): string {
@@ -763,6 +874,7 @@ async function startTeammate(
 	// A Pi session has no lock against a second writer, so a restart ends the previous process, or closes its pane, before it starts the next.
 	await stopRpcTeammate(teammate);
 	await closeHerdrPane(teammate);
+	if (startOptions.settings) applyTeammateSettings(teammate, startOptions.settings, startOptions.sessionFile);
 	teammate.processRecord = { id: crypto.randomUUID(), registered: false, stopRequested: false, quitReported: false };
 	if (teammate.transport === "herdr") await attachHerdrTeammate(team, teammate, participants, herdrParentPaneId!, startOptions);
 	else attachRpcTeammate(team, teammate, participants, startOptions);
@@ -1003,6 +1115,7 @@ function handleChildEvent(team: TeamState, teammate: TeammateState, event: JsonR
 	if (event.type === "agent_start" || event.type === "work_queued") teammate.active = true;
 	if (event.type === "agent_settled" || event.type === "session_shutdown") teammate.active = false;
 	if (event.type === "agent_settled") recordRunOutcome(team, teammate, event);
+	if (event.type === "agent_settled" && teammate.processRecord?.heldUpdate && !teammate.processRecord.stopRequested && !team.stopping && !teammateSummary(teammate).active) applyHeldUpdate(team, teammate);
 	if (event.type === "runtime_facts") applyRuntimeFacts(teammate, event);
 	if (event.type === "session_shutdown") {
 		teammate.alive = false;
@@ -1132,6 +1245,15 @@ function teammateSchema(modelGuidance: string) {
 		canManageOwnTeams: Type.Optional(Type.Boolean({ description: "Allow this teammate to create and manage teams of its own. Defaults to false.", default: false })),
 		showOnHerdrPane: Type.Optional(Type.Boolean({ description: "Open a visible Herdr pane for this teammate. Defaults to false.", default: false })),
 		extensionPaths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true, description: "Trusted extension files or directories to load alongside the team runtime. Use existing absolute paths. Saved for later resume; discovered extensions also load." })),
+	}, { additionalProperties: false });
+}
+
+function teammateUpdateSchema() {
+	return Type.Object({
+		teammate: Type.String({ minLength: 1, description: "Teammate name or Pi session ID" }),
+		model: Type.Optional(Type.String({ description: "New canonical provider/model id." })),
+		thinking: Type.Optional(StringEnum(thinkingLevels, { description: "New thinking level." })),
+		extensionPaths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true, description: "New list of trusted extension files or directories, replacing the saved list. Use existing absolute paths." })),
 	}, { additionalProperties: false });
 }
 
@@ -1448,8 +1570,8 @@ export default function (pi: ExtensionAPI) {
 			name: "team_resume",
 			label: "Team Resume",
 			description: childRuntimeConfig
-				? "Resume all or selected stopped teammates from a current-project team created by your Pi session. Already-running teammates remain as they are."
-				: "Resume all or selected stopped teammates from a team in the current project. Already-running teammates remain as they are.",
+				? "Resume all or selected stopped teammates from a current-project team created by your Pi session, optionally changing their model, thinking level or extensions. Already-running teammates remain as they are."
+				: "Resume all or selected stopped teammates from a team in the current project, optionally changing their model, thinking level or extensions. Already-running teammates remain as they are.",
 			renderShell: "self",
 			renderCall: (args, theme, context) => renderTeamToolCall("team_resume", args, theme, context, sessionTeammateRoster),
 			renderResult: (result, options, theme, context) => renderTeamToolResult("team_resume", result, options, theme, context, undefined, sessionTeammateRoster),
@@ -1460,6 +1582,7 @@ export default function (pi: ExtensionAPI) {
 				showOnHerdrPanes: Type.Optional(Type.Boolean({ default: false, description: "Open visible Herdr panes for selected teammates. Defaults to false." })),
 				startIdle: Type.Optional(Type.Boolean({ default: false, description: "Start resumed teammates idle." })),
 				resumptionPrompt: Type.Optional(Type.String({ description: "Instructions added once after the resumed teammate's dated grounding. Does not change saved definitions or independently start work." })),
+				teammateUpdates: Type.Optional(Type.Array(teammateUpdateSchema(), { minItems: 1, description: "Settings to change for resumed teammates before they restart, as in team_update_teammates. Omitted settings keep their saved values." })),
 			}, { additionalProperties: false }),
 			async execute(_toolCallId, params, signal, _onUpdate, context) {
 				signal?.throwIfAborted();
@@ -1473,6 +1596,11 @@ export default function (pi: ExtensionAPI) {
 				const existingTeam = [...teams.values()].find((candidate) => candidate.id === manifest.id);
 				if (existingTeam && existingTeam.owner !== owner) {
 					throw new Error(`Team ${manifest.id} is already owned by another main session`);
+				}
+				const updates = params.teammateUpdates ? resolveTeammateUpdates(members, params.teammateUpdates as TeammateUpdate[], context.modelRegistry.getAvailable()) : new Map<string, TeammateUpdate>();
+				for (const name of updates.keys()) {
+					if (existingTeam?.members.get(name)?.alive) throw new Error(`Teammate "${name}" is running. Use team_update_teammates to change a live teammate.`);
+					if (!requestedNames.includes(name)) throw new Error(`Teammate "${name}" is not selected for this resume. Add it to teammates, or omit teammates to resume every stopped teammate.`);
 				}
 
 				let team = existingTeam;
@@ -1513,6 +1641,7 @@ export default function (pi: ExtensionAPI) {
 							sessionFile,
 							restartEmpty: sessionFile === undefined,
 							signal,
+							settings: updates.get(teammate.name),
 						});
 						team.statuses.set(teammate.name, status("idle", "Resumed"));
 					}
@@ -1536,7 +1665,7 @@ export default function (pi: ExtensionAPI) {
 					throw error;
 				}
 
-				await kickoffTeammates(team, starts.map(({ teammate }) => teammate), Boolean(params.startIdle), { instructions: params.resumptionPrompt, emptyRestarts: starts.filter(({ sessionFile }) => sessionFile === undefined).map(({ teammate }) => teammate) });
+				await kickoffTeammates(team, starts.map(({ teammate }) => teammate), Boolean(params.startIdle), { instructions: params.resumptionPrompt, emptyRestarts: starts.filter(({ sessionFile }) => sessionFile === undefined).map(({ teammate }) => teammate), settings: updates });
 				return toolResult({
 					...lifecycleResult(team),
 					teammates: [...team.members.values()].map((teammate) => {
@@ -1622,6 +1751,56 @@ export default function (pi: ExtensionAPI) {
 					teammates: [...team.members.values()].map(teammateSummary),
 					status: formatStatus(team),
 				}, { addedTeammates: addedTeammates.map(teammateRecord) });
+			},
+		}),
+	);
+
+	pi.registerTool(
+		defineTool({
+			name: "team_update_teammates",
+			label: "Team Update",
+			description: "Change the model, thinking level or extensions of live teammates in a team you own. Each keeps its conversation and identity. An idle teammate restarts on its own session at once; a busy one keeps working and is updated when its run settles. A managing teammate is never held: while it works or any of its own teammates work, the call fails and says what to ask it. Use team_resume to change stopped teammates.",
+			renderShell: "self",
+			renderCall: (args, theme, context) => renderTeamToolCall("team_update_teammates", args, theme, context, sessionTeammateRoster),
+			renderResult: (result, options, theme, context) => renderTeamToolResult("team_update_teammates", result, options, theme, context, undefined, sessionTeammateRoster),
+			parameters: Type.Object({
+				team: Type.Optional(Type.String({ description: "Team name or persistent ID. Omit when exactly one owned active team exists." })),
+				teammates: Type.Array(teammateUpdateSchema(), { minItems: 1, description: "Settings to change, one item per teammate. Omitted settings keep their current values." }),
+				interrupt: Type.Optional(Type.Boolean({ default: false, description: "Interrupt busy teammates and update them at once. Otherwise a busy teammate is updated when its run settles." })),
+			}, { additionalProperties: false }),
+			async execute(_toolCallId, params, _signal, _onUpdate, context) {
+				const ownsSelectedTeam = !params.team || resolveTeamIdentifier([...teams.values()].filter((team) => team.owner === owner), params.team);
+				const stoppedTeam = ownsSelectedTeam ? undefined : resolveTeamIdentifier(resumableTeamManifests(context, "team_update_teammates").filter((manifest) => manifest.state === "dormant"), params.team!);
+				if (stoppedTeam) throw new Error(`Team "${stoppedTeam.name}" (team ID: ${stoppedTeam.id}) is stopped. Use team_resume with teammateUpdates to change its teammates as they resume.`);
+				const team = resolveTeam(owner, params.team);
+				const updates = resolveTeammateUpdates([...team.members.values()].filter((teammate) => teammate.sessionId).map(teammateReference), params.teammates as TeammateUpdate[], context.modelRegistry.getAvailable());
+				const targets = [...updates.keys()].map((name) => team.members.get(name)!);
+				for (const teammate of targets) {
+					if (!teammate.alive) throw new Error(`Teammate "${teammate.name}" is stopped. Use team_resume with teammateUpdates to change its settings as it resumes.`);
+					const workingTeammates = activeManagedTeammates(team, teammate);
+					if (workingTeammates.length > 0) throw new Error(`Teammate "${teammate.name}" has active teammates: ${workingTeammates.join(", ")}. Ask it to soft-pause them, because you want to reload its process without cutting them off. Once it reports them all idle, call team_update_teammates again.`);
+					if (teammate.canManageOwnTeams && teammateSummary(teammate).active && !params.interrupt) throw new Error(`Teammate "${teammate.name}" manages teams and is working, so its update is not held. Ask it to pause, then call team_update_teammates again, or pass interrupt: true to stop its run.`);
+				}
+
+				const held = new Set<TeammateState>();
+				for (const teammate of targets) {
+					const record = teammate.processRecord!;
+					const update = { ...record.heldUpdate, ...updates.get(teammate.name)! };
+					if (teammateSummary(teammate).active && !params.interrupt) {
+						record.heldUpdate = update;
+						held.add(teammate);
+						continue;
+					}
+					if (teammateSummary(teammate).active) await queueDelivery(team, "main", teammate, interruptForUpdateNotice(update), true, false);
+					record.heldUpdate = undefined;
+					await restartWithSettings(team, teammate, update);
+				}
+				return toolResult({
+					...teamIdentity(team),
+					teammates: targets.map((teammate) => ({ ...teammateRecord(teammate), held: held.has(teammate) })),
+					status: formatStatus(team),
+					...(held.size > 0 ? { instruction: "Held teammates keep working. Each restarts with its new settings when its run settles, and you get a message then. Its saved settings change at that point. Shutting down the team first drops a held update." } : {}),
+				});
 			},
 		}),
 	);
@@ -1808,10 +1987,17 @@ export default function (pi: ExtensionAPI) {
 			async execute(_toolCallId, params) {
 				const team = resolveTeam(owner, params.team);
 				const teammates = [...team.members.values()].map(teammateReference);
+				const droppedUpdates = [...team.members.values()].flatMap((teammate) => {
+					const heldUpdate = teammate.processRecord?.heldUpdate;
+					return heldUpdate ? [{ ...teammateReference(teammate), settings: describeSettings(heldUpdate) }] : [];
+				});
 				const errors = await shutdownTeam(team);
 				closeCallbackServerIfUnused();
 				if (errors.length > 0) throw new Error(`Failed to close Herdr teammate pane(s): ${errors.join("; ")}`);
-				return toolResult({ ...teamIdentity(team), stopped: true, teammates });
+				return toolResult({
+					...teamIdentity(team), stopped: true, teammates,
+					...(droppedUpdates.length > 0 ? { droppedUpdates, instruction: "These held settings updates were not applied. Pass them in teammateUpdates when you resume the team." } : {}),
+				});
 			},
 		}),
 	);

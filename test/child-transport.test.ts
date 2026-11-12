@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, test } from "bun:test";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
@@ -1845,6 +1845,61 @@ describe("visible Herdr teammates", () => {
 		}
 	});
 
+	test("a live Herdr-pane teammate takes the same update arguments: its pane closes and a new pane resumes its session with the new settings", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		try {
+			await host.execute("team_spawn", {
+				teamName: "visible-update-team",
+				startIdle: true, commonPrompt: "test",
+				showOnHerdrPanes: true,
+				teammates: [{ name: "pane-mate", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" }],
+			});
+			const sessionFile = await savedSessionOf(host, "pane-mate");
+			const extensionPath = path.join(fake.directory, "pane-extension.ts");
+			fs.writeFileSync(extensionPath, "export default function () {}\n");
+			const result = await host.execute("team_update_teammates", { teammates: [{ teammate: "pane-mate", thinking: "high", extensionPaths: [extensionPath] }] });
+			const updated = (result.details?.teammates as JsonRecord[])[0]!;
+			// The fake pane Pi reports the facts it recorded at spawn; real Pi restores the recorded thinking level, which test/teammate-update.test.ts proves.
+			assert.deepEqual([updated.held, updated.live, updated.showOnHerdrPane], [false, true, true]);
+			assert.deepEqual(lines(fake.logPath).filter((entry) => entry.type === "close"), [{ type: "close", paneId: "fake-pane-1" }], "The restart must close the teammate's old pane.");
+			const command = lines(fake.eventsPath).filter((entry) => entry.type === "pi_start").at(-1)?.args as string[];
+			assert.equal(command[command.indexOf("--session") + 1], sessionFile, `The new pane must resume the same session. Got: ${JSON.stringify(command)}`);
+			assert.equal(command[command.indexOf("--thinking") + 1], "high");
+			assert.equal(command[command.indexOf(extensionPath) - 1], "-e");
+			assert.deepEqual(thinkingChanges(sessionFile), ["high"], "The session must record the new thinking level.");
+		} finally {
+			await host.shutdown();
+			fake.restore();
+		}
+	});
+
+	test("a stopped teammate resumes into a Herdr pane with new settings", async () => {
+		const fake = installFakeCommands();
+		const originHost = new ExtensionHost();
+		let resumingHost: ExtensionHost | undefined;
+		try {
+			const teamId = "fake-main-session-id-visible-resume-update";
+			await originHost.execute("team_spawn", {
+				teamName: "visible-resume-update", startIdle: true, commonPrompt: "test",
+				teammates: [{ name: "reviewer", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" }],
+			});
+			const sessionFile = await savedSessionOf(originHost, "reviewer");
+			await originHost.execute("team_shutdown", { team: teamId });
+			resumingHost = new ExtensionHost();
+			await resumingHost.execute("team_resume", { team: teamId, showOnHerdrPanes: true, startIdle: true, teammateUpdates: [{ teammate: "reviewer", thinking: "high" }] });
+			const command = lines(fake.eventsPath).filter((entry) => entry.type === "pi_start").at(-1)?.args as string[];
+			assert.equal(lines(fake.logPath).filter((entry) => entry.type === "split").length, 1, "The resume must open a Herdr pane.");
+			assert.equal(command[command.indexOf("--session") + 1], sessionFile);
+			assert.equal(command[command.indexOf("--thinking") + 1], "high");
+			assert.deepEqual(thinkingChanges(sessionFile), ["high"]);
+		} finally {
+			await resumingHost?.shutdown();
+			await originHost.shutdown();
+			fake.restore();
+		}
+	});
+
 	test("main reports a visible teammate before itself", async () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();
@@ -2041,3 +2096,20 @@ describe("visible Herdr teammates", () => {
 		}
 	});
 });
+
+/** Gives a fake teammate a saved session with one exchange, as a real Pi writes after its first answer, and returns the file. */
+async function savedSessionOf(host: ExtensionHost, teammateName: string): Promise<string> {
+	const listing = await host.execute("team_list", {});
+	const member = ((listing.details?.teams as JsonRecord[])[0]!.teammates as JsonRecord[]).find((teammate) => teammate.name === teammateName)!;
+	const sessionFile = String(member.sessionFile);
+	fs.rmSync(sessionFile, { force: true });
+	const session = SessionManager.open(sessionFile, path.dirname(sessionFile), path.dirname(sessionFile));
+	session.appendMessage({ role: "user", content: "Start.", timestamp: Date.now() });
+	session.appendMessage({ role: "assistant", content: [{ type: "text", text: "Done." }], api: "openai-completions", provider: "fake", model: "fake-model", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop", timestamp: Date.now() });
+	assert.ok(fs.existsSync(sessionFile), "The fixture session must be saved.");
+	return sessionFile;
+}
+
+function thinkingChanges(sessionFile: string): string[] {
+	return fs.readFileSync(sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { type: string; thinkingLevel?: string }).filter((entry) => entry.type === "thinking_level_change").map((entry) => entry.thinkingLevel!);
+}

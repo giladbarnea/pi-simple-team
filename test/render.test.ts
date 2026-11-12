@@ -22,6 +22,7 @@ import {
 	teamLogLines,
 	teamMessageLines,
 	teamResumeLines,
+	teamUpdateLines,
 	teamSendLines,
 	teamShutdownLines,
 	teamLineText,
@@ -416,6 +417,21 @@ describe("teamResumeLines", () => {
 		const lines = teamResumeLines(identityTheme, "demo-team", [], 2).map(teamLineText);
 		expect(lines[0]).toContain("0 of 2 resumed");
 		expect(lines[1]).toContain("no stopped teammates");
+	});
+});
+
+describe("teamUpdateLines", () => {
+	test("separates teammates updated at once from those held until their run settles", () => {
+		const lines = teamUpdateLines(identityTheme, "demo-team", [
+			{ name: "scout", model: "local/b", thinking: "high", held: false },
+			{ name: "reviewer", model: "local/a", thinking: "low", held: true },
+		]).map(teamLineText);
+		expect(lines[0]).toContain("Team Update demo-team");
+		expect(lines[0]).toContain("1 updated, 1 held");
+		expect(lines[1]).toContain("updated");
+		expect(lines[2]).toContain("restarted, history kept");
+		expect(lines[3]).toContain("held");
+		expect(lines[4]).toContain("updates when its run settles");
 	});
 });
 

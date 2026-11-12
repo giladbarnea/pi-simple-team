@@ -217,7 +217,7 @@ Kept minimal:
 
 | Role | For | Tools |
 | --- | --- | --- |
-| **Main agent** | Team lifecycle | `team_spawn`, `team_list`, `team_resume`, `team_add_teammates`, `team_shutdown` |
+| **Main agent** | Team lifecycle | `team_spawn`, `team_list`, `team_resume`, `team_add_teammates`, `team_update_teammates`, `team_shutdown` |
 | | With team | `team_send_message` |
 | | On team | `team_status`, `team_log` |
 | | On everyone | `get_context_window_usage` |
@@ -236,6 +236,8 @@ Startup delivers `commonPrompt` inside `<team-system-message>` and each teammate
 Resume appends a custom briefing with the team identity, current time, and last recorded model activity. Optional `resumptionPrompt` instructions follow that briefing without changing saved definitions. With `startIdle: true`, the briefing waits in context for the next turn.
 
 Existing teammates can be selected by name or Pi session ID in the same input field. Messages, logs, and context usage share a `targets` list. Select a team for all its teammates, or select individual teammates across your teams. Ambiguous names return IDs you can use instead.
+
+`team_update_teammates` changes a live teammate's model, thinking level or extensions in its own conversation. An idle teammate restarts at once, in its pane if it has one; a busy one keeps working and is updated when its run settles, or at once with `interrupt: true`. A managing teammate is never held: while it or any of its own teammates works, the call fails and tells main to ask it to soft-pause them, and the same call succeeds once they are idle. The restarted teammate gets a message with its new settings and the teams its restart stopped, so it can resume them. Main gets a message when a held update applies; `team_shutdown` lists any it drops. `team_resume` takes the same changes in `teammateUpdates` for the teammates it resumes. Instructions and `forkContext` stay as created.
 
 Spawn, resume, and add return the complete roster. Results distinguish a live runtime from active work, including work that was already underway before the call.
 

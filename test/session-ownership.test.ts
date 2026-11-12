@@ -124,6 +124,7 @@ describe("recursive team oversight", () => {
 					"team_resume",
 					"team_shutdown",
 					"team_spawn",
+					"team_update_teammates",
 					"team_log",
 					"send_main_message",
 					"team_send_message",
