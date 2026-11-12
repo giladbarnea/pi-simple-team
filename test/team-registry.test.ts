@@ -7,7 +7,7 @@ import { setSystemTime, test } from "bun:test";
 import type { ExtensionAPI, ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { claimTeamLease, releaseTeamLease, type TeamLease } from "../team-registry.ts";
 import { piModelRegistry } from "./model-registry.ts";
-import { useFakePiPackage } from "./pi-launch.ts";
+import { useEnvironment, useFakePiPackage } from "./pi-launch.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -302,15 +302,10 @@ function installFakePi(root: string): () => void {
 	const executable = path.join(executableDirectory, "pi");
 	fs.writeFileSync(executable, fakePiScript, { mode: 0o755 });
 	const restorePiPackage = useFakePiPackage(executableDirectory, "pi");
-	const previousPath = process.env.PATH;
-	const previousTestRoot = process.env.PI_SIMPLE_TEAM_TEST_ROOT;
-	process.env.PATH = `${executableDirectory}${path.delimiter}${previousPath ?? ""}`;
-	process.env.PI_SIMPLE_TEAM_TEST_ROOT = root;
+	const restoreEnvironment = useEnvironment({ PATH: `${executableDirectory}${path.delimiter}${process.env.PATH ?? ""}`, PI_SIMPLE_TEAM_TEST_ROOT: root });
 	return () => {
 		restorePiPackage();
-		process.env.PATH = previousPath;
-		if (previousTestRoot === undefined) delete process.env.PI_SIMPLE_TEAM_TEST_ROOT;
-		else process.env.PI_SIMPLE_TEAM_TEST_ROOT = previousTestRoot;
+		restoreEnvironment();
 	};
 }
 
@@ -371,8 +366,7 @@ test("idle resume reports the complete team and work that was already active", a
 	const projectDirectory = path.join(root, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(root);
 	let host: ExtensionHost | undefined;
 	try {
@@ -395,7 +389,7 @@ test("idle resume reports the complete team and work that was already active", a
 			{ name: "waiting", teammateId: "waiting-1", live: true, active: false },
 		], "Add must return a lightweight complete roster with each teammate's actual state.");
 		assert.equal(added.details?.started, true, "Adding an idle teammate must not hide existing active work.");
-		const listed = await host.execute("team_list", {});
+		const listed = await host.execute("team_list", { includeDormantTeams: true });
 		assert.equal(listedMember(listed, "main-activity-activity", "persisted")?.active, true, "List must use the same activity meaning as lifecycle results.");
 		await host.execute("team_send_message", { targets: ["persisted"], message: "FINISH_ACTIVITY_TEST" });
 		await waitForFakePiTurns(root, 2);
@@ -413,8 +407,7 @@ test("idle resume reports the complete team and work that was already active", a
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(root, { recursive: true, force: true });
 	}
 });
@@ -425,8 +418,7 @@ test("context usage selects same-named teammates by Pi session ID across teams",
 	const projectDirectory = path.join(root, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(root);
 	let host: ExtensionHost | undefined;
 	try {
@@ -465,8 +457,7 @@ test("context usage selects same-named teammates by Pi session ID across teams",
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(root, { recursive: true, force: true });
 	}
 });
@@ -477,8 +468,7 @@ test("team_spawn names its team runtime so a discovered copy of the team extensi
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	let host: ExtensionHost | undefined;
 
@@ -495,8 +485,7 @@ test("team_spawn names its team runtime so a discovered copy of the team extensi
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -507,8 +496,7 @@ test("an unreadable manifest blocks nothing: other projects ignore it, and its o
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	const manifestsDirectory = path.join(agentDirectory, "pi-simple-team", "teams-v2");
 	const ownProjectManifest = path.join(manifestsDirectory, "old-format.json");
@@ -527,15 +515,14 @@ test("an unreadable manifest blocks nothing: other projects ignore it, and its o
 			teammates: [{ name: "waiter", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 		});
 		assert.equal(spawned.details?.teamId, "origin-main-session-id-unblocked-team");
-		const listed = await host.execute("team_list", {});
+		const listed = await host.execute("team_list", { includeDormantTeams: true });
 		assert.deepEqual((listed.details?.teams as JsonRecord[]).map((team) => team.teamName), ["unblocked-team"]);
 		assert.deepEqual((listed.details?.unreadableManifests as JsonRecord[]).map((entry) => entry.filePath), [ownProjectManifest]);
 		assert.match(listed.content[0]!.text, /old-format\.json/, "The model must see the unreadable manifest too.");
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -546,8 +533,7 @@ test("team_spawn returns each durable Pi session identity", async () => {
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	let host: ExtensionHost | undefined;
 
@@ -570,7 +556,7 @@ test("team_spawn returns each durable Pi session identity", async () => {
 		const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as JsonRecord;
 		assert.equal(manifest.version, 2, "The current manifest must have a distinct version without legacy field adapters.");
 		assert.deepEqual((manifest.members as JsonRecord[] | undefined)?.[0], { ...(result.details?.teammates as JsonRecord[])[0], sessionMaterialized: true }, "Storage must preserve the current teammate fields directly.");
-		const listed = await host.execute("team_list", {});
+		const listed = await host.execute("team_list", { includeDormantTeams: true });
 		const listedTeam = (listed.details?.teams as JsonRecord[] | undefined)?.find((team) => team.teamId === "origin-main-session-id-identity-team");
 		const listedMember = (listedTeam?.teammates as JsonRecord[] | undefined)?.find((member) => member.name === "persisted");
 		assert.equal(
@@ -581,8 +567,7 @@ test("team_spawn returns each durable Pi session identity", async () => {
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -593,8 +578,7 @@ test("team screens show Pi model names while results, the manifest and Pi argume
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	const plainTheme = { bold: (text: string) => text, fg: (_token: string, text: string) => text };
 	let host: ExtensionHost | undefined;
@@ -609,7 +593,7 @@ test("team screens show Pi model names while results, the manifest and Pi argume
 			teammates: [{ name: "named", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 		};
 		const result = await host.execute("team_spawn", args);
-		const listed = await host.execute("team_list", {});
+		const listed = await host.execute("team_list", { includeDormantTeams: true });
 		const agentFacing = JSON.stringify([result, listed]);
 		assert.match(agentFacing, /fake\/fake-model/, "Expected agent-facing results to carry the model ID.");
 		assert.doesNotMatch(agentFacing, /fake-alias/, `Expected no model name in agent-facing results. Got: ${agentFacing}`);
@@ -626,8 +610,7 @@ test("team screens show Pi model names while results, the manifest and Pi argume
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -638,8 +621,7 @@ test("team_spawn cannot overwrite a dormant team attachment", async () => {
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	let host: ExtensionHost | undefined;
 
@@ -655,7 +637,7 @@ test("team_spawn cannot overwrite a dormant team attachment", async () => {
 			teammates: [{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 		});
 		await host.execute("team_shutdown", { team: teamName });
-		const originalMember = listedMember(await host.execute("team_list", {}), teamId, "persisted");
+		const originalMember = listedMember(await host.execute("team_list", { includeDormantTeams: true }), teamId, "persisted");
 		const invocationCount = readFakePiInvocations(temporaryDirectory).length;
 
 		await assert.rejects(
@@ -669,15 +651,14 @@ test("team_spawn cannot overwrite a dormant team attachment", async () => {
 		);
 		assert.equal(readFakePiInvocations(temporaryDirectory).length, invocationCount, "Expected the rejected spawn to start no replacement Pi session.");
 		assert.deepEqual(
-			listedMember(await host.execute("team_list", {}), teamId, "persisted"),
+			listedMember(await host.execute("team_list", { includeDormantTeams: true }), teamId, "persisted"),
 			originalMember,
 			"Expected the rejected spawn to leave the durable member identity unchanged.",
 		);
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -688,8 +669,7 @@ test("team_spawn cannot overwrite an unreadable team attachment with the same te
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	let host: ExtensionHost | undefined;
 
@@ -707,7 +687,7 @@ test("team_spawn cannot overwrite an unreadable team attachment with the same te
 		await host.execute("team_shutdown", { team: teamName });
 		fs.writeFileSync(manifestPath, fs.readFileSync(manifestPath, "utf8").replaceAll("\"forkContext\"", "\"inheritMainContext\""));
 		const originalBytes = fs.readFileSync(manifestPath, "utf8");
-		const listed = await host.execute("team_list", {});
+		const listed = await host.execute("team_list", { includeDormantTeams: true });
 		assert.deepEqual((listed.details?.unreadableManifests as JsonRecord[] | undefined)?.map((entry) => entry.filePath), [manifestPath], "Precondition: the old-format attachment must be unreadable.");
 		const invocationCount = readFakePiInvocations(temporaryDirectory).length;
 
@@ -725,8 +705,7 @@ test("team_spawn cannot overwrite an unreadable team attachment with the same te
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -737,8 +716,7 @@ test("canonical team IDs distinguish live teams with the same display name", asy
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const hosts: ExtensionHost[] = [];
 
 	try {
@@ -754,8 +732,7 @@ test("canonical team IDs distinguish live teams with the same display name", asy
 		}
 	} finally {
 		for (const host of hosts.reverse()) await host.shutdown();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -766,8 +743,7 @@ test("team_resume rejects an ambiguous team name and asks for the persistent tea
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const hosts: ExtensionHost[] = [];
 
 	try {
@@ -796,8 +772,7 @@ test("team_resume rejects an ambiguous team name and asks for the persistent tea
 		);
 	} finally {
 		for (const host of hosts.reverse()) await host.shutdown();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -808,8 +783,7 @@ test("an overseeing teammate can discover and resume only teams it created", asy
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const hosts: ExtensionHost[] = [];
 
 	try {
@@ -833,18 +807,14 @@ test("an overseeing teammate can discover and resume only teams it created", asy
 			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["lead"]),
 			PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "1",
 		};
-		const previousChildEnvironment = Object.fromEntries(Object.keys(childEnvironment).map((name) => [name, process.env[name]]));
-		Object.assign(process.env, childEnvironment);
+		const restoreChildEnvironment = useEnvironment(childEnvironment);
 		const overseer = new ExtensionHost(teamExtension, makeContext("lead-session", projectDirectory));
 		hosts.push(overseer);
 		await overseer.start();
-		for (const [name, value] of Object.entries(previousChildEnvironment)) {
-			if (value === undefined) delete process.env[name];
-			else process.env[name] = value;
-		}
+		restoreChildEnvironment();
 
 		await overseer.execute("team_spawn", { teamName: "owned-team", startIdle: true, commonPrompt: "Owned scope.", teammates: [] });
-		const listed = await overseer.execute("team_list", {});
+		const listed = await overseer.execute("team_list", { includeDormantTeams: true });
 		assert.deepEqual(
 			(listed.details?.teams as JsonRecord[] | undefined)?.map((team) => team.teamId),
 			["lead-session-owned-team"],
@@ -868,8 +838,7 @@ test("an overseeing teammate can discover and resume only teams it created", asy
 		);
 	} finally {
 		for (const host of hosts.reverse()) await host.shutdown();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -880,8 +849,7 @@ test("team_shutdown waits for every RPC runtime before releasing ownership", asy
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	let host: ExtensionHost | undefined;
 
@@ -901,8 +869,7 @@ test("team_shutdown waits for every RPC runtime before releasing ownership", asy
 		await host?.shutdown();
 		await new Promise((resolve) => setTimeout(resolve, 200));
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -913,8 +880,7 @@ test("team_shutdown gives an overseeing teammate time to stop its own teams", as
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	let host: ExtensionHost | undefined;
 
@@ -955,7 +921,7 @@ test("team_shutdown gives an overseeing teammate time to stop its own teams", as
 			["recursive-descendant", "recursive-slow-stop"],
 			"Expected recursive shutdown to stop the descendant before the overseeing teammate exited.",
 		);
-		const listed = await host.execute("team_list", {});
+		const listed = await host.execute("team_list", { includeDormantTeams: true });
 		const descendantTeam = (listed.details?.teams as JsonRecord[] | undefined)?.find(
 			(team) => team.teamId === "recursive-slow-stop-1-descendant-team",
 		);
@@ -971,8 +937,7 @@ test("team_shutdown gives an overseeing teammate time to stop its own teams", as
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -984,8 +949,7 @@ test("team_add_teammates accepts a team name and grows the owned running team", 
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
 
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	let host: ExtensionHost | undefined;
 
@@ -1066,7 +1030,7 @@ test("team_add_teammates accepts a team name and grows the owned running team", 
 			);
 		}
 
-		const listed = await host.execute("team_list", {});
+		const listed = await host.execute("team_list", { includeDormantTeams: true });
 		assert.deepEqual(
 			(listedTeam(listed, teamId)?.teammates as JsonRecord[] | undefined)?.map((member) => member.name),
 			["original", "security", "operations"],
@@ -1104,7 +1068,7 @@ test("team_add_teammates accepts a team name and grows the owned running team", 
 			);
 		}
 		assert.equal(readFakePiInvocations(temporaryDirectory).length, invocationCountAfterShutdown, "Expected a stopped-team rejection to start no Pi sessions.");
-		assert.equal(listedTeam(await host.execute("team_list", {}), teamId)?.state, "dormant", "Expected a stopped-team rejection not to resume the team.");
+		assert.equal(listedTeam(await host.execute("team_list", { includeDormantTeams: true }), teamId)?.state, "dormant", "Expected a stopped-team rejection not to resume the team.");
 		await assert.rejects(
 			() =>
 				host!.execute("team_add_teammates", { startIdle: true,
@@ -1117,8 +1081,7 @@ test("team_add_teammates accepts a team name and grows the owned running team", 
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -1129,8 +1092,7 @@ test("a teammate that is still starting does not turn accepted messages to an ex
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	let host: ExtensionHost | undefined;
 	let addition: Promise<ToolResult> | undefined;
@@ -1184,15 +1146,14 @@ test("a teammate that is still starting does not turn accepted messages to an ex
 
 		fs.writeFileSync(path.join(temporaryDirectory, "gated-start.open"), "1");
 		await addition;
-		const listed = await host.execute("team_list", {});
+		const listed = await host.execute("team_list", { includeDormantTeams: true });
 		assert.equal(typeof listedMember(listed, teamId, "gated-start")?.teammateId, "string", `Expected the added teammate to persist once registered. Got: ${JSON.stringify(listed.details)}`);
 	} finally {
 		fs.writeFileSync(path.join(temporaryDirectory, "gated-start.open"), "1");
 		await addition?.catch(() => undefined);
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -1203,8 +1164,7 @@ test("a failed addition leaves no rolled-back teammate in the manifest after a s
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	let host: ExtensionHost | undefined;
 
@@ -1232,7 +1192,7 @@ test("a failed addition leaves no rolled-back teammate in the manifest after a s
 		fs.writeFileSync(path.join(temporaryDirectory, "gated-fail.open"), "1");
 		assert.match(await additionOutcome, /gated-fail exited/, "Expected the failed readiness handshake to reject the addition.");
 
-		const listed = await host.execute("team_list", {});
+		const listed = await host.execute("team_list", { includeDormantTeams: true });
 		assert.deepEqual(
 			(listedTeam(listed, teamId)?.teammates as JsonRecord[] | undefined)?.map((member) => member.name),
 			["original"],
@@ -1248,8 +1208,7 @@ test("a failed addition leaves no rolled-back teammate in the manifest after a s
 		fs.writeFileSync(path.join(temporaryDirectory, "gated-fail.open"), "1");
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -1260,8 +1219,7 @@ test("team_shutdown during a pending addition stops the team and leaves it dorma
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	let host: ExtensionHost | undefined;
 
@@ -1284,7 +1242,7 @@ test("team_shutdown during a pending addition stops the team and leaves it dorma
 		const stopped = await host.execute("team_shutdown", { team: teamName });
 		assert.equal(stopped.details?.stopped, true, `Expected team_shutdown to report the stopped team. Got: ${JSON.stringify(stopped.details)}`);
 		assert.notEqual(await additionOutcome, "fulfilled", "Expected the interrupted addition not to report success.");
-		const team = listedTeam(await host.execute("team_list", {}), teamId);
+		const team = listedTeam(await host.execute("team_list", { includeDormantTeams: true }), teamId);
 		assert.deepEqual(
 			{ state: team?.state, leaseState: team?.leaseState, teammates: (team?.teammates as JsonRecord[] | undefined)?.map((member) => member.name) },
 			{ state: "dormant", leaseState: "unclaimed", teammates: ["original"] },
@@ -1294,8 +1252,7 @@ test("team_shutdown during a pending addition stops the team and leaves it dorma
 		fs.writeFileSync(path.join(temporaryDirectory, "gated-start.open"), "1");
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -1306,8 +1263,7 @@ test("failed team_add_teammates waits for only its newly started processes to ex
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	let host: ExtensionHost | undefined;
 
@@ -1340,7 +1296,7 @@ test("failed team_add_teammates waits for only its newly started processes to ex
 			true,
 			"Expected team_add_teammates rollback to return only after the newly started slow process exited.",
 		);
-		const listed = await host.execute("team_list", {});
+		const listed = await host.execute("team_list", { includeDormantTeams: true });
 		assert.deepEqual(
 			(listedTeam(listed, teamId)?.teammates as JsonRecord[] | undefined)?.map((member) => member.name),
 			["persisted"],
@@ -1352,8 +1308,7 @@ test("failed team_add_teammates waits for only its newly started processes to ex
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -1365,8 +1320,7 @@ test("a later same-project session resumes selected and all stopped teammates wi
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
 
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	const hosts: ExtensionHost[] = [];
 
@@ -1390,7 +1344,7 @@ test("a later same-project session resumes selected and all stopped teammates wi
 		const resumingHost = new ExtensionHost(teamExtension, makeContext("resuming-main-session-id", projectDirectory));
 		hosts.push(resumingHost);
 		await resumingHost.start();
-		const dormantList = await resumingHost.execute("team_list", {});
+		const dormantList = await resumingHost.execute("team_list", { includeDormantTeams: true });
 		const persistedBeforeResume = listedMember(dormantList, teamId, "persisted");
 		const untouchedBeforeResume = listedMember(dormantList, teamId, "untouched");
 		assert.equal(
@@ -1453,7 +1407,7 @@ test("a later same-project session resumes selected and all stopped teammates wi
 			false,
 			`Expected a never-materialized teammate to restart empty. Got: ${JSON.stringify(untouchedEmptyRestart)}`,
 		);
-		const activeList = await resumingHost.execute("team_list", {});
+		const activeList = await resumingHost.execute("team_list", { includeDormantTeams: true });
 		const untouchedAfterResume = listedMember(activeList, teamId, "untouched");
 		assert.equal(
 			untouchedAfterResume?.sessionFile,
@@ -1486,8 +1440,7 @@ test("a later same-project session resumes selected and all stopped teammates wi
 	} finally {
 		for (const host of hosts.reverse()) await host.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -1498,8 +1451,7 @@ test("a failed selective resume leaves members that were already running alive",
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	const hosts: ExtensionHost[] = [];
 
@@ -1542,8 +1494,7 @@ test("a failed selective resume leaves members that were already running alive",
 	} finally {
 		for (const host of hosts.reverse()) await host.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -1554,8 +1505,7 @@ test("team_list reports the live lease and exact dormant expiry", async () => {
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const initialTime = new Date("2026-01-01T00:00:00.000Z");
 	setSystemTime(initialTime);
 	let host: ExtensionHost | undefined;
@@ -1567,7 +1517,7 @@ test("team_list reports the live lease and exact dormant expiry", async () => {
 		host = new ExtensionHost(teamExtension, makeContext("origin-main-session-id", projectDirectory));
 		await host.start();
 		await host.execute("team_spawn", { teamName: teamName, startIdle: true, commonPrompt: "List lifecycle.", teammates: [] });
-		const activeTeam = listedTeam(await host.execute("team_list", {}), teamId);
+		const activeTeam = listedTeam(await host.execute("team_list", { includeDormantTeams: true }), teamId);
 		assert.deepEqual(
 			{ state: activeTeam?.state, leaseState: activeTeam?.leaseState, expiresAt: activeTeam?.expiresAt },
 			{ state: "active", leaseState: "claimed", expiresAt: undefined },
@@ -1575,7 +1525,7 @@ test("team_list reports the live lease and exact dormant expiry", async () => {
 		);
 
 		await host.execute("team_shutdown", { team: teamName });
-		const dormantTeam = listedTeam(await host.execute("team_list", {}), teamId);
+		const dormantTeam = listedTeam(await host.execute("team_list", { includeDormantTeams: true }), teamId);
 		assert.deepEqual(
 			{ state: dormantTeam?.state, leaseState: dormantTeam?.leaseState, expiresAt: dormantTeam?.expiresAt },
 			{ state: "dormant", leaseState: "unclaimed", expiresAt: "2026-01-31T00:00:00.000Z" },
@@ -1584,8 +1534,7 @@ test("team_list reports the live lease and exact dormant expiry", async () => {
 	} finally {
 		setSystemTime();
 		await host?.shutdown();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -1596,8 +1545,7 @@ test("team_list reports each member's live runtime state", async () => {
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	const hosts: ExtensionHost[] = [];
 
@@ -1616,14 +1564,14 @@ test("team_list reports each member's live runtime state", async () => {
 				{ name: "untouched", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" },
 			],
 		});
-		const activeList = await originHost.execute("team_list", {});
+		const activeList = await originHost.execute("team_list", { includeDormantTeams: true });
 		assert.deepEqual(
 			["persisted", "untouched"].map((name) => ({ name, live: listedMember(activeList, teamId, name)?.live })),
 			[{ name: "persisted", live: true }, { name: "untouched", live: true }],
 			`Expected spawned members to report live runtimes. Got: ${JSON.stringify(activeList.details)}`,
 		);
 		await originHost.execute("team_shutdown", { team: teamId });
-		const dormantList = await originHost.execute("team_list", {});
+		const dormantList = await originHost.execute("team_list", { includeDormantTeams: true });
 		assert.deepEqual(
 			["persisted", "untouched"].map((name) => ({ name, live: listedMember(dormantList, teamId, name)?.live })),
 			[{ name: "persisted", live: false }, { name: "untouched", live: false }],
@@ -1634,7 +1582,7 @@ test("team_list reports each member's live runtime state", async () => {
 		hosts.push(resumingHost);
 		await resumingHost.start();
 		await resumingHost.execute("team_resume", { startIdle: true, team: teamId, teammates: ["persisted"] });
-		const selectiveList = await resumingHost.execute("team_list", {});
+		const selectiveList = await resumingHost.execute("team_list", { includeDormantTeams: true });
 		assert.deepEqual(
 			["persisted", "untouched"].map((name) => ({ name, live: listedMember(selectiveList, teamId, name)?.live })),
 			[{ name: "persisted", live: true }, { name: "untouched", live: false }],
@@ -1643,8 +1591,7 @@ test("team_list reports each member's live runtime state", async () => {
 	} finally {
 		for (const host of hosts.reverse()) await host.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -1655,8 +1602,7 @@ test("recovering a stale lease marks the abandoned active manifest dormant", asy
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const initialTime = new Date("2026-01-01T00:00:00.000Z");
 	const recoveryTime = new Date("2026-01-02T00:00:00.000Z");
 	setSystemTime(initialTime);
@@ -1699,8 +1645,7 @@ test("recovering a stale lease marks the abandoned active manifest dormant", asy
 		if (recoveredLease) releaseTeamLease(recoveredLease);
 		setSystemTime();
 		await host?.shutdown();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -1710,8 +1655,7 @@ test("stale lease reclamation cannot unlink a concurrent live lease", () => {
 	const agentDirectory = path.join(temporaryDirectory, "agent");
 	const registryDirectory = path.join(agentDirectory, "pi-simple-team", "teams-v2");
 	fs.mkdirSync(registryDirectory, { recursive: true });
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const teamId = "origin-main-session-id-raced-team";
 	const leasePath = path.join(registryDirectory, `${encodeURIComponent(teamId)}.lease`);
 	const staleProcessId = 2_147_483_647;
@@ -1756,8 +1700,7 @@ test("stale lease reclamation cannot unlink a concurrent live lease", () => {
 	} finally {
 		process.kill = originalProcessKill;
 		if (unexpectedLease) releaseTeamLease(unexpectedLease);
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -1769,8 +1712,7 @@ test("an expired dormant team removes only registry files while an equally old a
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
 
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	const initialTime = new Date("2026-01-01T00:00:00.000Z");
 	const expirationMilliseconds = 30 * 24 * 60 * 60 * 1_000;
@@ -1789,7 +1731,7 @@ test("an expired dormant team removes only registry files while an equally old a
 			startIdle: true, commonPrompt: "Expiry public-interface test.",
 			teammates: [{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low" }],
 		});
-		const spawnedTeams = await host.execute("team_list", {});
+		const spawnedTeams = await host.execute("team_list", { includeDormantTeams: true });
 		const reportedSessionFile = listedMember(spawnedTeams, dormantTeamId, "persisted")?.sessionFile;
 		assert.equal(
 			typeof reportedSessionFile,
@@ -1822,7 +1764,7 @@ test("an expired dormant team removes only registry files while an equally old a
 		});
 
 		setSystemTime(new Date(initialTime.getTime() + expirationMilliseconds - 1));
-		const beforeExpiration = await host.execute("team_list", {});
+		const beforeExpiration = await host.execute("team_list", { includeDormantTeams: true });
 		assert.equal(
 			listedTeam(beforeExpiration, dormantTeamId)?.state,
 			"dormant",
@@ -1831,7 +1773,7 @@ test("an expired dormant team removes only registry files while an equally old a
 		assert.equal(fs.existsSync(dormantLeasePath), true, "Expected registry access before expiry to keep the dormant team lease.");
 
 		setSystemTime(new Date(initialTime.getTime() + expirationMilliseconds));
-		const atExpiration = await host.execute("team_list", {});
+		const atExpiration = await host.execute("team_list", { includeDormantTeams: true });
 		assert.equal(
 			listedTeam(atExpiration, dormantTeamId),
 			undefined,
@@ -1862,8 +1804,7 @@ test("an expired dormant team removes only registry files while an equally old a
 		setSystemTime();
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -1876,8 +1817,7 @@ test("team discovery treats a symlink as the same project directory", async () =
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
 	fs.symlinkSync(projectDirectory, projectSymlink, "dir");
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	let originHost: ExtensionHost | undefined;
 	let discoveringHost: ExtensionHost | undefined;
 
@@ -1892,7 +1832,7 @@ test("team discovery treats a symlink as the same project directory", async () =
 
 		discoveringHost = new ExtensionHost(teamExtension, makeContext("new-main-session-id", projectSymlink));
 		await discoveringHost.start();
-		const result = await discoveringHost.execute("team_list", {});
+		const result = await discoveringHost.execute("team_list", { includeDormantTeams: true });
 		assert.equal(
 			listedTeam(result, teamId)?.teamId,
 			teamId,
@@ -1901,8 +1841,7 @@ test("team discovery treats a symlink as the same project directory", async () =
 	} finally {
 		await discoveringHost?.shutdown();
 		await originHost?.shutdown();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -1914,8 +1853,7 @@ test("a new extension session discovers a shut-down team in the same project", a
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
 
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	let originHost: ExtensionHost | undefined;
 	let discoveringHost: ExtensionHost | undefined;
 
@@ -1932,7 +1870,7 @@ test("a new extension session discovers a shut-down team in the same project", a
 		await discoveringHost.start();
 		const teamListTool = discoveringHost.tools.get("team_list");
 		const result = teamListTool
-			? await teamListTool.execute("test-call", {}, new AbortController().signal, undefined, discoveringHost.context)
+			? await teamListTool.execute("test-call", { includeDormantTeams: true }, new AbortController().signal, undefined, discoveringHost.context)
 			: undefined;
 		const rawTeams = result?.details?.teams;
 		const listedTeams = Array.isArray(rawTeams)
@@ -1948,8 +1886,7 @@ test("a new extension session discovers a shut-down team in the same project", a
 	} finally {
 		await discoveringHost?.shutdown();
 		await originHost?.shutdown();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });
@@ -1962,8 +1899,7 @@ test("explicit teammate extensions survive shutdown and resume alongside discove
 	fs.mkdirSync(projectDirectory);
 	const extensionPath = path.join(root, "replay hook.ts");
 	fs.writeFileSync(extensionPath, "export default function () {}\n");
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(root);
 	let host: ExtensionHost | undefined;
 	try {
@@ -1973,7 +1909,7 @@ test("explicit teammate extensions survive shutdown and resume alongside discove
 		await host.execute("team_spawn", { teamName: "replay", commonPrompt: "Wait.", startIdle: true,
 			teammates: [{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", extensionPaths: [extensionPath] }] });
 		await host.execute("team_shutdown", { team: "replay" });
-		assert.deepEqual(listedMember(await host.execute("team_list", {}), "main-extensions-replay", "persisted")?.extensionPaths, [extensionPath], "The dormant attachment must retain its explicit runtime dependency.");
+		assert.deepEqual(listedMember(await host.execute("team_list", { includeDormantTeams: true }), "main-extensions-replay", "persisted")?.extensionPaths, [extensionPath], "The dormant attachment must retain its explicit runtime dependency.");
 		await host.execute("team_resume", { team: "replay", startIdle: true });
 		for (const invocation of readFakePiInvocations(root)) {
 			assert.equal(invocation.args.includes("--no-extensions"), false, "Discovered extensions must load as in a plain pi launch.");
@@ -1982,8 +1918,7 @@ test("explicit teammate extensions survive shutdown and resume alongside discove
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(root, { recursive: true, force: true });
 	}
 });
@@ -1994,8 +1929,7 @@ test("resume keeps a teammate's saved thinking level when its session records an
 	const projectDirectory = path.join(root, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(root);
 	let host: ExtensionHost | undefined;
 	try {
@@ -2006,7 +1940,7 @@ test("resume keeps a teammate's saved thinking level when its session records an
 			teammates: [{ name: "persisted", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "xhigh" }] });
 		await host.execute("team_shutdown", { team: "thinking" });
 		// A forked Pi session keeps main's recorded level, not the --thinking level the teammate ran at (issue 26).
-		const recordedSettings = String(listedMember(await host.execute("team_list", {}), "main-thinking-thinking", "persisted")?.sessionFile) + ".settings.json";
+		const recordedSettings = String(listedMember(await host.execute("team_list", { includeDormantTeams: true }), "main-thinking-thinking", "persisted")?.sessionFile) + ".settings.json";
 		fs.writeFileSync(recordedSettings, JSON.stringify({ ...JSON.parse(fs.readFileSync(recordedSettings, "utf8")), thinkingLevel: "high" }));
 		const resumed = await host.execute("team_resume", { team: "thinking", startIdle: true });
 		await host.execute("team_shutdown", { team: "thinking" });
@@ -2019,8 +1953,7 @@ test("resume keeps a teammate's saved thinking level when its session records an
 	} finally {
 		await host?.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(root, { recursive: true, force: true });
 	}
 });
@@ -2031,8 +1964,7 @@ test("Team Resume and Team Add results render each teammate's resolved facts", a
 	const projectDirectory = path.join(temporaryDirectory, "project");
 	fs.mkdirSync(agentDirectory);
 	fs.mkdirSync(projectDirectory);
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
 	const restoreFakePi = installFakePi(temporaryDirectory);
 	const hosts: ExtensionHost[] = [];
 	const plainTheme = { bold: (text: string) => text, fg: (_token: string, text: string) => text };
@@ -2061,7 +1993,7 @@ test("Team Resume and Team Add results render each teammate's resolved facts", a
 			return tool.renderResult(result, { expanded: false }, plainTheme, { args }).render(120);
 		};
 
-		const resumedId = listedMember(await host.execute("team_list", {}), `origin-main-session-id-${teamName}`, "resumed")?.teammateId;
+		const resumedId = listedMember(await host.execute("team_list", { includeDormantTeams: true }), `origin-main-session-id-${teamName}`, "resumed")?.teammateId;
 		const resumeLines = await render("team_resume", { team: teamName, startIdle: true, teammates: [String(resumedId)] });
 		const sleeperLine = resumeLines.find((line) => line.includes("sleeper"));
 		const resumedLine = resumeLines.find((line) => line.includes("resumed "));
@@ -2075,8 +2007,7 @@ test("Team Resume and Team Add results render each teammate's resolved facts", a
 	} finally {
 		for (const host of hosts) await host.shutdown();
 		restoreFakePi();
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
 });

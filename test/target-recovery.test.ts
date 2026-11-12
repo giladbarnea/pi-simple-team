@@ -4,6 +4,7 @@ import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, test } from "bun:test";
+import { useEnvironment } from "./pi-launch.ts";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context } from "@earendil-works/pi-ai";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import teamExtension from "../index.ts";
@@ -151,7 +152,7 @@ describe("team_send_message unknown-target recovery", () => {
 			assert.equal(toolResult.isError, true, "The send must still fail explicitly.");
 			assert.equal(
 				toolResult.text,
-				`Unknown target "never-existed". Available choices: []. No active target matches. Use team_list to find active or dormant teams; resume the intended teammate before retrying.`,
+				`Unknown target "never-existed". Available choices: []. No active target matches. Use team_list to find active teams, with includeDormantTeams: true for dormant teams; resume the intended teammate before retrying.`,
 			);
 		});
 	});
@@ -188,7 +189,7 @@ async function managingTeammateSendError(directory: string, sessionId: string, t
 		PI_SIMPLE_TEAM_TEAM: "parent-team-id", PI_SIMPLE_TEAM_TEAM_NAME: "parent-team", PI_SIMPLE_TEAM_MEMBER: "lead", PI_SIMPLE_TEAM_PROCESS: "test-process", PI_SIMPLE_TEAM_PARTICIPANTS: '["lead"]', PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "1",
 	};
 	const tools = new Map<string, SendTool>();
-	Object.assign(process.env, environment);
+	const restoreEnvironment = useEnvironment(environment);
 	try {
 		teamExtension({
 			on: () => undefined, registerCommand: () => undefined, registerMessageRenderer: () => undefined,
@@ -200,7 +201,7 @@ async function managingTeammateSendError(directory: string, sessionId: string, t
 	} catch (error) {
 		return (error as Error).message;
 	} finally {
-		for (const name of Object.keys(environment)) delete process.env[name];
+		restoreEnvironment();
 		await new Promise<void>((resolve) => parent.close(() => resolve()));
 	}
 }

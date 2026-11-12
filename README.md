@@ -221,7 +221,7 @@ Kept minimal:
 | | With team | `team_send_message` |
 | | On team | `team_status`, `team_log` |
 | | On everyone | `get_context_window_usage` |
-| | On self | `schedule_reminder` |
+| | On self | `schedule_reminder`, `list_reminders`, `cancel_reminders` |
 | **Managing teammate** | On self and own teams | Same tools as the main agent |
 | | With parent team | `team_send_message`, `team_status`, `send_main_message` |
 | **Teammates** | With team | `team_send_message` |
@@ -238,6 +238,10 @@ Resume appends a custom briefing with the team identity, current time, and last 
 Existing teammates can be selected by name or Pi session ID in the same input field. Messages, logs, and context usage share a `targets` list. Select a team for all its teammates, or select individual teammates across your teams. Ambiguous names return IDs you can use instead.
 
 `team_update_teammates` changes a live teammate's model, thinking level or extensions in its own conversation. An idle teammate restarts at once, in its pane if it has one; a busy one keeps working and is updated when its run settles, or at once with `interrupt: true`. A managing teammate is never held: while it or any of its own teammates works, the call fails and tells main to ask it to soft-pause them, and the same call succeeds once they are idle. The restarted teammate gets a message with its new settings and the teams its restart stopped, so it can resume them. Main gets a message when a held update applies; `team_shutdown` lists any it drops. `team_resume` takes the same changes in `teammateUpdates` for the teammates it resumes. Instructions and `forkContext` stay as created.
+
+`team_list` shows active teams as short rows, newest created first, 20 per page by default (`limit` up to 100, then `cursor`). Pass `includeDormantTeams: true` to include dormant teams, or `team` for one team's full records. Pages follow creation order, so a team that changes state or activity between pages is neither repeated nor skipped.
+
+`list_reminders` shows this session's pending reminders with their IDs, slugs and times. `cancel_reminders` cancels reminders by ID or slug, or every pending one with `all: true`; a call with neither cancels nothing.
 
 Spawn, resume, and add return the complete roster. Results distinguish a live runtime from active work, including work that was already underway before the call.
 

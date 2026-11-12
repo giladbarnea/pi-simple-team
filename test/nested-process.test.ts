@@ -81,10 +81,7 @@ function startHarness() {
 	fs.writeFileSync(path.join(agentDirectory, "settings.json"), JSON.stringify({ compaction: { enabled: false }, retry: { enabled: false } }));
 	const launcher = path.join(directory, "pi-launcher");
 	fs.writeFileSync(launcher, `#!/bin/sh\nexec ${quote(executable)} --no-skills --no-context-files --no-prompt-templates --no-themes "$@"\n`, { mode: 0o755 });
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	const previousOffline = process.env.PI_OFFLINE;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
-	process.env.PI_OFFLINE = "1";
+	const restoreAgentEnvironment = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory, PI_OFFLINE: "1" });
 	const tools = new Map<string, RegisteredTool>();
 	const shutdownHandlers: Array<() => Promise<void>> = [];
 	const mainMessages: string[] = [];
@@ -123,10 +120,7 @@ function startHarness() {
 		close: async (): Promise<void> => {
 			for (const shutdown of shutdownHandlers) await shutdown();
 			provider.stop(true);
-			if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
-			if (previousOffline === undefined) delete process.env.PI_OFFLINE;
-			else process.env.PI_OFFLINE = previousOffline;
+			restoreAgentEnvironment();
 			fs.rmSync(directory, { recursive: true, force: true });
 		},
 	};
@@ -168,8 +162,7 @@ test("a subprocess inherits the team environment but not the teammate identity",
 		PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["probe"]),
 		PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "0",
 	};
-	const previousEnvironment = Object.fromEntries(Object.keys(environment).map((name) => [name, process.env[name]]));
-	Object.assign(process.env, environment);
+	const restoreEnvironment = useEnvironment(environment);
 	try {
 		assert.equal(readChildRuntimeConfig()?.teammateName, "probe", "The process that main starts is the teammate.");
 		assert.equal(readChildRuntimeConfig()?.teammateName, "probe", "Pi reloads extensions in the same process, which must stay the teammate.");
@@ -178,10 +171,7 @@ test("a subprocess inherits the team environment but not the teammate identity",
 		assert.equal(nested.status, 0, nested.stderr);
 		assert.equal(nested.stdout.trim(), "null", "A process that the teammate starts must not load as the teammate.");
 	} finally {
-		for (const [name, value] of Object.entries(previousEnvironment)) {
-			if (value === undefined) delete process.env[name];
-			else process.env[name] = value;
-		}
+		restoreEnvironment();
 	}
 });
 

@@ -6,7 +6,7 @@ import { describe, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { childToolNames } from "../child-tools.ts";
 import teamExtension from "../index.ts";
-import { loadAsBunStandalonePi } from "./pi-launch.ts";
+import { loadAsBunStandalonePi, useEnvironment } from "./pi-launch.ts";
 import { teamLogLines } from "../render.ts";
 import type { TeamLogEntry } from "../teamlog.ts";
 
@@ -73,10 +73,7 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 	const launcher = path.join(directory, "pi-launcher");
 	const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 	fs.writeFileSync(launcher, `#!/bin/sh\nexec ${quote(executable)} --no-skills --no-context-files --no-prompt-templates --no-themes "$@"\n`, { mode: 0o755 });
-	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-	const previousOffline = process.env.PI_OFFLINE;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
-	process.env.PI_OFFLINE = "1";
+	const restoreAgentEnvironment = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory, PI_OFFLINE: "1" });
 	const tools = new Map<string, RegisteredTool>();
 	const shutdownHandlers: Array<() => Promise<void>> = [];
 	const mainMessages: JsonRecord[] = [];
@@ -102,10 +99,7 @@ async function startTeam(scenario: Scenario, startIdle = false, options: { autom
 		releaseRetry();
 		for (const shutdown of shutdownHandlers) await shutdown();
 		provider.stop(true);
-		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
-		if (previousOffline === undefined) delete process.env.PI_OFFLINE;
-		else process.env.PI_OFFLINE = previousOffline;
+		restoreAgentEnvironment();
 		fs.rmSync(directory, { recursive: true, force: true });
 	};
 	try {

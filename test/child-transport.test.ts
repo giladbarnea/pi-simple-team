@@ -12,6 +12,7 @@ import { Value } from "typebox/value";
 import teamExtension from "../index.ts";
 import { childToolNames, registerChildTools } from "../child-tools.ts";
 import { loadAsBunStandalonePi, loadWithProcess, useEnvironment, useFakePiPackage } from "./pi-launch.ts";
+import { scopedRestore } from "./test-scope.ts";
 
 type JsonRecord = Record<string, unknown>;
 type ToolResult = { content: Array<{ type: string; text: string }>; details?: JsonRecord };
@@ -333,6 +334,7 @@ function installFakeCommands(): { directory: string; logPath: string; eventsPath
 		fs.writeFileSync(executable, content, { mode: 0o755 });
 	}
 	const previousExecutable = process.argv[1]!;
+	const restoreExecutable = scopedRestore(() => { process.argv[1] = previousExecutable; });
 	// Main runs inside an SDK host script. The parent Pi is the fake Pi package's CLI.
 	const sdkHost = path.join(directory, "sdk-host.mjs");
 	fs.writeFileSync(sdkHost, "// An SDK host embeds Pi. It is not Pi.\n");
@@ -359,7 +361,7 @@ function installFakeCommands(): { directory: string; logPath: string; eventsPath
 		parentPiExecutable,
 		restore: () => {
 			const survivors = waitForFakePiProcessesToEnd(eventsPath);
-			process.argv[1] = previousExecutable;
+			restoreExecutable();
 			restorePiPackage();
 			restoreEnvironment();
 			fs.rmSync(directory, { recursive: true, force: true });
@@ -614,7 +616,7 @@ describe("unified child runtime", () => {
 			release();
 			await assert.rejects(() => spawning, /abort/i, "Cancelling startup must reject instead of starting work.");
 			assert.equal(lines(fake.eventsPath).filter((entry) => entry.type === "delivery").length, 0, "No kickoff may follow cancellation during startup.");
-			const listing = await host.execute("team_list", {});
+			const listing = await host.execute("team_list", { includeDormantTeams: true });
 			assert.deepEqual(listing.details?.teams, [], "A cancelled unstarted team must not remain active.");
 		} finally {
 			release();
@@ -637,7 +639,7 @@ describe("unified child runtime", () => {
 			const failures = outcomes.flatMap((outcome) => outcome.status === "rejected" ? [String(outcome.reason)] : []);
 			const registrationErrors = lines(fake.eventsPath).filter((entry) => entry.type === "register_error");
 			assert.deepEqual(failures, [], `Concurrent spawns must both receive a usable parent delivery address. Registration errors: ${JSON.stringify(registrationErrors)}`);
-			const listing = await host.execute("team_list", {});
+			const listing = await host.execute("team_list", { includeDormantTeams: true });
 			assert.equal((listing.details?.teams as JsonRecord[])?.length, 2, "Both teams must remain independently discoverable.");
 		} finally {
 			await host.shutdown();
@@ -725,7 +727,7 @@ describe("unified child runtime", () => {
 		const specification = { name: "probe", systemPrompt: "Remember these instructions.", model: "fake/fake-model", thinking: "high", forkContext: false, canManageOwnTeams: true, showOnHerdrPane: false };
 		try {
 			const spawned = await host.execute("team_spawn", { teamName: "listed-record", commonPrompt: "Shared instructions.", startIdle: true, teammates: [specification] });
-			const listed = await host.execute("team_list", {});
+			const listed = await host.execute("team_list", { includeDormantTeams: true });
 			const team = (listed.details?.teams as JsonRecord[])?.[0];
 			assert.equal(team?.teamId, spawned.details?.teamId, "List and spawn must expose the same explicitly named team ID.");
 			assert.equal(team?.teamName, "listed-record", "List must identify the team name explicitly.");
@@ -1139,7 +1141,7 @@ describe("unified child runtime", () => {
 			await host.execute("team_send_message", { targets: ["scout"], message: "report-runtime-facts" });
 			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "parent" && entry.tool === "event"));
 			await new Promise((resolve) => setTimeout(resolve, 25));
-			const listed = await host.execute("team_list", {});
+			const listed = await host.execute("team_list", { includeDormantTeams: true });
 			const team = (listed.details?.teams as JsonRecord[]).find((candidate) => candidate.teamName === "rpc-context-stream")!;
 			const listedTeammate = (team.teammates as JsonRecord[])[0];
 			assert.deepEqual(
@@ -1362,7 +1364,7 @@ describe("unexpected background-teammate exits notify main", () => {
 			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
 			assert.deepEqual(exitNotices(host), [], "The previous process was stopped by main, so its exit is not unexpected.");
 			const status = ((await host.execute("team_status", { team: "quit-resume" })).details?.status as Record<string, JsonRecord>).y;
-			const listed = (((await host.execute("team_list", {})).details?.teams as JsonRecord[]).find((team) => team.teamName === "quit-resume")?.teammates as JsonRecord[]).find((member) => member.name === "y");
+			const listed = (((await host.execute("team_list", { includeDormantTeams: true })).details?.teams as JsonRecord[]).find((team) => team.teamName === "quit-resume")?.teammates as JsonRecord[]).find((member) => member.name === "y");
 			assert.deepEqual({ word: status.word, phrase: status.phrase, live: listed?.live }, { word: "idle", phrase: "Resumed", live: true }, "The previous process's end must not mark the resumed teammate as stopped.");
 			await host.execute("team_send_message", { targets: ["y"], message: "report-runtime-facts" });
 			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "delivery" && entry.pid === resumed && ((entry.body as JsonRecord).args as JsonRecord).message === "report-runtime-facts"));
@@ -1403,7 +1405,7 @@ describe("unexpected background-teammate exits notify main", () => {
 			assert.match(outcomes.quit, /^rejected: .*restarted/, `Main must refuse a late event from the replaced process. Got: ${outcomes.quit}`);
 			assert.match(outcomes.register, /^rejected: .*restarted/, `Main must refuse a late registration from the replaced process. Got: ${outcomes.register}`);
 			const status = ((await host.execute("team_status", { team: "stale" })).details?.status as Record<string, JsonRecord>).v;
-			const listed = (((await host.execute("team_list", {})).details?.teams as JsonRecord[]).find((team) => team.teamName === "stale")?.teammates as JsonRecord[])[0];
+			const listed = (((await host.execute("team_list", { includeDormantTeams: true })).details?.teams as JsonRecord[]).find((team) => team.teamName === "stale")?.teammates as JsonRecord[])[0];
 			assert.deepEqual({ word: status.word, phrase: status.phrase, live: listed.live }, { word: "idle", phrase: "Resumed", live: true }, "A late quit from the replaced process must not stop its successor.");
 			await host.execute("team_send_message", { targets: ["v"], message: "report-runtime-facts" });
 			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "delivery" && entry.pid === successor && ((entry.body as JsonRecord).args as JsonRecord).message === "report-runtime-facts"));
@@ -1972,7 +1974,7 @@ describe("visible Herdr teammates", () => {
 				showOnHerdrPanes: true,
 				teammates: [{ name: "reviewer", systemPrompt: "wait", model: "fake/fake-model", thinking: "low" }],
 			});
-			const listing = await originHost.execute("team_list", {});
+			const listing = await originHost.execute("team_list", { includeDormantTeams: true });
 			const listedTeam = (listing.details?.teams as JsonRecord[])?.find((team) => team.teamId === teamId);
 			const reviewerSession = (listedTeam?.teammates as JsonRecord[])?.find((member) => member.name === "reviewer");
 			assert.ok(reviewerSession, "The full team listing must expose the resumable session path.");
@@ -2099,7 +2101,7 @@ describe("visible Herdr teammates", () => {
 
 /** Gives a fake teammate a saved session with one exchange, as a real Pi writes after its first answer, and returns the file. */
 async function savedSessionOf(host: ExtensionHost, teammateName: string): Promise<string> {
-	const listing = await host.execute("team_list", {});
+	const listing = await host.execute("team_list", { includeDormantTeams: true });
 	const member = ((listing.details?.teams as JsonRecord[])[0]!.teammates as JsonRecord[]).find((teammate) => teammate.name === teammateName)!;
 	const sessionFile = String(member.sessionFile);
 	fs.rmSync(sessionFile, { force: true });

@@ -64,7 +64,7 @@ export function unknownTargetMessage(identifier: string, teams: readonly Selecta
 		"Resume the intended teammate with team_resume, then retry team_send_message.",
 	].join("\n");
 	const choices = targetCandidates(teams).map(({ name, id }) => ({ name, id }));
-	return `Unknown target ${name}. Available choices: ${JSON.stringify(choices)}. No active target matches. Use team_list to find active or dormant teams; resume the intended teammate before retrying.`;
+	return `Unknown target ${name}. Available choices: ${JSON.stringify(choices)}. No active target matches. Use team_list to find active teams, with includeDormantTeams: true for dormant teams; resume the intended teammate before retrying.`;
 }
 
 /** @example resolveTargets([{ teamName: "review", teamId: "team-1", teammates: [{ name: "scout", teammateId: "session-1" }] }], ["review", "session-1"])[0].teammates.length // 1 */

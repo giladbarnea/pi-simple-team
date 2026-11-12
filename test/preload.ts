@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { scopeProcessStateToEachTest } from "./test-scope.ts";
 
 const realPiEnabled = process.env.PI_SIMPLE_TEAM_TEST_REAL_PI === "1";
 const testHome = process.env.HOME;
@@ -10,3 +11,4 @@ if (realPiEnabled && !cleanRealPiEnvironment) throw new Error("Real-Pi tests req
 const agentDirectory = realPiEnabled ? suppliedAgentDirectory! : mkdtempSync(join(tmpdir(), "pi-simple-team-test-agent-"));
 process.env.PI_CODING_AGENT_DIR = agentDirectory;
 if (!realPiEnabled) process.once("exit", () => rmSync(agentDirectory, { recursive: true, force: true }));
+scopeProcessStateToEachTest();

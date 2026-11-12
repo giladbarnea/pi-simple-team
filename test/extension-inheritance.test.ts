@@ -6,7 +6,7 @@ import { describe, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { childToolNames } from "../child-tools.ts";
 import teamExtension from "../index.ts";
-import { loadAsBunStandalonePi } from "./pi-launch.ts";
+import { loadAsBunStandalonePi, useEnvironment } from "./pi-launch.ts";
 
 type JsonRecord = Record<string, unknown>;
 type ToolResult = { content: Array<{ type: string; text: string }>; details: JsonRecord };
@@ -75,9 +75,7 @@ async function startTeammate(directory: string, discoveredExtensions: string[], 
 	const launcher = path.join(directory, "pi-launcher");
 	const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 	fs.writeFileSync(launcher, `#!/bin/sh\nexec ${quote(executable)} --no-skills --no-context-files "$@"\n`, { mode: 0o755 });
-	const previous = { agentDirectory: process.env.PI_CODING_AGENT_DIR, offline: process.env.PI_OFFLINE };
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
-	process.env.PI_OFFLINE = "1";
+	const restoreAgentEnvironment = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory, PI_OFFLINE: "1" });
 	const tools = new Map<string, RegisteredTool>();
 	const shutdownHandlers: Array<() => Promise<void>> = [];
 	const context = {
@@ -95,10 +93,7 @@ async function startTeammate(directory: string, discoveredExtensions: string[], 
 	const close = async (): Promise<void> => {
 		for (const shutdown of shutdownHandlers) await shutdown();
 		provider.stop(true);
-		for (const [name, value] of [["PI_CODING_AGENT_DIR", previous.agentDirectory], ["PI_OFFLINE", previous.offline]] as const) {
-			if (value === undefined) delete process.env[name];
-			else process.env[name] = value;
-		}
+		restoreAgentEnvironment();
 	};
 	try {
 		loadAsBunStandalonePi(launcher, () => teamExtension(api));

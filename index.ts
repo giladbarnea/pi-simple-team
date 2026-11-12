@@ -149,6 +149,46 @@ function toolResult(payload: JsonRecord, viewDetails: JsonRecord = {}) {
 	};
 }
 
+const defaultTeamListLimit = 20;
+
+/** A team_list position: a team's place in creation order, which no state change or activity moves, so paging neither skips nor repeats a team. */
+interface TeamListCursor {
+	createdAt: string;
+	id: string;
+	includeDormantTeams: boolean;
+}
+
+/** @example newestCreatedFirst({ createdAt: "2026-01-02", id: "b" }, { createdAt: "2026-01-01", id: "a" }) < 0 // true */
+function newestCreatedFirst(first: { createdAt: string; id: string }, second: { createdAt: string; id: string }): number {
+	return second.createdAt.localeCompare(first.createdAt) || second.id.localeCompare(first.id);
+}
+
+/** @example decodeTeamListCursor(encodeTeamListCursor({ createdAt: "t", id: "a", includeDormantTeams: false })).id // "a" */
+function encodeTeamListCursor(cursor: TeamListCursor): string {
+	return Buffer.from(JSON.stringify(cursor)).toString("base64url");
+}
+
+function decodeTeamListCursor(cursor: string): TeamListCursor {
+	let decoded: Partial<TeamListCursor>;
+	try {
+		decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<TeamListCursor>;
+	} catch {
+		decoded = {};
+	}
+	if (typeof decoded.createdAt !== "string" || typeof decoded.id !== "string" || typeof decoded.includeDormantTeams !== "boolean") throw new Error("Invalid team_list cursor. Pass nextCursor from the previous team_list result.");
+	return decoded as TeamListCursor;
+}
+
+interface Reminder {
+	id: string;
+	slug: string;
+	message: string;
+	armedAt: Date;
+	wakeAt: Date;
+	timer: ReturnType<typeof setTimeout>;
+	state: "pending" | "delivered" | "cancelled";
+}
+
 const reminderSlugWords = {
 	adjectives: ["amber", "brisk", "calm", "clever", "dusty", "eager", "fuzzy", "gentle", "golden", "hollow", "jolly", "lively", "mellow", "misty", "nimble", "plucky", "quiet", "rapid", "rusty", "silver", "steady", "sunny", "swift", "witty"],
 	nouns: ["badger", "beacon", "cedar", "comet", "falcon", "fern", "harbor", "heron", "lantern", "maple", "meadow", "otter", "pebble", "pine", "quail", "raven", "river", "robin", "sparrow", "spruce", "thistle", "tulip", "walrus", "willow"],
@@ -227,6 +267,33 @@ function lifecycleInstruction(startIdle: boolean): string {
 		? `All teammates are currently idle. Use \`team_send_message\` to start idle teammates, or \`team_resume\` for stopped teammates. After the team starts work: ${reminderOffer}`
 		: `Teammates will message you with milestones or requests for help. Avoid repeated status polling and shell sleeps. Set your status to explain what you expect from them. If you have no independent work, tell the user and end your turn. ${reminderOffer}`;
 	return nextAction;
+}
+
+/** A listed team's full records: the saved definitions, with live runtime values for a team this process runs. */
+function fullTeamListRow(manifest: TeamManifest): JsonRecord {
+	const liveTeam = teams.get(manifest.id);
+	return {
+		...teamIdentity(manifest),
+		state: manifest.state,
+		leaseState: readTeamLeaseState(manifest.id).state,
+		teammates: manifest.members.map(({ sessionMaterialized, ...member }) => {
+			const runtime = liveTeam?.members.get(member.name);
+			return runtime ? teammateRecord(runtime) : member;
+		}),
+		createdAt: manifest.createdAt,
+		updatedAt: manifest.updatedAt,
+		shutdownAt: manifest.shutdownAt,
+		expiresAt: manifest.expiresAt,
+	};
+}
+
+/** The short row team_list shows the model by default: the team, its state, and each teammate's identity, model and liveness, without prompts or settings. */
+function compactTeamListRow(manifest: TeamManifest): JsonRecord {
+	const full = fullTeamListRow(manifest);
+	return {
+		teamName: full.teamName, teamId: full.teamId, state: full.state,
+		teammates: (full.teammates as TeammateRecord[]).map(({ name, teammateId, model, live, active }) => ({ name, teammateId, model, live, active })),
+	};
 }
 
 /** @example lifecycleResult(emptyTeam).started // false */
@@ -485,7 +552,7 @@ function resolveTeam(owner: symbol, teamIdentifier?: string): TeamState {
 	const ownedTeams = [...teams.values()].filter((team) => team.owner === owner);
 	if (teamIdentifier) {
 		const team = resolveTeamIdentifier(ownedTeams, teamIdentifier);
-		if (!team) throw new Error(`Unknown team: ${JSON.stringify(teamIdentifier)}. Available owned team IDs by name: ${JSON.stringify(teamChoices(ownedTeams))}. Use team_list to find dormant teams, or pass an owned active team name or ID in the team parameter.`);
+		if (!team) throw new Error(`Unknown team: ${JSON.stringify(teamIdentifier)}. Available owned team IDs by name: ${JSON.stringify(teamChoices(ownedTeams))}. Use team_list with includeDormantTeams: true to find dormant teams, or pass an owned active team name or ID in the team parameter.`);
 		return team;
 	}
 
@@ -754,13 +821,19 @@ function restartWithSettings(team: TeamState, teammate: TeammateState, update: T
 	});
 }
 
+/** Whether a living process of this session holds the team's lease. Another main that resumed the team holds it under its own session. */
+function isLeaseHeldBy(teamId: string, sessionId: string | undefined): boolean {
+	const lease = readTeamLeaseState(teamId);
+	return lease.state === "claimed" && lease.mainSessionId === sessionId;
+}
+
 /**
  * A managing teammate's running teams, which a restart would stop: its shutdown stops every team it owns.
- * A running team's manifest is active and its lease is held by a living process. A manager that died abruptly leaves its manifests active behind a stale lease, and those teams run nothing.
+ * A running team's manifest is active and a living process of the manager's own session holds its lease. A manager that died abruptly leaves its manifests active behind a stale lease, and a team another main resumed is that main's, so neither counts.
  */
 function activeManagedTeams(team: TeamState, teammate: TeammateState): TeamManifest[] {
 	if (!teammate.canManageOwnTeams || !team.projectDirectory) return [];
-	return listTeamManifests(team.projectDirectory).manifests.filter((manifest) => manifest.originMainSessionId === teammate.sessionId && manifest.state === "active" && readTeamLeaseState(manifest.id).state === "claimed");
+	return listTeamManifests(team.projectDirectory).manifests.filter((manifest) => manifest.originMainSessionId === teammate.sessionId && manifest.state === "active" && isLeaseHeldBy(manifest.id, teammate.sessionId));
 }
 
 /** The managing teammate's own teammates that are working, as their teams' manifests record them, named for main. */
@@ -1328,7 +1401,9 @@ export default function (pi: ExtensionAPI) {
 
 	const parentPiCommand = piCommand(process.argv[1], process.execPath, getPackageDir());
 	const owner = Symbol("pi-simple-team-owner");
-	const reminderTimers = new Set<ReturnType<typeof setTimeout>>();
+	/** This session's reminders by ID. They live in memory, so after Pi restarts every earlier reminder is unknown. */
+	const reminders = new Map<string, Reminder>();
+	let reminderCount = 0;
 	const sessionTeammateRoster = childRuntimeConfig?.participants ?? [];
 
 	/** Current-project manifests that team_resume can select: all for main, only its own for a managing teammate. */
@@ -1362,8 +1437,8 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async () => {
-		for (const timer of reminderTimers) clearTimeout(timer);
-		reminderTimers.clear();
+		for (const reminder of reminders.values()) clearTimeout(reminder.timer);
+		reminders.clear();
 		const ownedTeams = [...teams.values()].filter((team) => team.owner === owner);
 		for (const team of ownedTeams) team.stopping = true;
 		for (const team of ownedTeams) await shutdownTeam(team);
@@ -1503,15 +1578,18 @@ export default function (pi: ExtensionAPI) {
 				const delaySeconds = Math.round(delayMilliseconds / 1000);
 				const armedAt = new Date();
 				const wakeAt = new Date(armedAt.getTime() + delayMilliseconds);
-				const slug = reminderSlug();
+				const pendingSlugs = new Set([...reminders.values()].filter((reminder) => reminder.state === "pending").map((reminder) => reminder.slug));
+				let slug = reminderSlug();
+				while (pendingSlugs.has(slug)) slug = reminderSlug();
+				const id = `reminder-${++reminderCount}`;
 				const timer = setTimeout(() => {
-					reminderTimers.delete(timer);
+					reminders.get(id)!.state = "delivered";
 					pi.sendMessage(
 						{ customType: "pi-simple-team-reminder", content: `Reminder ${slug} wake up: it's ${humanTime(new Date())} now.\n\n${params.message}`, display: false },
 						{ deliverAs: "followUp", triggerTurn: true },
 					);
 				}, delayMilliseconds);
-				reminderTimers.add(timer);
+				reminders.set(id, { id, slug, message: params.message, armedAt, wakeAt, timer, state: "pending" });
 				timer.unref();
 				return {
 					content: [{ type: "text" as const, text: `Armed reminder ${slug}: It's ${humanTime(armedAt)} now. Reminder set in ${delaySeconds} seconds (${humanDuration(delaySeconds)}) for ${humanTime(wakeAt)}.` }],
@@ -1523,17 +1601,73 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerTool(
 		defineTool({
+			name: "list_reminders",
+			label: "List Reminders",
+			description: "List your pending reminders in this session: ID, slug, and when each was armed and wakes, in absolute and relative time. Delivered and cancelled reminders are left out.",
+			parameters: Type.Object({}, { additionalProperties: false }),
+			async execute() {
+				const now = Date.now();
+				const pending = [...reminders.values()].filter((reminder) => reminder.state === "pending").sort((first, second) => first.wakeAt.getTime() - second.wakeAt.getTime());
+				return toolResult({
+					now: humanTime(new Date(now)),
+					reminders: pending.map((reminder) => ({
+						id: reminder.id, slug: reminder.slug,
+						armedAt: `${humanTime(reminder.armedAt)} (${humanDuration(Math.round((now - reminder.armedAt.getTime()) / 1000))} ago)`,
+						wakeAt: `${humanTime(reminder.wakeAt)} (in ${humanDuration(Math.max(0, Math.round((reminder.wakeAt.getTime() - now) / 1000)))})`,
+					})),
+				});
+			},
+		}),
+	);
+
+	pi.registerTool(
+		defineTool({
+			name: "cancel_reminders",
+			label: "Cancel Reminders",
+			description: "Cancel your pending reminders in this session, by ID or slug, or all of them with all: true. Each result says cancelled, delivered or unknown; a cancelled one returns its message and wake time, so you can set it again with schedule_reminder.",
+			parameters: Type.Object({
+				reminders: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: "Reminder IDs or slugs to cancel" })),
+				all: Type.Optional(Type.Boolean({ description: "Cancel every pending reminder. Leaving out reminders without all: true cancels nothing." })),
+			}, { additionalProperties: false }),
+			async execute(_toolCallId, params) {
+				if (params.reminders && params.all) throw new Error("Pass either reminders or all: true to cancel_reminders, not both. Nothing was cancelled.");
+				if (!params.reminders && params.all !== true) throw new Error("Pass the reminder IDs or slugs to cancel, or all: true to cancel every pending reminder. Nothing was cancelled.");
+				const cancel = (reminder: Reminder): JsonRecord => {
+					if (reminder.state === "pending") {
+						clearTimeout(reminder.timer);
+						reminder.state = "cancelled";
+					}
+					return { id: reminder.id, slug: reminder.slug, result: reminder.state, ...(reminder.state === "cancelled" ? { message: reminder.message, wakeAt: humanTime(reminder.wakeAt) } : {}) };
+				};
+				const results = params.reminders
+					? params.reminders.map((identifier) => {
+						const matches = [...reminders.values()].filter((reminder) => reminder.id === identifier || reminder.slug === identifier);
+						const reminder = matches.find((candidate) => candidate.state === "pending") ?? matches.at(-1);
+						return reminder ? { reminder: identifier, ...cancel(reminder) } : { reminder: identifier, result: "unknown" };
+					})
+					: [...reminders.values()].filter((reminder) => reminder.state === "pending").map(cancel);
+				return toolResult({ results });
+			},
+		}),
+	);
+
+	pi.registerTool(
+		defineTool({
 			name: "team_list",
-			// TODO: Make listing dormant teams opt-in with includeDormantTeams: boolean.
 			label: "Team List",
 			description: childRuntimeConfig
-				? "List active and dormant teams in the current project that this managing teammate's Pi session created."
-				: "List active and dormant teams for the current project.",
+				? "List the active teams in the current project that this managing teammate's Pi session created, newest first, as short rows. Pass includeDormantTeams to include dormant teams, or team for one team's full records."
+				: "List the active teams in the current project, newest first, as short rows. Pass includeDormantTeams to include dormant teams, or team for one team's full records.",
 			renderShell: "self",
 			renderCall: (_args, theme, context) => renderTeamToolCall("team_list", {}, theme, context, sessionTeammateRoster),
 			renderResult: (result, options, theme, context) => renderTeamToolResult("team_list", result, options, theme, context, undefined, sessionTeammateRoster),
-			parameters: Type.Object({}, { additionalProperties: false }),
-			async execute(_toolCallId, _params, _signal, _onUpdate, context) {
+			parameters: Type.Object({
+				team: Type.Optional(Type.String({ minLength: 1, description: "Team name or persistent ID. Returns that team's full records, active or dormant, without paging." })),
+				includeDormantTeams: Type.Optional(Type.Boolean({ default: false, description: "Also list dormant teams. Defaults to false: active teams only." })),
+				limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, description: "Max teams to return, default 20, maximum 100" })),
+				cursor: Type.Optional(Type.String({ description: "nextCursor from the previous team_list result. Keep the same includeDormantTeams when paging." })),
+			}, { additionalProperties: false }),
+			async execute(_toolCallId, params, _signal, _onUpdate, context) {
 				const projectDirectory = context.sessionManager?.getCwd?.() ?? context.cwd;
 				if (!projectDirectory) throw new Error("team_list requires a project directory");
 				const managerSessionId = childRuntimeConfig ? context.sessionManager?.getSessionId?.() : undefined;
@@ -1542,25 +1676,29 @@ export default function (pi: ExtensionAPI) {
 				const manifests = listing.manifests.filter(
 					(manifest) => !managerSessionId || manifest.originMainSessionId === managerSessionId,
 				);
+				const unreadable = listing.unreadable.length > 0 ? { unreadableManifests: listing.unreadable } : {};
+				if (params.team) {
+					if (params.cursor) throw new Error("Pass either team or cursor to team_list, not both.");
+					const manifest = resolveTeamIdentifier(manifests, params.team);
+					if (!manifest) throw new Error(`Unknown current-project team: ${JSON.stringify(params.team)}. Call team_list with includeDormantTeams: true to see every team.`);
+					return toolResult({ ...unreadable, teams: [fullTeamListRow(manifest)] });
+				}
+				const includeDormantTeams = Boolean(params.includeDormantTeams);
+				const after = params.cursor === undefined ? undefined : decodeTeamListCursor(params.cursor);
+				if (after && after.includeDormantTeams !== includeDormantTeams) throw new Error("Keep the same includeDormantTeams when paging team_list with cursor.");
+				const listed = manifests
+					.filter((manifest) => includeDormantTeams || manifest.state === "active")
+					.sort(newestCreatedFirst)
+					.filter((manifest) => !after || newestCreatedFirst(manifest, after) > 0);
+				const page = listed.slice(0, params.limit ?? defaultTeamListLimit);
+				const last = page.at(-1);
+				const hiddenDormantTeams = includeDormantTeams ? 0 : manifests.filter((manifest) => manifest.state === "dormant").length;
 				return toolResult({
-					...(listing.unreadable.length > 0 ? { unreadableManifests: listing.unreadable } : {}),
-					teams: manifests.map((manifest) => {
-						const liveTeam = teams.get(manifest.id);
-						return {
-							...teamIdentity(manifest),
-							state: manifest.state,
-							leaseState: readTeamLeaseState(manifest.id).state,
-							teammates: manifest.members.map(({ sessionMaterialized, ...member }) => {
-								const runtime = liveTeam?.members.get(member.name);
-								return runtime ? teammateRecord(runtime) : member;
-							}),
-							createdAt: manifest.createdAt,
-							updatedAt: manifest.updatedAt,
-							shutdownAt: manifest.shutdownAt,
-							expiresAt: manifest.expiresAt,
-						};
-					}),
-				});
+					...unreadable,
+					teams: page.map(compactTeamListRow),
+					...(listed.length > page.length && last ? { nextCursor: encodeTeamListCursor({ createdAt: last.createdAt, id: last.id, includeDormantTeams }) } : {}),
+					...(hiddenDormantTeams > 0 ? { dormantTeamsHidden: hiddenDormantTeams, instruction: "Pass includeDormantTeams: true to list dormant teams too." } : {}),
+				}, { teams: page.map(fullTeamListRow) });
 			},
 		}),
 	);
@@ -1587,7 +1725,7 @@ export default function (pi: ExtensionAPI) {
 			async execute(_toolCallId, params, signal, _onUpdate, context) {
 				signal?.throwIfAborted();
 				const manifest = resolveTeamIdentifier(resumableTeamManifests(context, "team_resume"), params.team);
-				if (!manifest) throw new Error(`Unknown current-project team: ${JSON.stringify(params.team)}. Call team_list and pass a listed teamId or unique teamName in the team parameter.`);
+				if (!manifest) throw new Error(`Unknown current-project team: ${JSON.stringify(params.team)}. Call team_list with includeDormantTeams: true and pass a listed teamId or unique teamName in the team parameter.`);
 				const members = manifest.members;
 				const requestedNames = resolveTeammates(members, params.teammates ?? members.map((member) => member.teammateId)).map((member) => member.name);
 				const showOnHerdrPanes = Boolean(params.showOnHerdrPanes);

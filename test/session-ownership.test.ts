@@ -11,7 +11,8 @@ import { Value } from "typebox/value";
 
 import { registerChildTools } from "../child-tools.ts";
 import teamExtension from "../index.ts";
-import { useFakePiPackage } from "./pi-launch.ts";
+import { useEnvironment, useFakePiPackage } from "./pi-launch.ts";
+import { scopedRestore } from "./test-scope.ts";
 import type { TeamLogEntry } from "../teamlog.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -106,10 +107,7 @@ describe("recursive team oversight", () => {
 			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["lead", "peer"]),
 			PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "1",
 		};
-		const previousEnvironment = Object.fromEntries(
-			Object.keys(environment).map((name) => [name, process.env[name]]),
-		);
-		Object.assign(process.env, environment);
+		const restoreEnvironment = useEnvironment(environment);
 
 		let host: ExtensionHost | undefined;
 		try {
@@ -119,6 +117,8 @@ describe("recursive team oversight", () => {
 				[
 					"get_context_window_usage",
 					"schedule_reminder",
+					"list_reminders",
+					"cancel_reminders",
 					"team_add_teammates",
 					"team_list",
 					"team_resume",
@@ -133,10 +133,7 @@ describe("recursive team oversight", () => {
 				"Expected an opted-in teammate to remain a parent-team member and gain the complete manager tool set.",
 			);
 		} finally {
-			for (const [name, value] of Object.entries(previousEnvironment)) {
-				if (value === undefined) delete process.env[name];
-				else process.env[name] = value;
-			}
+			restoreEnvironment();
 			await host?.shutdown();
 		}
 	});
@@ -152,18 +149,14 @@ describe("recursive team oversight", () => {
 			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["worker"]),
 			PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "0",
 		};
-		const previousEnvironment = Object.fromEntries(Object.keys(environment).map((name) => [name, process.env[name]]));
-		Object.assign(process.env, environment);
+		const restoreEnvironment = useEnvironment(environment);
 		let host: ExtensionHost | undefined;
 
 		try {
 			host = new ExtensionHost();
 			assert.equal(host.tools.has("schedule_reminder"), false, "Expected normal teammates to receive only parent-team member tools.");
 		} finally {
-			for (const [name, value] of Object.entries(previousEnvironment)) {
-				if (value === undefined) delete process.env[name];
-				else process.env[name] = value;
-			}
+			restoreEnvironment();
 			await host?.shutdown();
 		}
 	});
@@ -198,8 +191,7 @@ describe("recursive team oversight", () => {
 			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["lead", "peer"]),
 			PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "1",
 		};
-		const previousEnvironment = Object.fromEntries(Object.keys(environment).map((name) => [name, process.env[name]]));
-		Object.assign(process.env, environment);
+		const restoreEnvironment = useEnvironment(environment);
 		let host: ExtensionHost | undefined;
 
 		try {
@@ -230,10 +222,7 @@ describe("recursive team oversight", () => {
 				"Expected communication tools without a team selector to use the parent-team callback.",
 			);
 		} finally {
-			for (const [name, value] of Object.entries(previousEnvironment)) {
-				if (value === undefined) delete process.env[name];
-				else process.env[name] = value;
-			}
+			restoreEnvironment();
 			await host?.shutdown();
 			await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 		}
@@ -243,8 +232,7 @@ describe("recursive team oversight", () => {
 		const fakePi = installFakePi();
 		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-simple-team-capability-test-"));
 		const logPath = path.join(directory, "capabilities.log");
-		const previousLogPath = process.env.PI_SIMPLE_TEAM_TEST_CAPABILITY_LOG;
-		process.env.PI_SIMPLE_TEAM_TEST_CAPABILITY_LOG = logPath;
+		const restoreLogPath = useEnvironment({ PI_SIMPLE_TEAM_TEST_CAPABILITY_LOG: logPath });
 		const receipt = messageReceipt(2);
 		const host = new ExtensionHost(receipt.record);
 
@@ -268,8 +256,7 @@ describe("recursive team oversight", () => {
 			await host.shutdown();
 			fakePi.restore();
 			fs.rmSync(directory, { recursive: true, force: true });
-			if (previousLogPath === undefined) delete process.env.PI_SIMPLE_TEAM_TEST_CAPABILITY_LOG;
-			else process.env.PI_SIMPLE_TEAM_TEST_CAPABILITY_LOG = previousLogPath;
+			restoreLogPath();
 		}
 	});
 });
@@ -547,13 +534,12 @@ function installFakePi(): { restore: () => void } {
 	const executable = path.join(directory, "pi");
 	fs.writeFileSync(executable, fakePiScript, { mode: 0o755 });
 	const restorePiPackage = useFakePiPackage(directory, "pi");
-	const previousPath = process.env.PATH;
-	process.env.PATH = `${directory}${path.delimiter}${previousPath ?? ""}`;
+	const restorePath = useEnvironment({ PATH: `${directory}${path.delimiter}${process.env.PATH ?? ""}` });
 
 	return {
 		restore: () => {
 			restorePiPackage();
-			process.env.PATH = previousPath;
+			restorePath();
 			fs.rmSync(directory, { recursive: true, force: true });
 		},
 	};
@@ -561,14 +547,16 @@ function installFakePi(): { restore: () => void } {
 
 /** Runs `body` with the system clock at `isoTime` in time zone `timeZone`, then restores both. */
 async function atLocalTime(timeZone: string, isoTime: string, body: () => Promise<void>): Promise<void> {
+	// Bun keeps the last time zone it was given, so deleting TZ would not bring the local zone back. Restore it by name.
 	const previousTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+	const restoreTimeZone = scopedRestore(() => { process.env.TZ = previousTimeZone; });
 	process.env.TZ = timeZone;
 	setSystemTime(new Date(isoTime));
 	try {
 		await body();
 	} finally {
 		setSystemTime();
-		process.env.TZ = previousTimeZone;
+		restoreTimeZone();
 	}
 }
 
@@ -709,6 +697,61 @@ describe("schedule_reminder", () => {
 		await new Promise((resolve) => setTimeout(resolve, 200));
 
 		assert.equal(host.messages.length, 0, "Expected session shutdown to cancel pending reminders.");
+	});
+});
+
+describe("list_reminders and cancel_reminders", () => {
+	const arm = async (host: ExtensionHost, delayMinutes: number, message: string): Promise<string> => {
+		const armed = await host.executeResult("schedule_reminder", { delayMinutes, message });
+		return /^Armed reminder ([a-z]+-[a-z]+):/.exec(armed.content[0]!.text)![1]!;
+	};
+	const payload = async (host: ExtensionHost, tool: string, params: Record<string, unknown> = {}) => JSON.parse((await host.executeResult(tool, params)).content[0]!.text);
+
+	test("list_reminders shows each pending reminder's ID, slug, and absolute and relative times, and drops delivered ones", async () => {
+		await atLocalTime("Asia/Jerusalem", "2026-11-07T08:47:00Z", async () => {
+			const host = new ExtensionHost();
+			try {
+				const later = await arm(host, 30, "Check the team.");
+				await arm(host, 0.002, "Soon.");
+				await new Promise((resolve) => setTimeout(resolve, 200));
+				assert.deepEqual(await payload(host, "list_reminders"), {
+					now: "Nov 7, 2026, 10:47am GMT+2",
+					reminders: [{ id: "reminder-1", slug: later, armedAt: "Nov 7, 2026, 10:47am GMT+2 (0s ago)", wakeAt: "Nov 7, 2026, 11:17am GMT+2 (in 30m)" }],
+				});
+			} finally {
+				await host.shutdown();
+			}
+		});
+	});
+
+	test("cancels only named reminders or all: true, and reports cancelled, delivered and unknown", async () => {
+		await atLocalTime("Asia/Jerusalem", "2026-11-07T08:47:00Z", async () => {
+			const host = new ExtensionHost();
+			try {
+				const first = await arm(host, 30, "First.");
+				const second = await arm(host, 45, "Second.");
+				const delivered = await arm(host, 0.002, "Delivered.");
+				const short = await arm(host, 0.003, "Cancelled before it fires.");
+				await host.executeResult("cancel_reminders", { reminders: [short] });
+				await new Promise((resolve) => setTimeout(resolve, 300));
+				assert.deepEqual(host.messages.map((message) => message.content.split("\n\n").at(-1)), ["Delivered."], "A cancelled reminder never fires.");
+				for (const params of [{}, { all: false }, { reminders: [first], all: true }]) {
+					await assert.rejects(host.executeResult("cancel_reminders", params), /Nothing was cancelled/, `Expected ${JSON.stringify(params)} to cancel nothing.`);
+				}
+				assert.equal((await payload(host, "list_reminders")).reminders.length, 2, "A call without a list or all: true must not cancel everything.");
+				assert.deepEqual((await payload(host, "cancel_reminders", { reminders: [first, "reminder-3", "no-such"] })).results, [
+					{ reminder: first, id: "reminder-1", slug: first, result: "cancelled", message: "First.", wakeAt: "Nov 7, 2026, 11:17am GMT+2" },
+					{ reminder: "reminder-3", id: "reminder-3", slug: delivered, result: "delivered" },
+					{ reminder: "no-such", result: "unknown" },
+				]);
+				assert.deepEqual((await payload(host, "cancel_reminders", { all: true })).results, [
+					{ id: "reminder-2", slug: second, result: "cancelled", message: "Second.", wakeAt: "Nov 7, 2026, 11:32am GMT+2" },
+				]);
+				assert.deepEqual((await payload(host, "list_reminders")).reminders, []);
+			} finally {
+				await host.shutdown();
+			}
+		});
 	});
 });
 
@@ -902,8 +945,7 @@ describe("context-window reports", () => {
 			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["lead"]),
 			PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "1",
 		};
-		const previousEnvironment = Object.fromEntries(Object.keys(environment).map((name) => [name, process.env[name]]));
-		Object.assign(process.env, environment);
+		const restoreEnvironment = useEnvironment(environment);
 		let host: ExtensionHost | undefined;
 
 		try {
@@ -918,10 +960,7 @@ describe("context-window reports", () => {
 				"Expected an overseeing teammate to retain its no-argument self report.",
 			);
 		} finally {
-			for (const [name, value] of Object.entries(previousEnvironment)) {
-				if (value === undefined) delete process.env[name];
-				else process.env[name] = value;
-			}
+			restoreEnvironment();
 			await host?.shutdown();
 		}
 	});

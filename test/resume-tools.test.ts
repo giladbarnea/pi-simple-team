@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "bun:test";
+import { useEnvironment } from "./pi-launch.ts";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { childToolNames } from "../child-tools.ts";
@@ -24,11 +25,11 @@ async function startSession(directory: string, sessionManager: SessionManager, w
 		noThemes: true,
 		noContextFiles: true,
 	});
-	Object.assign(process.env, environment);
+	const restoreEnvironment = useEnvironment(environment);
 	try {
 		await resourceLoader.reload();
 	} finally {
-		for (const name of Object.keys(environment)) delete process.env[name];
+		restoreEnvironment();
 	}
 	const { session } = await createAgentSession({
 		cwd: directory,

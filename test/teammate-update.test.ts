@@ -7,7 +7,7 @@ import { describe, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import teamExtension from "../index.ts";
 import { canonicalProjectDirectory, claimTeamLease, writeTeamManifest } from "../team-registry.ts";
-import { loadAsBunStandalonePi } from "./pi-launch.ts";
+import { loadAsBunStandalonePi, useEnvironment } from "./pi-launch.ts";
 
 type JsonRecord = Record<string, unknown>;
 type ToolResult = { content: Array<{ type: string; text: string }>; details: JsonRecord };
@@ -57,9 +57,7 @@ async function startMain(directory: string) {
 	const launcher = path.join(directory, "pi-launcher");
 	const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 	fs.writeFileSync(launcher, `#!/bin/sh\nexec ${quote(executable)} --no-skills --no-context-files "$@"\n`, { mode: 0o755 });
-	const previous = { agentDirectory: process.env.PI_CODING_AGENT_DIR, offline: process.env.PI_OFFLINE };
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
-	process.env.PI_OFFLINE = "1";
+	const restoreAgentEnvironment = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory, PI_OFFLINE: "1" });
 	const tools = new Map<string, RegisteredTool>();
 	const shutdownHandlers: Array<() => Promise<void>> = [];
 	const context = {
@@ -81,7 +79,7 @@ async function startMain(directory: string) {
 		assert.ok(tool, `Expected the ${name} tool. Registered: ${[...tools.keys()]}`);
 		return tool.execute(name, params, new AbortController().signal, undefined, context);
 	};
-	const roster = async (): Promise<TeammateRecord[]> => ((await execute("team_list", {})).details.teams as Array<{ teamName: string; teammates: TeammateRecord[] }>).find((team) => team.teamName === teamName)!.teammates;
+	const roster = async (): Promise<TeammateRecord[]> => ((await execute("team_list", { team: teamName })).details.teams as Array<{ teammates: TeammateRecord[] }>)[0]!.teammates;
 	const listed = async (name = "x"): Promise<TeammateRecord> => (await roster()).find((teammate) => teammate.name === name)!;
 	const statusOf = async (name = "x"): Promise<Status> => ((await execute("team_status", { team: teamName })).details.status as Record<string, Status>)[name]!;
 	const waitFor = async (description: string, condition: () => boolean | Promise<boolean>): Promise<void> => {
@@ -106,10 +104,7 @@ async function startMain(directory: string) {
 			for (const resolve of held.splice(0)) resolve();
 			for (const shutdown of shutdownHandlers) await shutdown();
 			provider.stop(true);
-			for (const [name, value] of [["PI_CODING_AGENT_DIR", previous.agentDirectory], ["PI_OFFLINE", previous.offline]] as const) {
-				if (value === undefined) delete process.env[name];
-				else process.env[name] = value;
-			}
+			restoreAgentEnvironment();
 		},
 	};
 }
@@ -136,9 +131,10 @@ function writeToolExtension(directory: string, toolName: string): string {
 
 /**
  * A team the managing teammate's own session created, with one teammate, as its manifest and lease record it.
- * `lease: "live"` holds the lease for a living process; `"stale"` leaves it to a process that died, as an abrupt manager death does.
+ * `lease: "live"` holds the lease for a living process of the manager; `"stale"` leaves it to a process that died, as an abrupt manager death does;
+ * `"another main"` gives it to a living process of another session, as when another main resumed the team.
  */
-function storeManagedTeam(main: Main, managerSessionId: string, teammateActive: boolean, lease: "live" | "stale"): void {
+function storeManagedTeam(main: Main, managerSessionId: string, teammateActive: boolean, lease: "live" | "stale" | "another main"): void {
 	const now = new Date().toISOString();
 	const teamId = `${managerSessionId}-sub`;
 	writeTeamManifest({
@@ -149,8 +145,8 @@ function storeManagedTeam(main: Main, managerSessionId: string, teammateActive: 
 	});
 	const leaseFile = path.join(process.env.PI_CODING_AGENT_DIR!, "pi-simple-team", "teams-v2", `${encodeURIComponent(teamId)}.lease`);
 	if (!fs.existsSync(leaseFile)) claimTeamLease(teamId, managerSessionId);
-	const record = JSON.parse(fs.readFileSync(leaseFile, "utf8")) as { processId: number };
-	fs.writeFileSync(leaseFile, JSON.stringify({ ...record, processId: lease === "live" ? process.pid : 2_147_483_000 }));
+	const record = JSON.parse(fs.readFileSync(leaseFile, "utf8")) as { processId: number; mainSessionId: string };
+	fs.writeFileSync(leaseFile, JSON.stringify({ ...record, processId: lease === "stale" ? 2_147_483_000 : process.pid, mainSessionId: lease === "another main" ? "another-main-session" : managerSessionId }));
 }
 
 const sessionEntries = (sessionFile: string): SessionEntry[] => fs.readFileSync(sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line) as SessionEntry);
@@ -334,6 +330,16 @@ realPi("a managing teammate is updated only while its own teammates are idle", (
 			await main.waitFor("the manager's next turn", () => main.modelRequests.length === 4);
 			assert.equal(main.modelRequests[3]!.model, "b");
 			assert.match(conversationText(main.modelRequests[3]!), /Main changed your configuration: model: local\/b\.[\s\S]*Your restart stopped the teams you manage: "sub" \(team ID: [^)]+-sub\)\.[\s\S]*Resume them with team_resume when you continue\./, "The restarted manager must learn its settings and which teams to resume.");
+		});
+	});
+
+	test("a team another main resumed counts as that main's, not the manager's", async () => {
+		await withMain(async (main) => {
+			await main.spawn(false, [{ name: "x", canManageOwnTeams: true }]);
+			const { teammate } = (await finishFirstTurns(main)).get("x")!;
+			storeManagedTeam(main, teammate.teammateId, true, "another main");
+			const result = await main.execute("team_update_teammates", { teammates: [{ teammate: "x", thinking: "high" }] });
+			assert.deepEqual([(result.details.teammates as TeammateRecord[])[0]!.held, (result.details.teammates as TeammateRecord[])[0]!.thinking], [false, "high"]);
 		});
 	});
 

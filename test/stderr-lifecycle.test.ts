@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { describe, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import teamExtension from "../index.ts";
-import { loadAsBunStandalonePi } from "./pi-launch.ts";
+import { loadAsBunStandalonePi, useEnvironment } from "./pi-launch.ts";
 
 type JsonRecord = Record<string, unknown>;
 type ToolResult = { content: Array<{ type: string; text: string }>; details: JsonRecord };
@@ -51,10 +51,7 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("RPC stderr and
 		const processIdFile = path.join(directory, "child.pid");
 		const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 		fs.writeFileSync(launcher, `#!/bin/sh\nprintf '%s' "$$" > ${quote(processIdFile)}\nprintf '%s\\n' ${quote(diagnostic + " ".repeat(2) + "x".repeat(2000))} >&2\nexec ${quote(executable)} "$@"\n`, { mode: 0o755 });
-		const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-		const previousOffline = process.env.PI_OFFLINE;
-		process.env.PI_CODING_AGENT_DIR = agentDirectory;
-		process.env.PI_OFFLINE = "1";
+		const restoreAgentEnvironment = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory, PI_OFFLINE: "1" });
 		const tools = new Map<string, RegisteredTool>();
 		const shutdownHandlers: Array<() => Promise<void>> = [];
 		const context = {
@@ -146,10 +143,7 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("RPC stderr and
 		} finally {
 			for (const shutdown of shutdownHandlers) await shutdown();
 			provider.stop(true);
-			if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
-			if (previousOffline === undefined) delete process.env.PI_OFFLINE;
-			else process.env.PI_OFFLINE = previousOffline;
+			restoreAgentEnvironment();
 			fs.rmSync(directory, { recursive: true, force: true });
 		}
 	}, 60000);
