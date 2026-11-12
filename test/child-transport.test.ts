@@ -10,7 +10,7 @@ import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 import teamExtension from "../index.ts";
 import { childToolNames, registerChildTools } from "../child-tools.ts";
-import { loadAsBunStandalonePi, loadWithProcess, useFakePiPackage } from "./pi-launch.ts";
+import { loadAsBunStandalonePi, loadWithProcess, useEnvironment, useFakePiPackage } from "./pi-launch.ts";
 
 type JsonRecord = Record<string, unknown>;
 type ToolResult = { content: Array<{ type: string; text: string }>; details?: JsonRecord };
@@ -86,7 +86,7 @@ const runtimeFacts = sessionArgumentIndex === -1
   ? { model: args[args.indexOf("--model") + 1], thinking: args[args.indexOf("--thinking") + 1], contextPercent: null }
   : JSON.parse(fs.readFileSync(settingsPath, "utf8"));
 fs.writeFileSync(settingsPath, JSON.stringify(runtimeFacts));
-record({ type: "pi_start", executable: process.argv[1], args, sessionId, sessionFile });
+record({ type: "pi_start", executable: process.argv[1], args, sessionId, sessionFile, pid: process.pid, member: process.env.PI_SIMPLE_TEAM_MEMBER });
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -111,9 +111,13 @@ async function parent(tool, args) {
   const response = await fetch(process.env.PI_SIMPLE_TEAM_CALLBACK_URL, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ token: process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN, team: process.env.PI_SIMPLE_TEAM_TEAM, from: process.env.PI_SIMPLE_TEAM_MEMBER, tool, args }),
+    body: JSON.stringify({ token: process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN, team: process.env.PI_SIMPLE_TEAM_TEAM, from: process.env.PI_SIMPLE_TEAM_MEMBER, process: process.env.PI_SIMPLE_TEAM_PROCESS, tool, args }),
   });
   if (!response.ok) throw new Error(await response.text());
+}
+async function exitWhenGateOpens(code) {
+  await fetch(process.env.PI_SIMPLE_TEAM_TEST_EXIT_GATE);
+  process.exit(code);
 }
 async function quitThenExit(code) {
   await parent("event", { event: { type: "session_shutdown", reason: "quit" } });
@@ -124,7 +128,7 @@ const server = http.createServer(async (request, response) => {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  record({ type: "delivery", body });
+  record({ type: "delivery", body, pid: process.pid });
   if (body.token !== process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN) {
     response.writeHead(403); response.end(); return;
   }
@@ -145,7 +149,19 @@ const server = http.createServer(async (request, response) => {
     response.end(JSON.stringify({ accepted: true }));
     return;
   }
-  const exits = { "quit-then-exit": () => quitThenExit(143), "quit-slowly": () => quitThenExit(0), "exit-now": () => process.exit(7) };
+  // A process that main no longer counts as live, and that still talks to main after main restarted its teammate.
+  const lingerAsStale = async () => {
+    await parent("event", { event: { type: "session_shutdown", reason: "new" } });
+    await fetch(process.env.PI_SIMPLE_TEAM_TEST_EXIT_GATE);
+    const attempt = (tool, args) => parent(tool, args).then(() => "accepted", (error) => "rejected: " + error.message);
+    const outcomes = {
+      quit: await attempt("event", { event: { type: "session_shutdown", reason: "quit" } }),
+      register: await attempt("register", { url: "http://127.0.0.1:" + server.address().port + "/deliver", sessionId, sessionFile, ...runtimeFacts }),
+    };
+    record({ type: "stale_result", outcomes });
+    process.exit(0);
+  };
+  const exits = { "exit-when-gate-opens": () => exitWhenGateOpens(143), "quit-slowly": () => quitThenExit(0), "exit-now": () => process.exit(7), "linger-as-stale": lingerAsStale };
   if (exits[body.args.message]) {
     response.end(JSON.stringify({ accepted: true }), () => setTimeout(exits[body.args.message], 20));
     return;
@@ -178,7 +194,7 @@ server.listen(0, "127.0.0.1", async () => {
     if (process.env.PI_SIMPLE_TEAM_TEST_REGISTRATION_GATE) await fetch(process.env.PI_SIMPLE_TEAM_TEST_REGISTRATION_GATE + "?name=" + process.env.PI_SIMPLE_TEAM_MEMBER);
     await parent("register", { url, sessionId, sessionFile, ...runtimeFacts });
     record({ type: "ready", url });
-    if (process.env.PI_SIMPLE_TEAM_TEST_QUIT_AFTER_REGISTER_MEMBER === process.env.PI_SIMPLE_TEAM_MEMBER) void quitThenExit(143);
+    if (process.env.PI_SIMPLE_TEAM_TEST_EXIT_WHEN_GATE_OPENS_MEMBER === process.env.PI_SIMPLE_TEAM_MEMBER) void exitWhenGateOpens(143);
   } catch (error) {
     record({ type: "register_error", error: String(error) });
     process.exit(1);
@@ -277,47 +293,58 @@ function installFakeCommands(): { directory: string; logPath: string; eventsPath
 		const executable = path.join(directory, name);
 		fs.writeFileSync(executable, content, { mode: 0o755 });
 	}
-	const previous = { executable: process.argv[1]!, path: process.env.PATH, agent: process.env.PI_CODING_AGENT_DIR, tab: process.env.HERDR_TAB_ID, pane: process.env.HERDR_PANE_ID, log: process.env.PI_SIMPLE_TEAM_TEST_HERDR_LOG, events: process.env.PI_SIMPLE_TEAM_TEST_HERDR_EVENTS, sessions: process.env.PI_SIMPLE_TEAM_TEST_HERDR_SESSIONS, children: process.env.PI_SIMPLE_TEAM_TEST_HERDR_CHILDREN, count: process.env.PI_SIMPLE_TEAM_TEST_HERDR_START_COUNT, fail: process.env.PI_SIMPLE_TEAM_TEST_HERDR_FAIL_START, bad: process.env.PI_SIMPLE_TEAM_TEST_CHILD_BAD_REGISTER, notFound: process.env.PI_SIMPLE_TEAM_TEST_HERDR_PANE_NOT_FOUND };
+	const previousExecutable = process.argv[1]!;
 	// Main runs inside an SDK host script. The parent Pi is the fake Pi package's CLI.
 	const sdkHost = path.join(directory, "sdk-host.mjs");
 	fs.writeFileSync(sdkHost, "// An SDK host embeds Pi. It is not Pi.\n");
 	process.argv[1] = sdkHost;
 	const restorePiPackage = useFakePiPackage(directory, "parent-pi");
-	process.env.PATH = `${directory}${path.delimiter}${previous.path ?? ""}`;
-	process.env.PI_CODING_AGENT_DIR = agentDirectory;
-	process.env.HERDR_TAB_ID = "fake-tab";
-	process.env.HERDR_PANE_ID = "main-pane";
-	process.env.PI_SIMPLE_TEAM_TEST_HERDR_LOG = logPath;
-	process.env.PI_SIMPLE_TEAM_TEST_HERDR_EVENTS = eventsPath;
-	process.env.PI_SIMPLE_TEAM_TEST_HERDR_SESSIONS = sessionsDirectory;
-	process.env.PI_SIMPLE_TEAM_TEST_HERDR_CHILDREN = childrenPath;
-	process.env.PI_SIMPLE_TEAM_TEST_HERDR_START_COUNT = startCountPath;
-	delete process.env.PI_SIMPLE_TEAM_TEST_HERDR_FAIL_START;
-	delete process.env.PI_SIMPLE_TEAM_TEST_CHILD_BAD_REGISTER;
-	delete process.env.PI_SIMPLE_TEAM_TEST_HERDR_PANE_NOT_FOUND;
+	const restoreEnvironment = useEnvironment({
+		PATH: `${directory}${path.delimiter}${process.env.PATH ?? ""}`,
+		PI_CODING_AGENT_DIR: agentDirectory,
+		HERDR_TAB_ID: "fake-tab",
+		HERDR_PANE_ID: "main-pane",
+		PI_SIMPLE_TEAM_TEST_HERDR_LOG: logPath,
+		PI_SIMPLE_TEAM_TEST_HERDR_EVENTS: eventsPath,
+		PI_SIMPLE_TEAM_TEST_HERDR_SESSIONS: sessionsDirectory,
+		PI_SIMPLE_TEAM_TEST_HERDR_CHILDREN: childrenPath,
+		PI_SIMPLE_TEAM_TEST_HERDR_START_COUNT: startCountPath,
+		PI_SIMPLE_TEAM_TEST_HERDR_FAIL_START: undefined,
+		PI_SIMPLE_TEAM_TEST_CHILD_BAD_REGISTER: undefined,
+		PI_SIMPLE_TEAM_TEST_HERDR_PANE_NOT_FOUND: undefined,
+	});
 	return {
 		directory,
 		logPath,
 		eventsPath,
 		parentPiExecutable,
 		restore: () => {
-			process.argv[1] = previous.executable;
+			const survivors = waitForFakePiProcessesToEnd(eventsPath);
+			process.argv[1] = previousExecutable;
 			restorePiPackage();
-			process.env.PATH = previous.path;
-			process.env.PI_CODING_AGENT_DIR = previous.agent;
-			process.env.HERDR_TAB_ID = previous.tab;
-			process.env.HERDR_PANE_ID = previous.pane;
-			process.env.PI_SIMPLE_TEAM_TEST_HERDR_LOG = previous.log;
-			process.env.PI_SIMPLE_TEAM_TEST_HERDR_EVENTS = previous.events;
-			process.env.PI_SIMPLE_TEAM_TEST_HERDR_SESSIONS = previous.sessions;
-			process.env.PI_SIMPLE_TEAM_TEST_HERDR_CHILDREN = previous.children;
-			process.env.PI_SIMPLE_TEAM_TEST_HERDR_START_COUNT = previous.count;
-			process.env.PI_SIMPLE_TEAM_TEST_HERDR_FAIL_START = previous.fail;
-			process.env.PI_SIMPLE_TEAM_TEST_CHILD_BAD_REGISTER = previous.bad;
-			process.env.PI_SIMPLE_TEAM_TEST_HERDR_PANE_NOT_FOUND = previous.notFound;
+			restoreEnvironment();
 			fs.rmSync(directory, { recursive: true, force: true });
+			assert.deepEqual(survivors, [], "Every fake Pi process this test started must have ended by the time main shut down. Survivors were killed.");
 		},
 	};
+}
+
+function processIsRunning(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** Gives the fake Pi processes of one test two seconds to end, then kills and returns the ones that are still running. */
+function waitForFakePiProcessesToEnd(eventsPath: string): JsonRecord[] {
+	const started = lines(eventsPath).filter((entry) => entry.type === "pi_start").map((entry) => ({ member: entry.member, pid: Number(entry.pid) }));
+	for (let waited = 0; waited < 2_000 && started.some((child) => processIsRunning(child.pid)); waited += 50) Bun.sleepSync(50);
+	const survivors = started.filter((child) => processIsRunning(child.pid));
+	for (const survivor of survivors) process.kill(survivor.pid, "SIGKILL");
+	return survivors;
 }
 
 function lines(filePath: string): JsonRecord[] {
@@ -374,7 +401,7 @@ async function startChildRuntimeForTest(failingLifecycleEvents: number): Promise
 		callbackUrl: receiver.url,
 		callbackToken: "child-token",
 		teamName: "child-team",
-		teammateName: "reviewer",
+		teammateName: "reviewer", processId: "test-process",
 		participants: ["main", "reviewer"],
 		canManageOwnTeams: false,
 		interruptWaitTimeoutMilliseconds: 250,
@@ -439,7 +466,7 @@ describe("unified child runtime", () => {
 			callbackUrl: receiver.url,
 			callbackToken: "child-token",
 			teamName: "child-team",
-			teammateName: "reviewer",
+			teammateName: "reviewer", processId: "test-process",
 			participants: ["main", "reviewer"],
 			canManageOwnTeams: false,
 		});
@@ -1164,27 +1191,17 @@ function startExitGate(): { url: string; release: () => void; close: () => void 
 	return { url: `http://127.0.0.1:${server.port}`, release, close: () => server.stop(true) };
 }
 
-/** Sets test-only fake-child switches for one test, and restores them. */
-function useFakeChildSwitches(switches: Record<string, string>): () => void {
-	const previous = Object.fromEntries(Object.keys(switches).map((name) => [name, process.env[name]]));
-	Object.assign(process.env, switches);
-	return () => {
-		for (const [name, value] of Object.entries(previous)) {
-			if (value === undefined) delete process.env[name];
-			else process.env[name] = value;
-		}
-	};
-}
 
 const exitNotices = (host: ExtensionHost): string[] => host.messages.map((message) => String(message.content)).filter((content) => content.includes(") exited.\nCause:"));
 const reportedQuit = (eventsPath: string): boolean => lines(eventsPath).some((entry) => entry.type === "parent" && entry.tool === "event" && ((entry.args as JsonRecord).event as JsonRecord).type === "session_shutdown");
+const receivedMessage = (eventsPath: string, message: string): boolean => lines(eventsPath).some((entry) => entry.type === "delivery" && ((entry.body as JsonRecord).args as JsonRecord).message === message);
 const receivedSigterm = (eventsPath: string, member: string): boolean => lines(eventsPath).some((entry) => entry.type === "sigterm" && entry.member === member);
 
 describe("unexpected background-teammate exits notify main", () => {
 	test("a registered teammate's own exit notifies once after the grace, and a resume that dies before registering does not", async () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();
-		const restoreSwitches = useFakeChildSwitches({});
+		const restoreSwitches = useEnvironment({});
 		try {
 			await host.execute("team_spawn", { teamName: "exits", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "x", systemPrompt: "Wait.", model: "fake/fake-model" }, { name: "y", systemPrompt: "Wait.", model: "fake/fake-model" }] });
 			await host.execute("team_send_message", { targets: ["y"], message: "exit-now" });
@@ -1205,7 +1222,7 @@ describe("unexpected background-teammate exits notify main", () => {
 	test("an add rollback that stops an already registered teammate does not notify", async () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();
-		const restoreSwitches = useFakeChildSwitches({ PI_SIMPLE_TEAM_TEST_BAD_REGISTER_MEMBER: "e" });
+		const restoreSwitches = useEnvironment({ PI_SIMPLE_TEAM_TEST_BAD_REGISTER_MEMBER: "e" });
 		try {
 			await host.execute("team_spawn", { teamName: "add-rollback", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "x", systemPrompt: "Wait.", model: "fake/fake-model" }] });
 			await assert.rejects(host.execute("team_add_teammates", { team: "add-rollback", startIdle: true, teammates: [{ name: "d", systemPrompt: "Wait.", model: "fake/fake-model" }, { name: "e", systemPrompt: "Wait.", model: "fake/fake-model" }] }));
@@ -1219,21 +1236,20 @@ describe("unexpected background-teammate exits notify main", () => {
 		}
 	}, 20_000);
 
-	test("team_shutdown does not notify for a teammate that already shut down and exits during a slow sibling stop", async () => {
+	test("team_shutdown does not notify for a teammate that exits by itself while a slower sibling stops", async () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();
 		const gate = startExitGate();
-		const restoreSwitches = useFakeChildSwitches({ PI_SIMPLE_TEAM_TEST_SLOW_STOP_MEMBER: "b", PI_SIMPLE_TEAM_TEST_EXIT_GATE: gate.url });
+		const restoreSwitches = useEnvironment({ PI_SIMPLE_TEAM_TEST_SLOW_STOP_MEMBER: "b", PI_SIMPLE_TEAM_TEST_EXIT_GATE: gate.url });
 		try {
-			await host.execute("team_spawn", { teamName: "slow-stop", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "a", systemPrompt: "Wait.", model: "fake/fake-model" }, { name: "b", systemPrompt: "Wait.", model: "fake/fake-model", canManageOwnTeams: true }] });
-			await host.execute("team_send_message", { targets: ["a"], message: "quit-then-exit" });
-			await waitFor(() => reportedQuit(fake.eventsPath));
-			await Bun.sleep(100);
+			await host.execute("team_spawn", { teamName: "slow-stop", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "b", systemPrompt: "Wait.", model: "fake/fake-model", canManageOwnTeams: true }, { name: "a", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+			await host.execute("team_send_message", { targets: ["a"], message: "exit-when-gate-opens" });
+			await waitFor(() => receivedMessage(fake.eventsPath, "exit-when-gate-opens"));
 			const stopping = host.execute("team_shutdown", { team: "slow-stop" });
 			await waitFor(() => receivedSigterm(fake.eventsPath, "b"));
 			gate.release();
 			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
-			assert.ok(!receivedSigterm(fake.eventsPath, "a"), "The fixture must reach the path where the parent never signals a.");
+			assert.ok(!receivedSigterm(fake.eventsPath, "a"), "The fixture's a must exit before main's stop reaches it.");
 			assert.deepEqual(exitNotices(host), [], "An exit while its team is stopping is not unexpected.");
 			await stopping;
 		} finally {
@@ -1244,15 +1260,15 @@ describe("unexpected background-teammate exits notify main", () => {
 		}
 	}, 20_000);
 
-	test("a spawn rollback does not notify for a registered teammate that quit before the rollback reached it", async () => {
+	test("a spawn rollback does not notify for a registered teammate that exits before the rollback reaches it", async () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();
 		const gate = startExitGate();
-		const restoreSwitches = useFakeChildSwitches({ PI_SIMPLE_TEAM_TEST_QUIT_AFTER_REGISTER_MEMBER: "a", PI_SIMPLE_TEAM_TEST_SLOW_STOP_MEMBER: "b", PI_SIMPLE_TEAM_TEST_BAD_REGISTER_MEMBER: "c", PI_SIMPLE_TEAM_TEST_EXIT_GATE: gate.url });
+		const restoreSwitches = useEnvironment({ PI_SIMPLE_TEAM_TEST_EXIT_WHEN_GATE_OPENS_MEMBER: "a", PI_SIMPLE_TEAM_TEST_SLOW_STOP_MEMBER: "b", PI_SIMPLE_TEAM_TEST_BAD_REGISTER_MEMBER: "c", PI_SIMPLE_TEAM_TEST_EXIT_GATE: gate.url });
 		try {
-			const spawning = host.execute("team_spawn", { teamName: "spawn-rollback", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "a", systemPrompt: "Wait.", model: "fake/fake-model" }, { name: "b", systemPrompt: "Wait.", model: "fake/fake-model", canManageOwnTeams: true }, { name: "c", systemPrompt: "Wait.", model: "fake/fake-model" }] }).then(() => undefined, (error: unknown) => error);
+			const spawning = host.execute("team_spawn", { teamName: "spawn-rollback", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "b", systemPrompt: "Wait.", model: "fake/fake-model", canManageOwnTeams: true }, { name: "a", systemPrompt: "Wait.", model: "fake/fake-model" }, { name: "c", systemPrompt: "Wait.", model: "fake/fake-model" }] }).then(() => undefined, (error: unknown) => error);
 			await waitFor(() => receivedSigterm(fake.eventsPath, "b"), 5_000);
-			assert.ok(reportedQuit(fake.eventsPath) && !receivedSigterm(fake.eventsPath, "a"), "a must have quit before the rollback reached it, so the parent never signals a.");
+			assert.ok(!receivedSigterm(fake.eventsPath, "a"), "The fixture's a must exit before the rollback reaches it.");
 			gate.release();
 			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
 			assert.deepEqual(exitNotices(host), [], "An exit during a spawn rollback is not unexpected.");
@@ -1269,13 +1285,12 @@ describe("unexpected background-teammate exits notify main", () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();
 		const gate = startExitGate();
-		const restoreSwitches = useFakeChildSwitches({ PI_SIMPLE_TEAM_TEST_SLOW_STOP_MEMBER: "b", PI_SIMPLE_TEAM_TEST_EXIT_GATE: gate.url });
+		const restoreSwitches = useEnvironment({ PI_SIMPLE_TEAM_TEST_SLOW_STOP_MEMBER: "b", PI_SIMPLE_TEAM_TEST_EXIT_GATE: gate.url });
 		try {
 			await host.execute("team_spawn", { teamName: "first", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "b", systemPrompt: "Wait.", model: "fake/fake-model", canManageOwnTeams: true }] });
 			await host.execute("team_spawn", { teamName: "second", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "a", systemPrompt: "Wait.", model: "fake/fake-model" }] });
-			await host.execute("team_send_message", { targets: ["a"], message: "quit-then-exit" });
-			await waitFor(() => reportedQuit(fake.eventsPath));
-			await Bun.sleep(100);
+			await host.execute("team_send_message", { targets: ["a"], message: "exit-when-gate-opens" });
+			await waitFor(() => receivedMessage(fake.eventsPath, "exit-when-gate-opens"));
 			const shuttingDown = host.shutdown();
 			await waitFor(() => receivedSigterm(fake.eventsPath, "b"));
 			gate.release();
@@ -1289,20 +1304,64 @@ describe("unexpected background-teammate exits notify main", () => {
 		}
 	}, 20_000);
 
-	test("a self-quit's late exit after a resume does not notify", async () => {
+	test("a restart ends the previous process first, so the resumed teammate stays live, reachable and stoppable", async () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();
 		const gate = startExitGate();
-		const restoreSwitches = useFakeChildSwitches({ PI_SIMPLE_TEAM_TEST_EXIT_GATE: gate.url });
+		const restoreSwitches = useEnvironment({ PI_SIMPLE_TEAM_TEST_EXIT_GATE: gate.url });
+		const processesOf = (member: string): number[] => lines(fake.eventsPath).filter((entry) => entry.type === "pi_start" && entry.member === member).map((entry) => Number(entry.pid));
 		try {
 			await host.execute("team_spawn", { teamName: "quit-resume", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "x", systemPrompt: "Wait.", model: "fake/fake-model" }, { name: "y", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+			// y reports its quit and then lingers: it exits only when the gate opens.
 			await host.execute("team_send_message", { targets: ["y"], message: "quit-slowly" });
 			await waitFor(() => reportedQuit(fake.eventsPath));
 			await Bun.sleep(100);
 			await host.execute("team_resume", { team: "quit-resume", teammates: ["y"], startIdle: true });
+			const [previous, resumed] = processesOf("y");
+			assert.equal(processIsRunning(previous!), false, "One session must not have two runtimes: the previous process must have ended before the resume returned.");
 			gate.release();
 			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
-			assert.deepEqual(exitNotices(host), [], "The old process's self-quit is judged by its own record, not the resumed process's.");
+			assert.deepEqual(exitNotices(host), [], "The previous process was stopped by main, so its exit is not unexpected.");
+			const status = ((await host.execute("team_status", { team: "quit-resume" })).details?.status as Record<string, JsonRecord>).y;
+			const listed = (((await host.execute("team_list", {})).details?.teams as JsonRecord[]).find((team) => team.teamName === "quit-resume")?.teammates as JsonRecord[]).find((member) => member.name === "y");
+			assert.deepEqual({ word: status.word, phrase: status.phrase, live: listed?.live }, { word: "idle", phrase: "Resumed", live: true }, "The previous process's end must not mark the resumed teammate as stopped.");
+			await host.execute("team_send_message", { targets: ["y"], message: "report-runtime-facts" });
+			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "delivery" && entry.pid === resumed && ((entry.body as JsonRecord).args as JsonRecord).message === "report-runtime-facts"));
+			assert.deepEqual(host.messages.filter((message) => String(message.content).includes("delivery failed")), [], "Main must deliver to the resumed teammate.");
+			await host.execute("team_shutdown", { team: "quit-resume" });
+			assert.equal(processIsRunning(resumed!), false, "team_shutdown must stop the resumed process.");
+		} finally {
+			restoreSwitches();
+			gate.close();
+			await host.shutdown();
+			fake.restore();
+		}
+	}, 20_000);
+
+	test("a replaced process that still talks to main is refused and changes nothing for its successor", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		const gate = startExitGate();
+		const restoreSwitches = useEnvironment({ PI_SIMPLE_TEAM_TEST_EXIT_GATE: gate.url });
+		const shutdownReported = (): boolean => lines(fake.eventsPath).some((entry) => entry.type === "parent" && entry.tool === "event" && ((entry.args as JsonRecord).event as JsonRecord).reason === "new");
+		try {
+			// Main has no process handle for a pane teammate, so it cannot end a pane process that lingers after a session replacement.
+			await host.execute("team_spawn", { teamName: "stale", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "v", systemPrompt: "Wait.", model: "fake/fake-model", showOnHerdrPane: true }] });
+			await host.execute("team_send_message", { targets: ["v"], message: "linger-as-stale" });
+			await waitFor(shutdownReported);
+			await Bun.sleep(100);
+			await host.execute("team_resume", { team: "stale", teammates: ["v"], startIdle: true });
+			const successor = Number(lines(fake.eventsPath).findLast((entry) => entry.type === "pi_start")?.pid);
+			gate.release();
+			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "stale_result"));
+			const outcomes = lines(fake.eventsPath).find((entry) => entry.type === "stale_result")?.outcomes as Record<string, string>;
+			assert.match(outcomes.quit, /^rejected: .*restarted/, `Main must refuse a late event from the replaced process. Got: ${outcomes.quit}`);
+			assert.match(outcomes.register, /^rejected: .*restarted/, `Main must refuse a late registration from the replaced process. Got: ${outcomes.register}`);
+			const status = ((await host.execute("team_status", { team: "stale" })).details?.status as Record<string, JsonRecord>).v;
+			const listed = (((await host.execute("team_list", {})).details?.teams as JsonRecord[]).find((team) => team.teamName === "stale")?.teammates as JsonRecord[])[0];
+			assert.deepEqual({ word: status.word, phrase: status.phrase, live: listed.live }, { word: "idle", phrase: "Resumed", live: true }, "A late quit from the replaced process must not stop its successor.");
+			await host.execute("team_send_message", { targets: ["v"], message: "report-runtime-facts" });
+			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "delivery" && entry.pid === successor && ((entry.body as JsonRecord).args as JsonRecord).message === "report-runtime-facts"));
 		} finally {
 			restoreSwitches();
 			gate.close();

@@ -32,6 +32,8 @@ export interface ChildRuntimeConfig {
 	teamId?: string;
 	teamName: string;
 	teammateName: string;
+	/** Names this start of the teammate's process to main. A main that predates process ids sets none and checks none. */
+	processId?: string;
 	participants: string[];
 	canManageOwnTeams: boolean;
 	interruptWaitTimeoutMilliseconds?: number;
@@ -60,6 +62,7 @@ function readRequiredChildRuntimeConfig(): ChildRuntimeConfig {
 		teamId,
 		teamName: requiredEnvironmentVariable("PI_SIMPLE_TEAM_TEAM_NAME"),
 		teammateName: requiredEnvironmentVariable("PI_SIMPLE_TEAM_MEMBER"),
+		processId: process.env.PI_SIMPLE_TEAM_PROCESS,
 		participants: readParticipants(),
 		canManageOwnTeams: process.env.PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS === "1",
 	};
@@ -94,6 +97,7 @@ export async function callParent(config: ChildRuntimeConfig, tool: string, args:
 			token: config.callbackToken,
 			team: config.teamId ?? config.teamName,
 			from: config.teammateName,
+			process: config.processId,
 			tool,
 			args,
 		}),

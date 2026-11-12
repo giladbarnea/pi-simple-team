@@ -102,7 +102,7 @@ describe("recursive team oversight", () => {
 			PI_SIMPLE_TEAM_CALLBACK_TOKEN: "unused",
 			PI_SIMPLE_TEAM_TEAM: "parent-team-id",
 			PI_SIMPLE_TEAM_TEAM_NAME: "parent-team",
-			PI_SIMPLE_TEAM_MEMBER: "lead",
+			PI_SIMPLE_TEAM_MEMBER: "lead", PI_SIMPLE_TEAM_PROCESS: "test-process",
 			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["lead", "peer"]),
 			PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "1",
 		};
@@ -147,7 +147,7 @@ describe("recursive team oversight", () => {
 			PI_SIMPLE_TEAM_CALLBACK_TOKEN: "unused",
 			PI_SIMPLE_TEAM_TEAM: "parent-team-id",
 			PI_SIMPLE_TEAM_TEAM_NAME: "parent-team",
-			PI_SIMPLE_TEAM_MEMBER: "worker",
+			PI_SIMPLE_TEAM_MEMBER: "worker", PI_SIMPLE_TEAM_PROCESS: "test-process",
 			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["worker"]),
 			PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "0",
 		};
@@ -193,7 +193,7 @@ describe("recursive team oversight", () => {
 			PI_SIMPLE_TEAM_CALLBACK_TOKEN: "parent-token",
 			PI_SIMPLE_TEAM_TEAM: "parent-team-id",
 			PI_SIMPLE_TEAM_TEAM_NAME: "parent-team",
-			PI_SIMPLE_TEAM_MEMBER: "lead",
+			PI_SIMPLE_TEAM_MEMBER: "lead", PI_SIMPLE_TEAM_PROCESS: "test-process",
 			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["lead", "peer"]),
 			PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "1",
 		};
@@ -208,11 +208,12 @@ describe("recursive team oversight", () => {
 			assert.deepEqual(
 				receivedBodies,
 				[
-					{ token: "parent-token", team: "parent-team-id", from: "lead", tool: "team_context", args: {} },
+					{ token: "parent-token", team: "parent-team-id", from: "lead", process: "test-process", tool: "team_context", args: {} },
 					{
 						token: "parent-token",
 						team: "parent-team-id",
 						from: "lead",
+						process: "test-process",
 						tool: "team_send_message",
 						args: { targets: ["peer-id"], message: "Update the parent team.", interrupt: [] },
 					},
@@ -220,6 +221,7 @@ describe("recursive team oversight", () => {
 						token: "parent-token",
 						team: "parent-team-id",
 						from: "lead",
+						process: "test-process",
 						tool: "team_status",
 						args: { gerund: "coordinating", phrase: "Managing a child team." },
 					},
@@ -477,7 +479,7 @@ const server = http.createServer((request, response) => {
 		if (body.tool === "deliver" && body.args.triggerTurn !== false) {
 			await fetch(process.env.PI_SIMPLE_TEAM_CALLBACK_URL, {
 				method: "POST", headers: { "content-type": "application/json" },
-				body: JSON.stringify({ token: process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN, team: process.env.PI_SIMPLE_TEAM_TEAM, from: process.env.PI_SIMPLE_TEAM_MEMBER, tool: "event", args: { event: { type: "agent_start" } } }),
+				body: JSON.stringify({ token: process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN, team: process.env.PI_SIMPLE_TEAM_TEAM, from: process.env.PI_SIMPLE_TEAM_MEMBER, process: process.env.PI_SIMPLE_TEAM_PROCESS, tool: "event", args: { event: { type: "agent_start" } } }),
 			});
 		}
 		response.end(JSON.stringify({ accepted: true }));
@@ -487,7 +489,7 @@ server.listen(0, "127.0.0.1", () => {
 	const registration = JSON.stringify({
 		token: process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN,
 		team: process.env.PI_SIMPLE_TEAM_TEAM,
-		from: process.env.PI_SIMPLE_TEAM_MEMBER,
+		from: process.env.PI_SIMPLE_TEAM_MEMBER, process: process.env.PI_SIMPLE_TEAM_PROCESS,
 		tool: "register",
 		args: { url: "http://127.0.0.1:" + server.address().port + "/deliver", sessionId, sessionFile, model: process.argv[process.argv.indexOf("--model") + 1], thinking: process.argv[process.argv.indexOf("--thinking") + 1], contextPercent: null },
 	});
@@ -503,7 +505,7 @@ setTimeout(() => {
 	const body = JSON.stringify({
 		token: process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN,
 		team: process.env.PI_SIMPLE_TEAM_TEAM,
-		from: process.env.PI_SIMPLE_TEAM_MEMBER,
+		from: process.env.PI_SIMPLE_TEAM_MEMBER, process: process.env.PI_SIMPLE_TEAM_PROCESS,
 		tool: "send_main_message",
 		args: { message: "callback ownership test" },
 	});
@@ -895,7 +897,7 @@ describe("context-window reports", () => {
 			PI_SIMPLE_TEAM_CALLBACK_TOKEN: "unused",
 			PI_SIMPLE_TEAM_TEAM: "parent-team-id",
 			PI_SIMPLE_TEAM_TEAM_NAME: "parent-team",
-			PI_SIMPLE_TEAM_MEMBER: "lead",
+			PI_SIMPLE_TEAM_MEMBER: "lead", PI_SIMPLE_TEAM_PROCESS: "test-process",
 			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["lead"]),
 			PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "1",
 		};
@@ -934,7 +936,7 @@ describe("context-window reports", () => {
 			callbackUrl: "http://127.0.0.1:1/callback",
 			callbackToken: "unused",
 			teamName: "context-team",
-			teammateName: "product-head",
+			teammateName: "product-head", processId: "test-process",
 			participants: ["product-head"],
 			canManageOwnTeams: false,
 		});

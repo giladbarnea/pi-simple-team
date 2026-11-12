@@ -29,3 +29,18 @@ export function loadWithProcess<T>(executable: string, entry: string, load: () =
 export function loadAsBunStandalonePi<T>(executable: string, load: () => T): T {
 	return loadWithProcess(executable, "/$bunfs/root/pi", load);
 }
+
+/** Sets or, for undefined, removes environment variables, and returns a function that restores them, removing those that were unset. */
+export function useEnvironment(values: Record<string, string | undefined>): () => void {
+	const previous = Object.fromEntries(Object.keys(values).map((name) => [name, process.env[name]]));
+	for (const [name, value] of Object.entries(values)) {
+		if (value === undefined) delete process.env[name];
+		else process.env[name] = value;
+	}
+	return () => {
+		for (const [name, value] of Object.entries(previous)) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+	};
+}

@@ -73,7 +73,7 @@ describe.skipIf(!realPiEnabled)("real pi child runtime", () => {
 					PI_SIMPLE_TEAM_CALLBACK_TOKEN: token,
 					PI_SIMPLE_TEAM_TEAM: "probe-team",
 					PI_SIMPLE_TEAM_TEAM_NAME: "probe-team",
-					PI_SIMPLE_TEAM_MEMBER: "probe",
+					PI_SIMPLE_TEAM_MEMBER: "probe", PI_SIMPLE_TEAM_PROCESS: "test-process",
 					PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["probe"]),
 					PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "0",
 				},

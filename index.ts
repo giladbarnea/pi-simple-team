@@ -49,8 +49,12 @@ interface RunFailure {
 	replaced: TeamStatus;
 }
 
-/** What one background child process has done. Its exit handler judges that process only, even after a resume starts another. */
-interface RpcProcessRecord {
+/**
+ * One start of a teammate's process. Main gives the process this record's id, and the process sends it with every callback,
+ * so main never mistakes a replaced process for the current one. A background process's exit is judged by its own record.
+ */
+interface ProcessRecord {
+	id: string;
 	registered: boolean;
 	stopRequested: boolean;
 	quitReported: boolean;
@@ -70,7 +74,7 @@ interface TeammateState {
 	sessionMaterialized: boolean;
 	lastModelActivityAt?: string;
 	process?: ChildProcess;
-	processRecord?: RpcProcessRecord;
+	processRecord?: ProcessRecord;
 	paneId?: string;
 	deliveryUrl?: string;
 	ready?: Promise<void>;
@@ -376,7 +380,7 @@ function notifyOwner(team: TeamState, teammate: TeammateState, notification: str
  * A notice for an exit nobody asked for. A self-quit (code 0 after a quit shutdown) and a stop by the parent are excluded.
  * @example isUnexpectedExit({ registered: true, stopRequested: false, quitReported: true }, 143, null) // true
  */
-function isUnexpectedExit(record: RpcProcessRecord, code: number | null, signal: NodeJS.Signals | null): boolean {
+function isUnexpectedExit(record: ProcessRecord, code: number | null, signal: NodeJS.Signals | null): boolean {
 	const selfQuit = code === 0 && signal === null && record.quitReported;
 	return record.registered && !record.stopRequested && !selfQuit;
 }
@@ -563,6 +567,7 @@ function childEnvironmentOverrides(team: TeamState, teammate: TeammateState, par
 		PI_SIMPLE_TEAM_TEAM: team.id ?? team.name,
 		PI_SIMPLE_TEAM_TEAM_NAME: team.name,
 		PI_SIMPLE_TEAM_MEMBER: teammate.name,
+		PI_SIMPLE_TEAM_PROCESS: teammate.processRecord!.id,
 		PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(participants),
 		PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: teammate.canManageOwnTeams ? "1" : "0",
 	};
@@ -617,9 +622,9 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 		stdio: ["pipe", "ignore", "pipe"],
 		env: { ...process.env, ...childEnvironmentOverrides(team, teammate, participants) },
 	});
-	const record: RpcProcessRecord = { registered: false, stopRequested: false, quitReported: false };
+	const record = teammate.processRecord!;
+	const rejectReady = teammate.rejectReady;
 	teammate.process = proc;
-	teammate.processRecord = record;
 	teammate.alive = true;
 
 	proc.stderr?.on("data", (chunk: Buffer | string) => {
@@ -628,7 +633,7 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 	});
 	proc.on("exit", (code, signal) => {
 		teammate.alive = false;
-		teammate.rejectReady?.(new Error(`${teammate.name} exited (code=${code}, signal=${signal})`));
+		rejectReady?.(new Error(`${teammate.name} exited (code=${code}, signal=${signal})`));
 		team.statuses.set(teammate.name, status("stopped", `Exited code=${code} signal=${signal}`));
 		appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "exit", summary: `exited (code=${code}, signal=${signal})`, details: { code, signal } });
 		if (isUnexpectedExit(record, code, signal)) scheduleExitNotice(team, teammate, code, signal);
@@ -711,6 +716,9 @@ async function startTeammate(
 	startOptions: ChildStartOptions = {},
 ): Promise<void> {
 	startOptions.signal?.throwIfAborted();
+	// A Pi session has no lock against a second writer, so a restart ends the previous process before it starts the next.
+	await stopRpcTeammate(teammate);
+	teammate.processRecord = { id: crypto.randomUUID(), registered: false, stopRequested: false, quitReported: false };
 	if (teammate.transport === "herdr") await attachHerdrTeammate(team, teammate, participants, herdrParentPaneId!, startOptions);
 	else attachRpcTeammate(team, teammate, participants, startOptions);
 	await awaitChildRegistration(teammate, startOptions.signal);
@@ -762,7 +770,7 @@ async function closeHerdrPane(teammate: TeammateState): Promise<void> {
 
 async function stopRpcTeammate(teammate: TeammateState): Promise<void> {
 	const processToStop = teammate.process;
-	if (!processToStop || !teammate.alive) return;
+	if (!processToStop || processToStop.exitCode !== null || processToStop.signalCode !== null) return;
 
 	await new Promise<void>((resolve) => {
 		let forceKillTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -919,7 +927,7 @@ function handleChildEvent(team: TeamState, teammate: TeammateState, event: JsonR
 		teammate.alive = false;
 		teammate.deliveryUrl = undefined;
 		if (event.reason === "quit") {
-			if (teammate.processRecord) teammate.processRecord.quitReported = true;
+			teammate.processRecord!.quitReported = true;
 			team.statuses.set(teammate.name, status("stopped", "Session shut down"));
 			appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "exit", summary: "session shut down", details: { reason: event.reason } });
 		}
@@ -942,6 +950,7 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 		const tool = String(body.tool);
 		const args = (body.args ?? {}) as JsonRecord;
 		const teammate = team.members.get(from);
+		if (teammate && body.process !== teammate.processRecord?.id) throw new Error(`Teammate ${from} on team ${team.name} was restarted. This process is no longer that teammate.`);
 
 		if (tool === "register") {
 			if (!teammate) throw new Error(`Unknown teammate: ${from}`);
@@ -966,7 +975,7 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 			teammate.alive = true;
 			teammate.active = false;
 			team.statuses.set(teammate.name, status("idle", "Spawned"));
-			if (teammate.processRecord) teammate.processRecord.registered = true;
+			teammate.processRecord!.registered = true;
 			teammate.resolveReady?.();
 			writeJson(response, 200, { accepted: true, team: team.name, from });
 			return;

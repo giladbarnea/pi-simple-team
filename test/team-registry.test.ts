@@ -829,7 +829,7 @@ test("an overseeing teammate can discover and resume only teams it created", asy
 			PI_SIMPLE_TEAM_CALLBACK_TOKEN: "unused",
 			PI_SIMPLE_TEAM_TEAM: "top-main-session-parent-team",
 			PI_SIMPLE_TEAM_TEAM_NAME: "parent-team",
-			PI_SIMPLE_TEAM_MEMBER: "lead",
+			PI_SIMPLE_TEAM_MEMBER: "lead", PI_SIMPLE_TEAM_PROCESS: "test-process",
 			PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["lead"]),
 			PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "1",
 		};

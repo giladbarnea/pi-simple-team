@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { describe, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readChildRuntimeConfig } from "../child-tools.ts";
+import { useEnvironment } from "./pi-launch.ts";
 import teamExtension from "../index.ts";
 import { loadAsBunStandalonePi } from "./pi-launch.ts";
 import type { TeamLogEntry } from "../teamlog.ts";
@@ -135,6 +136,27 @@ function toolLine(name: string, parameters: JsonRecord): string {
 	return `TOOL ${name} ${JSON.stringify(parameters)}`;
 }
 
+test("a teammate started by a main that predates process ids still loads, without an id", () => {
+	const environment = {
+		PI_SIMPLE_TEAM_CHILD: "1",
+		PI_SIMPLE_TEAM_CALLBACK_URL: "http://127.0.0.1:1/callback",
+		PI_SIMPLE_TEAM_CALLBACK_TOKEN: "unused",
+		PI_SIMPLE_TEAM_TEAM: "old-main-team-id",
+		PI_SIMPLE_TEAM_TEAM_NAME: "old-main-team",
+		PI_SIMPLE_TEAM_MEMBER: "probe",
+		PI_SIMPLE_TEAM_PROCESS: undefined,
+		PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["probe"]),
+		PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "0",
+	};
+	const restoreEnvironment = useEnvironment(environment);
+	try {
+		const config = readChildRuntimeConfig();
+		assert.deepEqual({ teammateName: config?.teammateName, processId: config?.processId }, { teammateName: "probe", processId: undefined }, "A running main keeps working after the package updates on disk, so the new child must not require the id an older main does not pass.");
+	} finally {
+		restoreEnvironment();
+	}
+});
+
 test("a subprocess inherits the team environment but not the teammate identity", () => {
 	const environment = {
 		PI_SIMPLE_TEAM_CHILD: "1",
@@ -142,7 +164,7 @@ test("a subprocess inherits the team environment but not the teammate identity",
 		PI_SIMPLE_TEAM_CALLBACK_TOKEN: "unused",
 		PI_SIMPLE_TEAM_TEAM: "claim-team-id",
 		PI_SIMPLE_TEAM_TEAM_NAME: "claim-team",
-		PI_SIMPLE_TEAM_MEMBER: "probe",
+		PI_SIMPLE_TEAM_MEMBER: "probe", PI_SIMPLE_TEAM_PROCESS: "test-process",
 		PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["probe"]),
 		PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "0",
 	};
@@ -239,7 +261,7 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("nested Pi proc
 		const child = spawn(executable, ["--mode", "rpc", "--no-extensions", "-e", extensionPath, "--no-skills", "--no-context-files", "--model", model], {
 			cwd: directory,
 			stdio: ["pipe", "ignore", "inherit"],
-			env: { ...process.env, PI_CODING_AGENT_DIR: directory, PI_OFFLINE: "1", PI_SIMPLE_TEAM_CHILD: "1", PI_SIMPLE_TEAM_CALLBACK_URL: `http://127.0.0.1:${callback.port}/callback`, PI_SIMPLE_TEAM_CALLBACK_TOKEN: "replacement-token", PI_SIMPLE_TEAM_TEAM: "replacement-team", PI_SIMPLE_TEAM_TEAM_NAME: "replacement", PI_SIMPLE_TEAM_MEMBER: "probe", PI_SIMPLE_TEAM_PARTICIPANTS: '["probe"]', PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "0" },
+			env: { ...process.env, PI_CODING_AGENT_DIR: directory, PI_OFFLINE: "1", PI_SIMPLE_TEAM_CHILD: "1", PI_SIMPLE_TEAM_CALLBACK_URL: `http://127.0.0.1:${callback.port}/callback`, PI_SIMPLE_TEAM_CALLBACK_TOKEN: "replacement-token", PI_SIMPLE_TEAM_TEAM: "replacement-team", PI_SIMPLE_TEAM_TEAM_NAME: "replacement", PI_SIMPLE_TEAM_MEMBER: "probe", PI_SIMPLE_TEAM_PROCESS: "test-process", PI_SIMPLE_TEAM_PARTICIPANTS: '["probe"]', PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "0" },
 		});
 		const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
 		try {

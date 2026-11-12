@@ -69,7 +69,7 @@ for (const canManageOwnTeams of [false, true]) {
 				PI_SIMPLE_TEAM_CALLBACK_TOKEN: "fork-tree-token",
 				PI_SIMPLE_TEAM_TEAM: "fork-tree-team",
 				PI_SIMPLE_TEAM_TEAM_NAME: "fork-tree",
-				PI_SIMPLE_TEAM_MEMBER: "reviewer",
+				PI_SIMPLE_TEAM_MEMBER: "reviewer", PI_SIMPLE_TEAM_PROCESS: "test-process",
 				PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(["main", "reviewer"]),
 				PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: canManageOwnTeams ? "1" : "0",
 			});

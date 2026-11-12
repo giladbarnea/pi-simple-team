@@ -49,7 +49,7 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("idle conversat
 		], {
 			cwd: directory,
 			stdio: ["pipe", "pipe", "pipe"],
-			env: { ...process.env, PI_CODING_AGENT_DIR: directory, PI_OFFLINE: "1", PI_SIMPLE_TEAM_CHILD: "1", PI_SIMPLE_TEAM_CALLBACK_URL: `http://127.0.0.1:${callback.port}`, PI_SIMPLE_TEAM_CALLBACK_TOKEN: "idle-token", PI_SIMPLE_TEAM_TEAM: "idle-team", PI_SIMPLE_TEAM_TEAM_NAME: "idle-team", PI_SIMPLE_TEAM_MEMBER: "probe", PI_SIMPLE_TEAM_PARTICIPANTS: '["probe"]', PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "0" },
+			env: { ...process.env, PI_CODING_AGENT_DIR: directory, PI_OFFLINE: "1", PI_SIMPLE_TEAM_CHILD: "1", PI_SIMPLE_TEAM_CALLBACK_URL: `http://127.0.0.1:${callback.port}`, PI_SIMPLE_TEAM_CALLBACK_TOKEN: "idle-token", PI_SIMPLE_TEAM_TEAM: "idle-team", PI_SIMPLE_TEAM_TEAM_NAME: "idle-team", PI_SIMPLE_TEAM_MEMBER: "probe", PI_SIMPLE_TEAM_PROCESS: "test-process", PI_SIMPLE_TEAM_PARTICIPANTS: '["probe"]', PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "0" },
 		});
 		let stderr = "";
 		let stdout = "";

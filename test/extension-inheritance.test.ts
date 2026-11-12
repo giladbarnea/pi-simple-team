@@ -24,7 +24,7 @@ function registeredToolNames(environment: Record<string, string>): string[] {
 		on: () => undefined, registerCommand: () => undefined, registerMessageRenderer: () => undefined,
 		registerTool: (tool: { name: string }) => names.push(tool.name),
 	} as unknown as ExtensionAPI;
-	const childEnvironment = { PI_SIMPLE_TEAM_CALLBACK_URL: "http://127.0.0.1:9/callback", PI_SIMPLE_TEAM_CALLBACK_TOKEN: "guard-token", PI_SIMPLE_TEAM_TEAM: "guard-team", PI_SIMPLE_TEAM_TEAM_NAME: "guard", PI_SIMPLE_TEAM_MEMBER: "probe", PI_SIMPLE_TEAM_PARTICIPANTS: '["probe"]', PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "0" };
+	const childEnvironment = { PI_SIMPLE_TEAM_CALLBACK_URL: "http://127.0.0.1:9/callback", PI_SIMPLE_TEAM_CALLBACK_TOKEN: "guard-token", PI_SIMPLE_TEAM_TEAM: "guard-team", PI_SIMPLE_TEAM_TEAM_NAME: "guard", PI_SIMPLE_TEAM_MEMBER: "probe", PI_SIMPLE_TEAM_PROCESS: "test-process", PI_SIMPLE_TEAM_PARTICIPANTS: '["probe"]', PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "0" };
 	const applied = { ...childEnvironment, ...environment };
 	Object.assign(process.env, applied);
 	try {

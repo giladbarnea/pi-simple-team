@@ -185,7 +185,7 @@ async function managingTeammateSendError(directory: string, sessionId: string, t
 	await new Promise<void>((resolve) => parent.listen(0, "127.0.0.1", resolve));
 	const environment = {
 		PI_SIMPLE_TEAM_CHILD: "1", PI_SIMPLE_TEAM_CALLBACK_URL: `http://127.0.0.1:${(parent.address() as { port: number }).port}/callback`, PI_SIMPLE_TEAM_CALLBACK_TOKEN: "parent-token",
-		PI_SIMPLE_TEAM_TEAM: "parent-team-id", PI_SIMPLE_TEAM_TEAM_NAME: "parent-team", PI_SIMPLE_TEAM_MEMBER: "lead", PI_SIMPLE_TEAM_PARTICIPANTS: '["lead"]', PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "1",
+		PI_SIMPLE_TEAM_TEAM: "parent-team-id", PI_SIMPLE_TEAM_TEAM_NAME: "parent-team", PI_SIMPLE_TEAM_MEMBER: "lead", PI_SIMPLE_TEAM_PROCESS: "test-process", PI_SIMPLE_TEAM_PARTICIPANTS: '["lead"]', PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: "1",
 	};
 	const tools = new Map<string, SendTool>();
 	Object.assign(process.env, environment);
