@@ -3,6 +3,7 @@ import type { ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import * as fs from "node:fs";
 import http from "node:http";
+import * as net from "node:net";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineTool, type ContextUsage, type ExtensionAPI, type ExtensionContext, getMarkdownTheme, getPackageDir } from "@earendil-works/pi-coding-agent";
@@ -51,13 +52,17 @@ interface RunFailure {
 
 /**
  * One start of a teammate's process. Main gives the process this record's id, and the process sends it with every callback,
- * so main never mistakes a replaced process for the current one. A background process's exit is judged by its own record.
+ * so main never mistakes a replaced process for the current one. Its end is judged by its own record.
+ * Main has no process handle for a Herdr pane teammate, so that process also holds a lifeline connection, which closes when it ends.
  */
 interface ProcessRecord {
 	id: string;
 	registered: boolean;
 	stopRequested: boolean;
 	quitReported: boolean;
+	/** Set once main has recorded this process's end, so a callback still in flight when it died changes nothing. */
+	ended?: boolean;
+	lifeline?: net.Socket;
 }
 
 interface TeammateState {
@@ -121,6 +126,8 @@ const callbackToken = crypto.randomBytes(24).toString("hex");
 let callbackServer: http.Server | undefined;
 let callbackReady: Promise<void> | undefined;
 let callbackUrl = "";
+let lifelineServer: net.Server | undefined;
+let lifelinePort = 0;
 
 function status(word: string, phrase: string): TeamStatus {
 	return { word, phrase, updated: new Date().toISOString() };
@@ -385,12 +392,49 @@ function isUnexpectedExit(record: ProcessRecord, code: number | null, signal: No
 	return record.registered && !record.stopRequested && !selfQuit;
 }
 
-/** Waits for main's own shutdown to mark the team first, so a signal that reaches main and its teammates together sends nothing. */
-function scheduleExitNotice(team: TeamState, teammate: TeammateState, code: number | null, signal: NodeJS.Signals | null): void {
+/**
+ * Tells the team owner that a teammate's process ended, in the same three lines for every transport: what happened, the cause, what to do.
+ * Waits for main's own shutdown to mark the team first, so a signal that reaches main and its teammates together sends nothing.
+ */
+function scheduleEndNotice(team: TeamState, teammate: TeammateState, happened: string, cause: string, advice: string): void {
 	setTimeout(() => {
 		if (team.stopping || teams.get(team.id ?? team.name) !== team) return;
-		notifyOwner(team, teammate, `Teammate "${teammate.name}" on team "${team.name}" (team ID: ${team.id ?? team.name}) exited.\nCause: exited (code=${code}, signal=${signal})\nCode 143 or 129 means its Pi shut down after SIGTERM or SIGHUP. Check team_log for its last stderr lines. Use team_resume to restart it.`);
+		notifyOwner(team, teammate, `Teammate "${teammate.name}" on team "${team.name}" (team ID: ${team.id ?? team.name}) ${happened}.\nCause: ${cause}\n${advice}`);
 	}, exitNoticeGraceMilliseconds).unref();
+}
+
+/** A Herdr pane teammate's process ended without a shutdown callback: a crash, a kill, or a terminal that vanished under a working Pi. */
+function recordAbruptEnd(team: TeamState, teammate: TeammateState, record: ProcessRecord): void {
+	if (record.stopRequested || record.quitReported || record.ended) return;
+	record.ended = true;
+	teammate.alive = false;
+	teammate.active = false;
+	teammate.deliveryUrl = undefined;
+	team.statuses.set(teammate.name, status("stopped", "Ended without shutting down"));
+	appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "exit", summary: "ended without shutting down" });
+	persistActiveTeamManifest(team);
+	scheduleEndNotice(team, teammate, "exited", "its Pi process ended without shutting down (a crash, a kill, or its pane closed while it worked)", "Check its pane if it is still open. Use team_resume to restart it.");
+}
+
+type ShutdownSignal = "SIGHUP" | "SIGTERM";
+
+/** What a signal shutdown most likely means. Nobody can tell who sent the signal or why, so neither reads as a failure. */
+const signalReasons: Record<ShutdownSignal, string> = {
+	SIGHUP: "Its pane may have been closed on purpose.",
+	SIGTERM: "Something outside the team may have stopped it on purpose.",
+};
+
+/** A teammate's Pi shut down in order. Only a Herdr pane teammate reports a signal: nobody can tell who closed its pane or why, so the notice stays neutral. */
+function recordQuit(team: TeamState, teammate: TeammateState, signal: unknown): void {
+	const record = teammate.processRecord!;
+	if (record.ended) return;
+	record.ended = true;
+	record.quitReported = true;
+	const afterSignal = typeof signal === "string" ? ` after ${signal}` : "";
+	team.statuses.set(teammate.name, status("stopped", afterSignal ? `Shut down${afterSignal}` : "Session shut down"));
+	appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "exit", summary: `session shut down${afterSignal}`, details: { reason: "quit", ...(afterSignal ? { signal } : {}) } });
+	if (!afterSignal || record.stopRequested) return;
+	scheduleEndNotice(team, teammate, `shut down${afterSignal}`, `its Pi received ${signal} and shut down in order. ${signalReasons[signal as ShutdownSignal]}`, "Use team_resume to restart it if you still need it.");
 }
 
 async function kickoffTeammates(team: TeamState, teammates: TeammateState[], startIdle: boolean, resumption?: { instructions?: string; emptyRestarts: TeammateState[] }): Promise<void> {
@@ -636,7 +680,7 @@ function attachRpcTeammate(team: TeamState, teammate: TeammateState, participant
 		rejectReady?.(new Error(`${teammate.name} exited (code=${code}, signal=${signal})`));
 		team.statuses.set(teammate.name, status("stopped", `Exited code=${code} signal=${signal}`));
 		appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "exit", summary: `exited (code=${code}, signal=${signal})`, details: { code, signal } });
-		if (isUnexpectedExit(record, code, signal)) scheduleExitNotice(team, teammate, code, signal);
+		if (isUnexpectedExit(record, code, signal)) scheduleEndNotice(team, teammate, "exited", `exited (code=${code}, signal=${signal})`, "Code 143 or 129 means its Pi shut down after SIGTERM or SIGHUP. Check team_log for its last stderr lines. Use team_resume to restart it.");
 	});
 	appendSpawnLog(team, teammate);
 }
@@ -716,8 +760,9 @@ async function startTeammate(
 	startOptions: ChildStartOptions = {},
 ): Promise<void> {
 	startOptions.signal?.throwIfAborted();
-	// A Pi session has no lock against a second writer, so a restart ends the previous process before it starts the next.
+	// A Pi session has no lock against a second writer, so a restart ends the previous process, or closes its pane, before it starts the next.
 	await stopRpcTeammate(teammate);
+	await closeHerdrPane(teammate);
 	teammate.processRecord = { id: crypto.randomUUID(), registered: false, stopRequested: false, quitReported: false };
 	if (teammate.transport === "herdr") await attachHerdrTeammate(team, teammate, participants, herdrParentPaneId!, startOptions);
 	else attachRpcTeammate(team, teammate, participants, startOptions);
@@ -760,6 +805,8 @@ function isHerdrPaneNotFound(error: unknown): boolean {
 
 async function closeHerdrPane(teammate: TeammateState): Promise<void> {
 	if (!teammate.paneId) return;
+	teammate.processRecord!.stopRequested = true;
+	teammate.processRecord!.lifeline?.destroy();
 	try {
 		await runCommand("herdr", ["pane", "close", teammate.paneId], 10_000);
 	} catch (error) {
@@ -835,9 +882,47 @@ async function shutdownTeam(team: TeamState): Promise<string[]> {
 function closeCallbackServerIfUnused(): void {
 	if (teams.size > 0 || !callbackServer) return;
 	callbackServer.close();
+	lifelineServer!.close();
 	callbackServer = undefined;
+	lifelineServer = undefined;
 	callbackReady = undefined;
 	callbackUrl = "";
+}
+
+/**
+ * Accepts one connection per Herdr pane teammate process. Its first line names the teammate and its process id, and its close is that process ending.
+ * A raw socket, because a Bun HTTP server does not report a client that died while its request was open.
+ */
+function acceptLifeline(socket: net.Socket): void {
+	socket.on("error", () => undefined);
+	socket.once("data", (hello: Buffer) => {
+		const { token, team: teamId, from, process: processId } = parseLifelineHello(hello);
+		const team = token === callbackToken ? teams.get(String(teamId)) : undefined;
+		const teammate = team?.members.get(String(from));
+		const record = teammate?.processRecord;
+		if (!team || !teammate || !record || record.id !== processId) {
+			socket.destroy();
+			return;
+		}
+		record.lifeline = socket;
+		socket.on("close", () => recordAbruptEnd(team, teammate, record));
+	});
+}
+
+/** Any local process can connect, so a hello that is not JSON names nobody. */
+function parseLifelineHello(hello: Buffer): { token?: unknown; team?: unknown; from?: unknown; process?: unknown } {
+	try {
+		return JSON.parse(hello.toString("utf8")) as { token?: unknown; team?: unknown; from?: unknown; process?: unknown };
+	} catch {
+		return {};
+	}
+}
+
+function listenOnLoopback(server: http.Server | net.Server): Promise<number> {
+	return new Promise<number>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port));
+	});
 }
 
 async function ensureCallbackServer(): Promise<void> {
@@ -847,15 +932,11 @@ async function ensureCallbackServer(): Promise<void> {
 		void handleCallbackRequest(request, response);
 	});
 	callbackServer = server;
+	lifelineServer = net.createServer(acceptLifeline);
 
-	callbackReady = new Promise<void>((resolve, reject) => {
-		server.once("error", reject);
-		server.listen(0, "127.0.0.1", () => {
-			const address = server.address();
-			if (!address || typeof address === "string") throw new Error("Team callback server did not get a port");
-			callbackUrl = `http://127.0.0.1:${address.port}/callback`;
-			resolve();
-		});
+	callbackReady = Promise.all([listenOnLoopback(server), listenOnLoopback(lifelineServer)]).then(([callbackPort, port]) => {
+		callbackUrl = `http://127.0.0.1:${callbackPort}/callback`;
+		lifelinePort = port;
 	});
 	return callbackReady;
 }
@@ -926,12 +1007,8 @@ function handleChildEvent(team: TeamState, teammate: TeammateState, event: JsonR
 	if (event.type === "session_shutdown") {
 		teammate.alive = false;
 		teammate.deliveryUrl = undefined;
-		if (event.reason === "quit") {
-			teammate.processRecord!.quitReported = true;
-			team.statuses.set(teammate.name, status("stopped", "Session shut down"));
-			appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "exit", summary: "session shut down", details: { reason: event.reason } });
-		}
 	}
+	if (event.type === "session_shutdown" && event.reason === "quit") recordQuit(team, teammate, event.signal);
 	const logInput = normalizeChildEvent(team.name, teammate.name, event);
 	if (logInput) appendTeamLog(team, logInput);
 	if (["agent_start", "work_queued", "agent_settled", "session_shutdown"].includes(String(event.type))) persistActiveTeamManifest(team);
@@ -977,7 +1054,7 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 			team.statuses.set(teammate.name, status("idle", "Spawned"));
 			teammate.processRecord!.registered = true;
 			teammate.resolveReady?.();
-			writeJson(response, 200, { accepted: true, team: team.name, from });
+			writeJson(response, 200, { accepted: true, team: team.name, from, ...(teammate.transport === "herdr" ? { lifelinePort } : {}) });
 			return;
 		}
 

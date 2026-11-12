@@ -1,4 +1,5 @@
 import * as http from "node:http";
+import * as net from "node:net";
 import { defineTool, getMarkdownTheme, type AgentActivityOutcome, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { formatContextWindowReport, requireKnownContextUsage } from "./context-window.ts";
@@ -109,6 +110,35 @@ export async function callParent(config: ChildRuntimeConfig, tool: string, args:
 	}
 
 	return (await response.json()) as JsonRecord;
+}
+
+type ShutdownSignal = "SIGHUP" | "SIGTERM";
+
+/** Lives on globalThis, because it belongs to the process: Pi loads this module again on a reload or a session replacement. */
+interface ProcessLifeline {
+	socket: net.Socket;
+	signal?: ShutdownSignal;
+}
+
+const lifelineKey: unique symbol = Symbol.for("pi-simple-team.lifeline");
+const lifelineHolder = globalThis as { [lifelineKey]?: ProcessLifeline };
+
+/**
+ * Main has no process handle for a Herdr pane teammate. This connection stays open for the life of the process, so its close tells main that the process ended.
+ * The process also notes the signal that shuts it down in order, because a closed pane arrives as SIGHUP. Pi's interactive mode registers its own handlers for both signals before it loads extensions, so these listeners never replace the default termination.
+ */
+function holdLifeline(config: ChildRuntimeConfig, port: number): void {
+	if (lifelineHolder[lifelineKey]) return;
+	const socket = net.connect(port, "127.0.0.1", () => {
+		socket.write(`${JSON.stringify({ token: config.callbackToken, team: config.teamId ?? config.teamName, from: config.teammateName, process: config.processId })}\n`);
+	});
+	// Main closing first must not crash the teammate.
+	socket.on("error", () => undefined);
+	socket.unref();
+	const lifeline: ProcessLifeline = { socket };
+	// Prepended, because Pi 1.4 emits session_shutdown from inside its own signal handler.
+	for (const signal of ["SIGHUP", "SIGTERM"] as const) process.prependListener(signal, () => { lifeline.signal ??= signal; });
+	lifelineHolder[lifelineKey] = lifeline;
 }
 
 function toolResult(payload: JsonRecord): { content: [{ type: "text"; text: string }]; details: JsonRecord } {
@@ -293,8 +323,9 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 		const address = server.address();
 		if (!address || typeof address === "string") throw new Error("Child delivery server did not get a port");
 
+		let registration: JsonRecord;
 		try {
-			await callParent(config, "register", {
+			registration = await callParent(config, "register", {
 				url: `http://127.0.0.1:${address.port}/deliver`,
 				sessionId: context.sessionManager.getSessionId(),
 				sessionFile: context.sessionManager.getSessionFile(),
@@ -305,11 +336,12 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 			context.shutdown();
 			throw error;
 		}
+		if (typeof registration.lifelinePort === "number") holdLifeline(config, registration.lifelinePort);
 	});
 
 	pi.on("session_shutdown", async (event) => {
 		markIdle();
-		await notifyParent({ type: "session_shutdown", reason: event.reason });
+		await notifyParent({ type: "session_shutdown", reason: event.reason, signal: lifelineHolder[lifelineKey]?.signal });
 		await new Promise<void>((resolve, reject) => {
 			if (!server) {
 				resolve();

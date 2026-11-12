@@ -49,7 +49,7 @@ env -i PATH="$PATH" HOME="$sandbox" PI_CODING_AGENT_DIR="$sandbox" PI_SIMPLE_TEA
 rm -rf "$sandbox"
 ```
 
-It covers cancellation, retries, provider failure, interruption, queued delivery, and append-only resume through the real child callback and parent log. Startup checks assert tagged common and individual instructions in actual first model requests for spawn, add, forks, and idle staging.
+It covers cancellation, retries, provider failure, interruption, queued delivery, and append-only resume through the real child callback and parent log. `test/herdr-pane-ends.test.ts` runs a real interactive Pi in a private pseudo-terminal through the Herdr launch path, without a Herdr server. It needs the macOS `script` command and is skipped elsewhere. Startup checks assert tagged common and individual instructions in actual first model requests for spawn, add, forks, and idle staging.
 
 For this API, verify the readiness barrier, `startIdle` on spawn/resume/add, and `resumptionPrompt` without saved-definition or transcript rewrites. Verify that deferred delivery errors reach the sender, and that explicit team-wide Herdr settings override individual choices. The Herdr fixture must match the installed `pane split` / `pane run` contract.
 

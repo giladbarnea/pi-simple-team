@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import * as http from "node:http";
+import * as net from "node:net";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -114,6 +115,27 @@ async function parent(tool, args) {
     body: JSON.stringify({ token: process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN, team: process.env.PI_SIMPLE_TEAM_TEAM, from: process.env.PI_SIMPLE_TEAM_MEMBER, process: process.env.PI_SIMPLE_TEAM_PROCESS, tool, args }),
   });
   if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+// As the real child does: one connection per process, opened when main offers a lifeline port.
+let lifeline;
+let lifelinePort;
+async function register(url) {
+  const registration = await parent("register", { url, sessionId, sessionFile, ...runtimeFacts });
+  if (registration.lifelinePort && !lifeline) {
+    lifelinePort = registration.lifelinePort;
+    lifeline = require("node:net").connect(registration.lifelinePort, "127.0.0.1", () => lifeline.write(JSON.stringify({ token: process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN, team: process.env.PI_SIMPLE_TEAM_TEAM, from: process.env.PI_SIMPLE_TEAM_MEMBER, process: process.env.PI_SIMPLE_TEAM_PROCESS }) + "\n"));
+  }
+  record({ type: "ready", url, pid: process.pid, member: process.env.PI_SIMPLE_TEAM_MEMBER, lifelineOffered: Boolean(registration.lifelinePort) });
+}
+// A lingering process ignores the SIGTERM of a pane close, as a hung Pi would.
+let lingering = false;
+// Sends a quit callback from a helper process after this process has died, as a callback still in flight when Pi died would arrive.
+function dieMidQuit() {
+  const body = JSON.stringify({ token: process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN, team: process.env.PI_SIMPLE_TEAM_TEAM, from: process.env.PI_SIMPLE_TEAM_MEMBER, process: process.env.PI_SIMPLE_TEAM_PROCESS, tool: "event", args: { event: { type: "session_shutdown", reason: "quit", signal: "SIGHUP" } } });
+  const helper = "setTimeout(async () => { await fetch(" + JSON.stringify(process.env.PI_SIMPLE_TEAM_CALLBACK_URL) + ", { method: 'POST', headers: { 'content-type': 'application/json' }, body: " + JSON.stringify(body) + " }); require('node:fs').appendFileSync(" + JSON.stringify(process.env.PI_SIMPLE_TEAM_TEST_HERDR_EVENTS) + ", JSON.stringify({ type: 'late_quit_sent' }) + '\\n'); }, 300);";
+  require("node:child_process").spawn(process.execPath, ["-e", helper], { stdio: "ignore", detached: true }).unref();
+  process.kill(process.pid, "SIGKILL");
 }
 async function exitWhenGateOpens(code) {
   await fetch(process.env.PI_SIMPLE_TEAM_TEST_EXIT_GATE);
@@ -151,17 +173,33 @@ const server = http.createServer(async (request, response) => {
   }
   // A process that main no longer counts as live, and that still talks to main after main restarted its teammate.
   const lingerAsStale = async () => {
+    lingering = true;
     await parent("event", { event: { type: "session_shutdown", reason: "new" } });
     await fetch(process.env.PI_SIMPLE_TEAM_TEST_EXIT_GATE);
     const attempt = (tool, args) => parent(tool, args).then(() => "accepted", (error) => "rejected: " + error.message);
+    // A second lifeline hello with this process's id: main must close it at once.
+    const lifelineRefused = await new Promise((resolve) => {
+      const socket = require("node:net").connect(lifelinePort, "127.0.0.1", () => socket.write(JSON.stringify({ token: process.env.PI_SIMPLE_TEAM_CALLBACK_TOKEN, team: process.env.PI_SIMPLE_TEAM_TEAM, from: process.env.PI_SIMPLE_TEAM_MEMBER, process: process.env.PI_SIMPLE_TEAM_PROCESS }) + "\n"));
+      socket.on("close", () => resolve("refused"));
+      socket.on("error", () => undefined);
+      setTimeout(() => { socket.destroy(); resolve("kept open"); }, 1000);
+    });
     const outcomes = {
+      lifeline: lifelineRefused,
       quit: await attempt("event", { event: { type: "session_shutdown", reason: "quit" } }),
       register: await attempt("register", { url: "http://127.0.0.1:" + server.address().port + "/deliver", sessionId, sessionFile, ...runtimeFacts }),
     };
     record({ type: "stale_result", outcomes });
     process.exit(0);
   };
-  const exits = { "exit-when-gate-opens": () => exitWhenGateOpens(143), "quit-slowly": () => quitThenExit(0), "exit-now": () => process.exit(7), "linger-as-stale": lingerAsStale };
+  const shutDown = async (event) => { await parent("event", { event: { type: "session_shutdown", ...event } }); };
+  const exits = {
+    "exit-when-gate-opens": () => exitWhenGateOpens(143), "quit-slowly": () => quitThenExit(0), "exit-now": () => process.exit(7), "linger-as-stale": lingerAsStale,
+    "quit-on-sighup": async () => { await shutDown({ reason: "quit", signal: "SIGHUP" }); process.exit(0); },
+    "quit-by-itself": async () => { await shutDown({ reason: "quit" }); process.exit(0); },
+    "die-mid-quit": dieMidQuit,
+    "replace-session": async () => { await shutDown({ reason: "new" }); await register("http://127.0.0.1:" + server.address().port + "/deliver"); },
+  };
   if (exits[body.args.message]) {
     response.end(JSON.stringify({ accepted: true }), () => setTimeout(exits[body.args.message], 20));
     return;
@@ -192,16 +230,17 @@ server.listen(0, "127.0.0.1", async () => {
   try {
     if (process.env.PI_SIMPLE_TEAM_TEST_DIE_BEFORE_REGISTER_MEMBER === process.env.PI_SIMPLE_TEAM_MEMBER) process.exit(3);
     if (process.env.PI_SIMPLE_TEAM_TEST_REGISTRATION_GATE) await fetch(process.env.PI_SIMPLE_TEAM_TEST_REGISTRATION_GATE + "?name=" + process.env.PI_SIMPLE_TEAM_MEMBER);
-    await parent("register", { url, sessionId, sessionFile, ...runtimeFacts });
-    record({ type: "ready", url });
+    await register(url);
     if (process.env.PI_SIMPLE_TEAM_TEST_EXIT_WHEN_GATE_OPENS_MEMBER === process.env.PI_SIMPLE_TEAM_MEMBER) void exitWhenGateOpens(143);
   } catch (error) {
     record({ type: "register_error", error: String(error) });
     process.exit(1);
   }
 });
-process.on("SIGTERM", () => {
+process.on("SIGTERM", async () => {
   record({ type: "sigterm", member: process.env.PI_SIMPLE_TEAM_MEMBER });
+  if (lingering) return;
+  if (process.env.PI_SIMPLE_TEAM_TEST_QUIT_ON_SIGTERM_MEMBER === process.env.PI_SIMPLE_TEAM_MEMBER) { await parent("event", { event: { type: "session_shutdown", reason: "quit", signal: "SIGTERM" } }); process.exit(0); }
   if (process.env.PI_SIMPLE_TEAM_TEST_SLOW_STOP_MEMBER === process.env.PI_SIMPLE_TEAM_MEMBER) { setTimeout(() => process.exit(0), 5000); return; }
   server.close(() => process.exit(0));
 });
@@ -368,7 +407,7 @@ type CallbackRequest = {
 	args: JsonRecord;
 };
 
-async function startChildCallbackReceiver(failingLifecycleEvents: number): Promise<{ url: string; requests: CallbackRequest[]; close: () => Promise<void> }> {
+async function startChildCallbackReceiver(failingLifecycleEvents: number, lifelinePort?: number): Promise<{ url: string; requests: CallbackRequest[]; close: () => Promise<void> }> {
 	const requests: CallbackRequest[] = [];
 	let remainingFailures = failingLifecycleEvents;
 	const server = http.createServer(async (request, response) => {
@@ -383,7 +422,7 @@ async function startChildCallbackReceiver(failingLifecycleEvents: number): Promi
 			return;
 		}
 		response.writeHead(200, { "content-type": "application/json" });
-		response.end(JSON.stringify({ accepted: true }));
+		response.end(JSON.stringify({ accepted: true, ...(body.tool === "register" && lifelinePort ? { lifelinePort } : {}) }));
 	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const address = server.address();
@@ -395,8 +434,8 @@ async function startChildCallbackReceiver(failingLifecycleEvents: number): Promi
 	};
 }
 
-async function startChildRuntimeForTest(failingLifecycleEvents: number): Promise<{ handlers: Map<string, ChildHandler>; messages: JsonRecord[]; requests: CallbackRequest[]; close: () => Promise<void> }> {
-	const receiver = await startChildCallbackReceiver(failingLifecycleEvents);
+async function startChildRuntimeForTest(failingLifecycleEvents: number, lifelinePort?: number): Promise<{ handlers: Map<string, ChildHandler>; messages: JsonRecord[]; requests: CallbackRequest[]; close: () => Promise<void> }> {
+	const receiver = await startChildCallbackReceiver(failingLifecycleEvents, lifelinePort);
 	const config = {
 		callbackUrl: receiver.url,
 		callbackToken: "child-token",
@@ -1345,16 +1384,22 @@ describe("unexpected background-teammate exits notify main", () => {
 		const restoreSwitches = useEnvironment({ PI_SIMPLE_TEAM_TEST_EXIT_GATE: gate.url });
 		const shutdownReported = (): boolean => lines(fake.eventsPath).some((entry) => entry.type === "parent" && entry.tool === "event" && ((entry.args as JsonRecord).event as JsonRecord).reason === "new");
 		try {
-			// Main has no process handle for a pane teammate, so it cannot end a pane process that lingers after a session replacement.
+			// A restart closes the previous pane, but a pane process can outlive that close, as a hung Pi would. Main has no process handle to kill it.
 			await host.execute("team_spawn", { teamName: "stale", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "v", systemPrompt: "Wait.", model: "fake/fake-model", showOnHerdrPane: true }] });
 			await host.execute("team_send_message", { targets: ["v"], message: "linger-as-stale" });
 			await waitFor(shutdownReported);
 			await Bun.sleep(100);
 			await host.execute("team_resume", { team: "stale", teammates: ["v"], startIdle: true });
+			const [previousPane, successorPane] = lines(fake.logPath).filter((entry) => entry.type === "start").map((entry) => entry.paneId);
+			assert.deepEqual(lines(fake.logPath).filter((entry) => entry.type === "close").map((entry) => entry.paneId), [previousPane], "The restart must close the previous pane, and only that one.");
+			assert.notEqual(successorPane, previousPane, "The successor runs in a new pane.");
 			const successor = Number(lines(fake.eventsPath).findLast((entry) => entry.type === "pi_start")?.pid);
 			gate.release();
 			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "stale_result"));
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.deepEqual(endNotices(host), [], "The replaced process's end, seen through its lifeline, must change nothing for its successor.");
 			const outcomes = lines(fake.eventsPath).find((entry) => entry.type === "stale_result")?.outcomes as Record<string, string>;
+			assert.equal(outcomes.lifeline, "refused", "Main must refuse a lifeline from the replaced process.");
 			assert.match(outcomes.quit, /^rejected: .*restarted/, `Main must refuse a late event from the replaced process. Got: ${outcomes.quit}`);
 			assert.match(outcomes.register, /^rejected: .*restarted/, `Main must refuse a late registration from the replaced process. Got: ${outcomes.register}`);
 			const status = ((await host.execute("team_status", { team: "stale" })).details?.status as Record<string, JsonRecord>).v;
@@ -1365,6 +1410,135 @@ describe("unexpected background-teammate exits notify main", () => {
 		} finally {
 			restoreSwitches();
 			gate.close();
+			await host.shutdown();
+			fake.restore();
+		}
+	}, 20_000);
+});
+
+const endNotices = (host: ExtensionHost): string[] => host.messages.map((message) => String(message.content)).filter((content) => /\) (exited|shut down[^.\n]*)\.\nCause:/.test(content));
+const readyRecord = (eventsPath: string, member: string): JsonRecord | undefined => lines(eventsPath).findLast((entry) => entry.type === "ready" && entry.member === member);
+
+describe("Herdr pane teammate ends notify main like background teammate ends", () => {
+	const herdrTeammate = (name: string): JsonRecord => ({ name, systemPrompt: "Wait.", model: "fake/fake-model", showOnHerdrPane: true });
+	const memberStatus = async (host: ExtensionHost, team: string, member: string): Promise<JsonRecord> => ((await host.execute("team_status", { team })).details?.status as Record<string, JsonRecord>)[member];
+
+	test("a killed pane teammate gives one failure notice, and only pane teammates are offered a lifeline", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		try {
+			await host.execute("team_spawn", { teamName: "pane-kill", commonPrompt: "Wait.", startIdle: true, teammates: [herdrTeammate("visible"), { name: "background", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+			assert.deepEqual([readyRecord(fake.eventsPath, "visible")?.lifelineOffered, readyRecord(fake.eventsPath, "background")?.lifelineOffered], [true, false], "Main has a process handle for a background teammate, so only the pane teammate needs a lifeline.");
+			process.kill(Number(readyRecord(fake.eventsPath, "visible")?.pid), "SIGKILL");
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.deepEqual(endNotices(host), [`Teammate "visible" on team "pane-kill" (team ID: fake-main-session-id-pane-kill) exited.\nCause: its Pi process ended without shutting down (a crash, a kill, or its pane closed while it worked)\nCheck its pane if it is still open. Use team_resume to restart it.`], "A pane teammate whose process dies must wake main once, like a background teammate's unexpected exit.");
+			const ended = await memberStatus(host, "pane-kill", "visible");
+			assert.deepEqual({ word: ended.word, phrase: ended.phrase }, { word: "stopped", phrase: "Ended without shutting down" }, "A dead pane teammate must not stay idle and live.");
+			const resumed = await host.execute("team_resume", { team: "pane-kill", teammates: ["visible"], startIdle: true });
+			assert.equal((resumed.details?.teammates as JsonRecord[]).find((member) => member.name === "visible")?.live, true, "team_resume must be able to restart a pane teammate that died.");
+		} finally {
+			await host.shutdown();
+			fake.restore();
+		}
+	}, 20_000);
+
+	test("a pane teammate that shuts down after a signal gives one neutral notice, and one that quits itself gives none", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		try {
+			await host.execute("team_spawn", { teamName: "pane-quit", commonPrompt: "Wait.", startIdle: true, teammates: [herdrTeammate("closed"), herdrTeammate("quitter")] });
+			await host.execute("team_send_message", { targets: ["closed"], message: "quit-on-sighup" });
+			await host.execute("team_send_message", { targets: ["quitter"], message: "quit-by-itself" });
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.deepEqual(endNotices(host), [`Teammate "closed" on team "pane-quit" (team ID: fake-main-session-id-pane-quit) shut down after SIGHUP.\nCause: its Pi received SIGHUP and shut down in order. Its pane may have been closed on purpose.\nUse team_resume to restart it if you still need it.`], "A signal shutdown must read as a neutral end, once. A self-quit must send nothing.");
+			const closed = await memberStatus(host, "pane-quit", "closed");
+			assert.deepEqual({ word: closed.word, phrase: closed.phrase }, { word: "stopped", phrase: "Shut down after SIGHUP" }, "The status must name the signal without calling it an error.");
+			assert.equal((await memberStatus(host, "pane-quit", "quitter")).phrase, "Session shut down", "A self-quit keeps its existing status.");
+		} finally {
+			await host.shutdown();
+			fake.restore();
+		}
+	}, 20_000);
+
+	test("a pane that main closes sends nothing, in a rollback and in team_shutdown", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		// When main closes its pane, d shuts down in order and reports the signal, as an idle Pi does. f just dies, as a working Pi usually does.
+		const restoreSwitches = useEnvironment({ PI_SIMPLE_TEAM_TEST_BAD_REGISTER_MEMBER: "e", PI_SIMPLE_TEAM_TEST_QUIT_ON_SIGTERM_MEMBER: "d" });
+		try {
+			await host.execute("team_spawn", { teamName: "pane-close", commonPrompt: "Wait.", startIdle: true, teammates: [herdrTeammate("x")] });
+			await assert.rejects(host.execute("team_add_teammates", { team: "pane-close", startIdle: true, teammates: [herdrTeammate("d"), herdrTeammate("f"), herdrTeammate("e")] }));
+			assert.deepEqual([readyRecord(fake.eventsPath, "d")?.lifelineOffered, readyRecord(fake.eventsPath, "f")?.lifelineOffered], [true, true], "The fixture's d and f must have registered before the rollback closed their panes.");
+			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "parent" && entry.tool === "event" && ((entry.args as JsonRecord).event as JsonRecord).signal === "SIGTERM"));
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.deepEqual(endNotices(host), [], "A pane the runtime closed in a rollback is not an unexpected end.");
+			await host.execute("team_shutdown", { team: "pane-close" });
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.deepEqual(endNotices(host), [], "A pane closed by team_shutdown is not an unexpected end.");
+		} finally {
+			restoreSwitches();
+			await host.shutdown();
+			fake.restore();
+		}
+	}, 20_000);
+
+	test("a pane teammate's process holds one lifeline across reloads, and reports the signal that shuts it down", async () => {
+		const hellos: string[] = [];
+		const lifelineServer = net.createServer((socket) => socket.on("data", (data) => hellos.push(String(data))));
+		await new Promise<void>((resolve) => lifelineServer.listen(0, "127.0.0.1", resolve));
+		const port = (lifelineServer.address() as net.AddressInfo).port;
+		const listenersBefore = { SIGHUP: process.listeners("SIGHUP"), SIGTERM: process.listeners("SIGTERM") };
+		const lifelineKey = Symbol.for("pi-simple-team.lifeline");
+		const processState = globalThis as { [key: symbol]: { socket: net.Socket } | undefined };
+		const firstLoad = await startChildRuntimeForTest(0, port);
+		const reload = await startChildRuntimeForTest(0, port);
+		try {
+			await waitFor(() => hellos.length > 0);
+			await Bun.sleep(200);
+			assert.deepEqual(hellos.map((hello) => JSON.parse(hello) as JsonRecord), [{ token: "child-token", team: "child-team", from: "reviewer", process: "test-process" }], "One process holds one lifeline, however often Pi loads the extension.");
+			process.emit("SIGHUP");
+			await reload.close();
+			assert.deepEqual(reload.requests.findLast((request) => request.tool === "event")?.args.event, { type: "session_shutdown", reason: "quit", signal: "SIGHUP" }, "The shutdown callback must carry the signal that caused it.");
+		} finally {
+			for (const signal of ["SIGHUP", "SIGTERM"] as const) for (const listener of process.listeners(signal)) if (!listenersBefore[signal].includes(listener)) process.off(signal, listener);
+			processState[lifelineKey]?.socket.destroy();
+			delete processState[lifelineKey];
+			await firstLoad.close();
+			await reload.close();
+			await new Promise<void>((resolve) => lifelineServer.close(() => resolve()));
+		}
+	});
+
+	test("a pane teammate whose quit callback is still in flight when it dies gives one notice", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		try {
+			await host.execute("team_spawn", { teamName: "pane-race", commonPrompt: "Wait.", startIdle: true, teammates: [herdrTeammate("visible")] });
+			await host.execute("team_send_message", { targets: ["visible"], message: "die-mid-quit" });
+			await waitFor(() => lines(fake.eventsPath).some((entry) => entry.type === "late_quit_sent"));
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.equal(endNotices(host).length, 1, `Main records a process's end once, whichever signal arrives first. Got: ${JSON.stringify(endNotices(host))}`);
+			assert.equal((await memberStatus(host, "pane-race", "visible")).phrase, "Ended without shutting down", "A callback from a process whose end is recorded changes nothing.");
+		} finally {
+			await host.shutdown();
+			fake.restore();
+		}
+	}, 20_000);
+
+	test("a session replacement in the pane sends nothing, and a later death still notifies", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		try {
+			await host.execute("team_spawn", { teamName: "pane-new", commonPrompt: "Wait.", startIdle: true, teammates: [herdrTeammate("visible")] });
+			await host.execute("team_send_message", { targets: ["visible"], message: "replace-session" });
+			await waitFor(() => lines(fake.eventsPath).filter((entry) => entry.type === "ready").length === 2);
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.deepEqual(endNotices(host), [], "A teammate that starts a new session in its pane is still running.");
+			assert.equal((await memberStatus(host, "pane-new", "visible")).word, "idle", "The re-registered teammate is live again.");
+			process.kill(Number(readyRecord(fake.eventsPath, "visible")?.pid), "SIGKILL");
+			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
+			assert.equal(endNotices(host).length, 1, "The lifeline must outlive a session replacement.");
+		} finally {
 			await host.shutdown();
 			fake.restore();
 		}
