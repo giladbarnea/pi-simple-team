@@ -27,7 +27,7 @@ export interface FactRow extends TeammateView {
 }
 
 export type FactKey = "name" | "status" | "model" | "context" | "fork" | "manager" | "thinking" | "herdr";
-type Form = "full" | "short" | "bare" | "icon";
+export type Form = "full" | "short" | "bare" | "icon";
 type FormOrHidden = Form | "hidden";
 
 interface Paint {
@@ -151,9 +151,9 @@ function cell(key: FactKey, form: FormOrHidden, row: FactRow, paint: Paint): str
 	return ladder[shown]!(row, paint);
 }
 
-/** One fact in its icon form, for views that list teammates inline. Empty when the row lacks the fact. */
-export function inlineFact(theme: FactTheme, key: FactKey, row: FactRow): string {
-	return cell(key, "icon", row, { theme, roster: [], nameWidth: 0 });
+/** One fact, in its icon form unless another is given, for views that list teammates inline. Empty when the row lacks the fact. */
+export function inlineFact(theme: FactTheme, key: FactKey, row: FactRow, form: Form = "icon"): string {
+	return cell(key, form, row, { theme, roster: [], nameWidth: 0 });
 }
 
 /** The cells of every row at one state, padded into aligned columns. Empty columns drop out. */

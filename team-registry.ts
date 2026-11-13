@@ -23,6 +23,8 @@ export interface TeamManifest {
 	updatedAt: string;
 	shutdownAt?: string;
 	expiresAt?: string;
+	/** The main session that was running this team when its quit or reload stopped it, and the teammates then running and working. That main's next start reattaches them. */
+	interrupted?: { mainSessionId: string; teammates: string[]; working: string[] };
 }
 
 export interface TeamLease {
@@ -82,6 +84,11 @@ function isManifestMember(value: unknown): value is TeamManifestMember {
 	);
 }
 
+function isInterruption(value: unknown): value is TeamManifest["interrupted"] {
+	const names = (list: unknown) => Array.isArray(list) && list.every((name) => typeof name === "string");
+	return typeof value === "object" && value !== null && typeof (value as Record<string, unknown>).mainSessionId === "string" && names((value as Record<string, unknown>).teammates) && names((value as Record<string, unknown>).working);
+}
+
 function parseManifest(filePath: string): TeamManifest {
 	const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf8"));
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
@@ -104,7 +111,8 @@ function parseManifest(filePath: string): TeamManifest {
 		typeof manifest.createdAt !== "string" ||
 		typeof manifest.updatedAt !== "string" ||
 		(manifest.shutdownAt !== undefined && typeof manifest.shutdownAt !== "string") ||
-		(manifest.expiresAt !== undefined && typeof manifest.expiresAt !== "string")
+		(manifest.expiresAt !== undefined && typeof manifest.expiresAt !== "string") ||
+		(manifest.interrupted !== undefined && !isInterruption(manifest.interrupted))
 	) {
 		throw new Error(`Invalid team manifest: ${filePath}`);
 	}

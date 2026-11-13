@@ -550,9 +550,66 @@ describe("teamSendLines", () => {
 	});
 });
 
+describe("context use of the agents a tool involves (issue 16)", () => {
+	const builder = { name: "builder", contextPercent: 72 };
+	const scout = { name: "scout", contextPercent: 16 };
+	const sendResult = (agentContext: object[], width: number, theme = identityTheme) => renderTeamToolResult(
+		"team_send_message", { details: { published: true, agentContext } }, { expanded: false }, theme,
+		{ args: { targets: ["builder"], message: "x".repeat(654) } }, identityMarkdownTheme,
+	).render(width)[0]!;
+
+	test("Team Send shows the receiver's context use before the character count", () => {
+		expect(stripAnsi(sendResult([builder], 200))).toEndWith(`Team Send ${g.arrow} builder ▆72% context${g.dot}654 chars`);
+	});
+
+	test("each recipient's reading sits by its name, and one without a reading shows its name alone", () => {
+		expect(stripAnsi(sendResult([builder, scout, { name: "fresh" }], 200))).toEndWith(`Team Send ${g.arrow} builder ▆72% context, scout ▂16% context, fresh${g.dot}654 chars`);
+	});
+
+	test("at narrower widths the character count gives way before the context reading", () => {
+		const atWidth = (width: number) => stripAnsi(sendResult([builder], width));
+		expect(atWidth(50)).toEndWith(`Team Send ${g.arrow} builder ▆72% context${g.dot}654 chars`);
+		expect(atWidth(40)).toEndWith(`Team Send ${g.arrow} builder ▆72% context${g.dot}65${g.ellipsis}`);
+		expect(atWidth(36)).toEndWith(`Team Send ${g.arrow} builder ▆72% context ${g.ellipsis}`);
+		expect(atWidth(24)).toEndWith(`Team Send ${g.arrow} builder ▆${g.ellipsis}`);
+		for (const width of [50, 40, 36, 24, 9]) expect(visibleLength(sendResult([builder], width))).toBeLessThanOrEqual(width);
+	});
+
+	test("the reading has the context heat color and a quiet label, as in teammate rows", () => {
+		expect(sendResult([builder], 200, taggingTheme)).toContain("«text:builder» «warning:▆72%»«muted: context»«dim: · »«muted:654 chars»");
+	});
+
+	test("the pending call and older results without readings still name the targets", () => {
+		expect(stripAnsi(renderTeamToolResult("team_send_message", { details: { published: true } }, { expanded: false }, identityTheme, { args: { targets: ["builder"], message: "hi" } }, identityMarkdownTheme).render(200)[0]!)).toEndWith(`Team Send ${g.arrow} builder${g.dot}2 chars`);
+	});
+
+	test("Team Send without a Markdown theme shows the same header", () => {
+		const lines = teamSendLines(identityTheme, { targets: ["builder"], agentContext: [builder], message: "hi", interrupt: false, expanded: false }).map(teamLineText);
+		expect(stripAnsi(lines[0]!)).toEndWith(`Team Send ${g.arrow} builder ▆72% context${g.dot}2 chars`);
+	});
+
+	test("Team Shutdown shows each stopped teammate's last context use", () => {
+		const component = renderTeamToolResult("team_shutdown", { details: { teamName: "demo-team", teammates: [{ name: "builder" }, { name: "scout" }], agentContext: [builder, scout] } }, { expanded: false }, identityTheme, { args: {} });
+		expect(component.render(200).map(stripAnsi)[1]).toEndWith(`${g.tree.last}builder ▆72% context${g.dot}scout ▂16% context`);
+		for (const width of [40, 20]) for (const line of component.render(width)) expect(visibleLength(line)).toBeLessThanOrEqual(width);
+	});
+
+	test("Team Status, Resume and Update rows already show each teammate's context use in its fact row", () => {
+		const status = teamStatusLines(identityTheme, "t", { builder: { word: "working", phrase: "Building", updated: new Date().toISOString() } }, [], { builder: { name: "builder", live: true, contextPercent: 72 } }).map(teamLineText);
+		const resumed = teamResumeLines(identityTheme, "t", [{ name: "builder", live: true, active: false, restored: true, contextPercent: 72 }], 1).map(teamLineText);
+		const updated = teamUpdateLines(identityTheme, "t", [{ name: "builder", held: false, contextPercent: 72 }]).map(teamLineText);
+		for (const lines of [status, resumed, updated]) expect(lines[1]).toMatch(/builder .*▆72% context/);
+	});
+
+	test("a collapsed Team List row shows each teammate's context reading by its name", () => {
+		const teams = [{ name: "room", state: "active", leaseState: "claimed", members: [{ name: "builder", live: true, contextPercent: 72 }, { name: "scout", live: true }], updatedAt: new Date().toISOString() }];
+		expect(stripAnsi(teamLineText(teamListLines(identityTheme, teams)[1]!))).toContain(`builder ▆72%${g.dot}scout`);
+	});
+});
+
 describe("teamShutdownLines", () => {
 	test("summarizes the stop and lists teammate names", () => {
-		const lines = teamShutdownLines(identityTheme, "demo-team", ["implementer", "reviewer"]);
+		const lines = teamShutdownLines(identityTheme, "demo-team", [{ name: "implementer" }, { name: "reviewer" }]);
 		expect(lines[0]).toContain("Team Shutdown demo-team");
 		expect(lines[0]).toContain("2 teammates stopped");
 		expect(lines[1]).toContain("implementer");
@@ -560,7 +617,7 @@ describe("teamShutdownLines", () => {
 	});
 
 	test("colors stopped teammate names from the session roster", () => {
-		const lines = teamShutdownLines(taggingTheme, "demo-team", ["implementer", "reviewer"], ["implementer", "reviewer"]);
+		const lines = teamShutdownLines(taggingTheme, "demo-team", [{ name: "implementer" }, { name: "reviewer" }], ["implementer", "reviewer"]);
 		expect(lines[1]).toContain("«mdCode:implementer»");
 		expect(lines[1]).toContain("«customMessageLabel:reviewer»");
 	});

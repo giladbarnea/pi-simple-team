@@ -37,6 +37,9 @@ export interface ChildRuntimeConfig {
 	processId?: string;
 	participants: string[];
 	canManageOwnTeams: boolean;
+	/** The main session that started this teammate. A simulated teammate without one records no breadcrumb. */
+	parentSessionId?: string;
+	parentSessionFile?: string;
 	interruptWaitTimeoutMilliseconds?: number;
 }
 
@@ -66,7 +69,30 @@ function readRequiredChildRuntimeConfig(): ChildRuntimeConfig {
 		processId: process.env.PI_SIMPLE_TEAM_PROCESS,
 		participants: readParticipants(),
 		canManageOwnTeams: process.env.PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS === "1",
+		parentSessionId: process.env.PI_SIMPLE_TEAM_PARENT_SESSION_ID,
+		parentSessionFile: process.env.PI_SIMPLE_TEAM_PARENT_SESSION_FILE,
 	};
+}
+
+const breadcrumbType = "pi-simple-team-teammate";
+
+/**
+ * Names, once in this teammate's own session, the main session and team that started it. It is a custom entry, so it never
+ * reaches the model or the TUI. Its sessionId tells the teammate's own breadcrumb from a copy inherited through a later fork.
+ */
+function recordBreadcrumb(pi: ExtensionAPI, config: ChildRuntimeConfig, context: ExtensionContext): void {
+	if (!config.parentSessionId) return;
+	const sessionId = context.sessionManager.getSessionId();
+	if (context.sessionManager.getEntries().some((entry) => entry.type === "custom" && entry.customType === breadcrumbType && (entry.data as { sessionId?: unknown } | undefined)?.sessionId === sessionId)) return;
+	pi.appendEntry(breadcrumbType, {
+		sessionId,
+		parentSessionId: config.parentSessionId,
+		parentSessionFile: config.parentSessionFile,
+		teamId: config.teamId,
+		teamName: config.teamName,
+		teammate: config.teammateName,
+		createdAt: new Date().toISOString(),
+	});
 }
 
 /**
@@ -266,6 +292,7 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 	});
 	pi.on("session_start", async (_event, context) => {
 		activateChildTools(pi);
+		recordBreadcrumb(pi, config, context);
 		server = http.createServer((request, response) => {
 			void (async () => {
 				try {

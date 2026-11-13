@@ -11,7 +11,7 @@ import { formatContextWindowReport, requireKnownContextUsage, type KnownContextU
 import { useModelNames } from "./model-names.ts";
 import { formatScopedModelGuidance, validateTeammateModels, type ModelReference } from "./model-preflight.ts";
 import { composeTeamBriefing } from "./team-briefing.ts";
-import { composeResumptionMessage, composeSettingsMessage } from "./resume-message.ts";
+import { composeReattachmentMessage, composeResumptionMessage, composeSettingsMessage, type Reattachment } from "./resume-message.ts";
 import { callParent, isInertTeamCopy, readChildRuntimeConfig, registerChildTools } from "./child-tools.ts";
 import {
 	canonicalProjectDirectory,
@@ -105,6 +105,8 @@ interface TeamState {
 	showOnHerdrPanes: boolean;
 	teamPrompt: string;
 	mainSessionFile?: string;
+	/** The main session running this team. Every teammate it starts records it in its own session's breadcrumb. */
+	parentSession?: { id: string; file?: string };
 	members: Map<string, TeammateState>;
 	statuses: Map<string, TeamStatus>;
 	created: string;
@@ -123,6 +125,7 @@ const defaultRpcShutdownGraceMilliseconds = 1_000;
 /** Time for main's own shutdown to mark its teams before an exit notice is sent, for signals that reach main and its teammates together. */
 const exitNoticeGraceMilliseconds = 2_000;
 const teamMessageType = "pi-simple-team";
+const reattachedMessageType = "pi-simple-team-reattached";
 const teams = new Map<string, TeamState>();
 const callbackToken = crypto.randomBytes(24).toString("hex");
 let callbackServer: http.Server | undefined;
@@ -180,14 +183,20 @@ function decodeTeamListCursor(cursor: string): TeamListCursor {
 }
 
 interface Reminder {
+	sessionId: string;
 	id: string;
 	slug: string;
 	message: string;
 	armedAt: Date;
 	wakeAt: Date;
-	timer: ReturnType<typeof setTimeout>;
+	timer?: ReturnType<typeof setTimeout>;
 	state: "pending" | "delivered" | "cancelled";
 }
+
+/** A reminder as its session records it. A reminder's latest record holds its current state. */
+type ReminderRecord = Omit<Reminder, "armedAt" | "wakeAt" | "timer"> & { armedAt: string; wakeAt: string };
+
+const reminderType = "pi-simple-team-reminder";
 
 const reminderSlugWords = {
 	adjectives: ["amber", "brisk", "calm", "clever", "dusty", "eager", "fuzzy", "gentle", "golden", "hollow", "jolly", "lively", "mellow", "misty", "nimble", "plucky", "quiet", "rapid", "rusty", "silver", "steady", "sunny", "swift", "witty"],
@@ -593,6 +602,11 @@ function formatStatus(team: TeamState): Record<string, TeamStatus> {
 	return Object.fromEntries([...team.statuses.entries()].sort(([a], [b]) => a.localeCompare(b)));
 }
 
+/** A teammate a tool involves, with the context use it last reported, for that tool's renderer. */
+function agentContext(teammate: TeammateState): { name: string; contextPercent?: number } {
+	return { name: teammate.name, contextPercent: teammate.contextPercent };
+}
+
 /** @example teammateViews(team).scout?.model // "openai-codex/gpt-6-luna" */
 function teammateViews(team: TeamState): Record<string, TeammateView> {
 	return Object.fromEntries([...team.members.values()].map((teammate) => [teammate.name, {
@@ -690,7 +704,15 @@ function childEnvironmentOverrides(team: TeamState, teammate: TeammateState, par
 		PI_SIMPLE_TEAM_PROCESS: teammate.processRecord!.id,
 		PI_SIMPLE_TEAM_PARTICIPANTS: JSON.stringify(participants),
 		PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS: teammate.canManageOwnTeams ? "1" : "0",
+		...(team.parentSession ? { PI_SIMPLE_TEAM_PARENT_SESSION_ID: team.parentSession.id } : {}),
+		...(team.parentSession?.file ? { PI_SIMPLE_TEAM_PARENT_SESSION_FILE: team.parentSession.file } : {}),
 	};
+}
+
+/** The main session a tool or event runs in, when it has one. */
+function mainSession(context: ExtensionContext): TeamState["parentSession"] {
+	const id = context.sessionManager?.getSessionId?.();
+	return id ? { id, file: context.sessionManager?.getSessionFile?.() } : undefined;
 }
 
 function appendSpawnLog(team: TeamState, teammate: TeammateState): void {
@@ -980,6 +1002,7 @@ function persistActiveTeamManifest(team: TeamState): void {
 		updatedAt,
 		shutdownAt: undefined,
 		expiresAt: undefined,
+		interrupted: undefined,
 	};
 	writeTeamManifest(team.manifest);
 }
@@ -1021,7 +1044,14 @@ async function stopRpcTeammate(teammate: TeammateState): Promise<void> {
 	teammate.process = undefined;
 }
 
-async function shutdownTeam(team: TeamState): Promise<string[]> {
+/** The teammates main's own stop interrupts, read before it stops them; undefined when none is running or the team has no saved record to keep them in. */
+function interruptedTeammates(team: TeamState): TeamManifest["interrupted"] {
+	const running = [...team.members.values()].filter((teammate) => teammate.alive && teammate.sessionId);
+	if (running.length === 0 || !team.lease) return undefined;
+	return { mainSessionId: team.lease.mainSessionId, teammates: running.map((teammate) => teammate.name), working: running.filter((teammate) => teammateSummary(teammate).active).map((teammate) => teammate.name) };
+}
+
+async function shutdownTeam(team: TeamState, interrupted?: TeamManifest["interrupted"]): Promise<string[]> {
 	team.stopping = true;
 	const errors: string[] = [];
 	for (const teammate of team.members.values()) {
@@ -1046,6 +1076,7 @@ async function shutdownTeam(team: TeamState): Promise<string[]> {
 				updatedAt: shutdownAt,
 				shutdownAt,
 				expiresAt: new Date(Date.parse(shutdownAt) + dormantManifestRetentionMilliseconds).toISOString(),
+				interrupted,
 			};
 			writeTeamManifest(team.manifest);
 		} catch (error) {
@@ -1401,9 +1432,31 @@ export default function (pi: ExtensionAPI) {
 
 	const parentPiCommand = piCommand(process.argv[1], process.execPath, getPackageDir());
 	const owner = Symbol("pi-simple-team-owner");
-	/** This session's reminders by ID. They live in memory, so after Pi restarts every earlier reminder is unknown. */
+	/** This session's reminders by ID, restored from the session's records on every session start. */
 	const reminders = new Map<string, Reminder>();
 	let reminderCount = 0;
+
+	function recordReminder(reminder: Reminder): void {
+		const { timer: _timer, ...fields } = reminder;
+		pi.appendEntry<ReminderRecord>(reminderType, { ...fields, armedAt: reminder.armedAt.toISOString(), wakeAt: reminder.wakeAt.toISOString() });
+	}
+
+	/** Arms a pending reminder's timer. One that is already due fires at once and says how late it is. */
+	function armReminder(reminder: Reminder): void {
+		const delayMilliseconds = reminder.wakeAt.getTime() - Date.now();
+		reminder.timer = setTimeout(() => {
+			const now = new Date();
+			const lateness = delayMilliseconds < 0 ? ` It is ${humanDuration(Math.round((now.getTime() - reminder.wakeAt.getTime()) / 1000))} late: it was due at ${humanTime(reminder.wakeAt)}.` : "";
+			reminder.state = "delivered";
+			recordReminder(reminder);
+			pi.sendMessage(
+				{ customType: reminderType, content: `Reminder ${reminder.slug} wake up: it's ${humanTime(now)} now.${lateness}\n\n${reminder.message}`, display: false },
+				{ deliverAs: "followUp", triggerTurn: true },
+			);
+		}, Math.max(0, delayMilliseconds));
+		reminder.timer.unref();
+	}
+
 	const sessionTeammateRoster = childRuntimeConfig?.participants ?? [];
 
 	/** Current-project manifests that team_resume can select: all for main, only its own for a managing teammate. */
@@ -1436,13 +1489,86 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	pi.on("session_shutdown", async () => {
+	pi.on("session_shutdown", async (event) => {
 		for (const reminder of reminders.values()) clearTimeout(reminder.timer);
 		reminders.clear();
 		const ownedTeams = [...teams.values()].filter((team) => team.owner === owner);
 		for (const team of ownedTeams) team.stopping = true;
-		for (const team of ownedTeams) await shutdownTeam(team);
+		// Main's quit or reload keeps its running teammates for its next start. Switching to another session releases them.
+		const keepsTeams = !childRuntimeConfig && (event.reason === "quit" || event.reason === "reload");
+		for (const team of ownedTeams) await shutdownTeam(team, keepsTeams ? interruptedTeammates(team) : undefined);
 		closeCallbackServerIfUnused();
+	});
+
+	/** Restarts a team's interrupted teammates idle, in their own conversations, without delivering anything. */
+	async function reattachTeam(manifest: TeamManifest, interrupted: NonNullable<TeamManifest["interrupted"]>, inPanes: string[], parentSession: NonNullable<TeamState["parentSession"]>): Promise<Reattachment> {
+		const reattachment: Reattachment = { teamName: manifest.name, teamId: manifest.id, reattached: [], working: [], inPanes };
+		let team: TeamState | undefined;
+		try {
+			await ensureCallbackServer();
+			team = restoreTeamState(owner, pi, parentPiCommand, manifest, claimTeamLease(manifest.id, parentSession.id));
+			team.parentSession = parentSession;
+			teams.set(team.id!, team);
+			const participantNames = [...team.members.keys()];
+			sessionTeammateRoster.push(...participantNames.filter((name) => !sessionTeammateRoster.includes(name)));
+			const emptyRestarts: TeammateState[] = [];
+			for (const name of interrupted.teammates) {
+				const teammate = team.members.get(name)!;
+				const sessionFile = sessionFileForResume(teammate);
+				prepareTeammateStart(teammate, "rpc");
+				await startTeammate(team, teammate, participantNames, undefined, { sessionFile, restartEmpty: sessionFile === undefined });
+				if (!sessionFile) emptyRestarts.push(teammate);
+				team.statuses.set(name, status("idle", interrupted.working.includes(name) ? "Reattached; was working when main stopped" : "Reattached"));
+			}
+			persistActiveTeamManifest(team);
+			// A teammate whose conversation was never saved restarts empty, so it gets its briefing back, staged without a turn.
+			await kickoffTeammates(team, emptyRestarts, true, { emptyRestarts });
+			return { ...reattachment, reattached: interrupted.teammates, working: interrupted.working };
+		} catch (error) {
+			if (team) await shutdownTeam(team);
+			closeCallbackServerIfUnused();
+			return { ...reattachment, error: error instanceof Error ? error.message : String(error) };
+		}
+	}
+
+	// A main session that starts again reattaches the teammates its quit, reload or crash cut off. A crash leaves the team active under a dead lease.
+	pi.on("session_start", async (event, context) => {
+		const mainSessionId = context.sessionManager?.getSessionId?.();
+		const projectDirectory = context.sessionManager?.getCwd?.() ?? context.cwd;
+		if (childRuntimeConfig || (event.reason !== "startup" && event.reason !== "reload") || !mainSessionId || !projectDirectory) return;
+		const reattachments: Reattachment[] = [];
+		for (const manifest of listTeamManifests(projectDirectory).manifests) {
+			const lease = manifest.state === "active" ? readTeamLeaseState(manifest.id) : undefined;
+			const crashed = lease?.state === "stale" && lease.mainSessionId === mainSessionId;
+			if (!crashed && manifest.interrupted?.mainSessionId !== mainSessionId) continue;
+			const running = manifest.members.filter((member) => member.live);
+			// A Herdr pane teammate is not main's child, so it can outlive main's crash; a second process on its session would corrupt it.
+			const [inPanes, reattachable] = [running.filter((member) => member.showOnHerdrPane), running.filter((member) => !member.showOnHerdrPane)];
+			const interrupted = crashed
+				? { mainSessionId, teammates: reattachable.map((member) => member.name), working: reattachable.filter((member) => member.active).map((member) => member.name) }
+				: manifest.interrupted;
+			const inPaneNames = crashed ? inPanes.map((member) => member.name) : [];
+			if (interrupted && interrupted.teammates.length > 0) reattachments.push(await reattachTeam(manifest, interrupted, inPaneNames, mainSession(context)!));
+			else if (inPaneNames.length > 0) reattachments.push({ teamName: manifest.name, teamId: manifest.id, reattached: [], working: [], inPanes: inPaneNames });
+		}
+		if (reattachments.length > 0) pi.sendMessage({ customType: reattachedMessageType, content: composeReattachmentMessage(reattachments), display: true }, { deliverAs: "nextTurn" });
+	});
+
+	pi.on("session_start", (_event, context) => {
+		// Pi's RPC session switches emit session_start twice on one instance, so a restore replaces any earlier one.
+		for (const reminder of reminders.values()) clearTimeout(reminder.timer);
+		reminders.clear();
+		const sessionId = context.sessionManager?.getSessionId?.();
+		// A forked session copies its origin's records, which stay that session's reminders.
+		const records = new Map((context.sessionManager?.getEntries?.() ?? [])
+			.flatMap((entry) => entry.type === "custom" && entry.customType === reminderType && (entry.data as ReminderRecord).sessionId === sessionId ? [entry.data as ReminderRecord] : [])
+			.map((record) => [record.id, record]));
+		reminderCount = records.size;
+		for (const record of records.values()) {
+			const reminder: Reminder = { ...record, armedAt: new Date(record.armedAt), wakeAt: new Date(record.wakeAt) };
+			reminders.set(reminder.id, reminder);
+			if (reminder.state === "pending") armReminder(reminder);
+		}
 	});
 
 	pi.on("session_start", (_event, context) => {
@@ -1513,6 +1639,7 @@ export default function (pi: ExtensionAPI) {
 						showOnHerdrPanes,
 						teamPrompt: params.commonPrompt,
 						mainSessionFile,
+						parentSession: mainSession(context),
 						members: new Map(),
 						statuses: new Map([["main", status("available", "Main agent")]]),
 						created: new Date().toISOString(),
@@ -1573,7 +1700,7 @@ export default function (pi: ExtensionAPI) {
 				delayMinutes: Type.Number({ exclusiveMinimum: 0, maximum: 35_791, description: "Minutes until the reminder" }),
 				message: Type.String({ minLength: 1, description: "Custom message that wakes you" }),
 			}, { additionalProperties: false }),
-			async execute(_toolCallId, params) {
+			async execute(_toolCallId, params, _signal, _onUpdate, context) {
 				const delayMilliseconds = params.delayMinutes * 60_000;
 				const delaySeconds = Math.round(delayMilliseconds / 1000);
 				const armedAt = new Date();
@@ -1581,16 +1708,10 @@ export default function (pi: ExtensionAPI) {
 				const pendingSlugs = new Set([...reminders.values()].filter((reminder) => reminder.state === "pending").map((reminder) => reminder.slug));
 				let slug = reminderSlug();
 				while (pendingSlugs.has(slug)) slug = reminderSlug();
-				const id = `reminder-${++reminderCount}`;
-				const timer = setTimeout(() => {
-					reminders.get(id)!.state = "delivered";
-					pi.sendMessage(
-						{ customType: "pi-simple-team-reminder", content: `Reminder ${slug} wake up: it's ${humanTime(new Date())} now.\n\n${params.message}`, display: false },
-						{ deliverAs: "followUp", triggerTurn: true },
-					);
-				}, delayMilliseconds);
-				reminders.set(id, { id, slug, message: params.message, armedAt, wakeAt, timer, state: "pending" });
-				timer.unref();
+				const reminder: Reminder = { sessionId: context.sessionManager.getSessionId(), id: `reminder-${++reminderCount}`, slug, message: params.message, armedAt, wakeAt, state: "pending" };
+				reminders.set(reminder.id, reminder);
+				recordReminder(reminder);
+				armReminder(reminder);
 				return {
 					content: [{ type: "text" as const, text: `Armed reminder ${slug}: It's ${humanTime(armedAt)} now. Reminder set in ${delaySeconds} seconds (${humanDuration(delaySeconds)}) for ${humanTime(wakeAt)}.` }],
 					details: { scheduledAt: wakeAt.toISOString(), message: params.message, slug },
@@ -1636,6 +1757,7 @@ export default function (pi: ExtensionAPI) {
 					if (reminder.state === "pending") {
 						clearTimeout(reminder.timer);
 						reminder.state = "cancelled";
+						recordReminder(reminder);
 					}
 					return { id: reminder.id, slug: reminder.slug, result: reminder.state, ...(reminder.state === "cancelled" ? { message: reminder.message, wakeAt: humanTime(reminder.wakeAt) } : {}) };
 				};
@@ -1749,6 +1871,7 @@ export default function (pi: ExtensionAPI) {
 					try {
 						await ensureCallbackServer();
 						team = restoreTeamState(owner, pi, parentPiCommand, manifest, lease);
+						team.parentSession = mainSession(context);
 						teams.set(team.id!, team);
 					} catch (error) {
 						releaseTeamLease(lease);
@@ -1967,6 +2090,7 @@ export default function (pi: ExtensionAPI) {
 				const selections = resolveTargets(candidates, params.targets);
 				const interrupted = interruptedTeammateIds(candidates, selections, params.interrupt);
 				const statuses: JsonRecord[] = [];
+				const recipients: Array<{ name: string; contextPercent?: number }> = [];
 				for (const selection of selections) {
 					if (selection.team === parent) {
 						const result = await callParent(childRuntimeConfig!, "team_send_message", {
@@ -1974,13 +2098,15 @@ export default function (pi: ExtensionAPI) {
 							interrupt: selection.teammates.filter((teammate) => interrupted.has(teammate.teammateId)).map((teammate) => teammate.teammateId),
 						}, signal);
 						statuses.push(...result.teams as JsonRecord[]);
+						recipients.push(...selection.teammates.map((teammate) => ({ name: teammate.name })));
 						continue;
 					}
 					const team = teams.get(selection.team.teamId)!;
 					for (const recipient of selection.teammates) enqueueDelivery(team, "main", team.members.get(recipient.name)!, params.message, interrupted.has(recipient.teammateId));
 					statuses.push({ ...teamIdentity(team), status: formatStatus(team) });
+					recipients.push(...selection.teammates.map((recipient) => agentContext(team.members.get(recipient.name)!)));
 				}
-				return toolResult({ published: true, teams: statuses, instruction: "Do not wait for replies. Teammates will message you back." });
+				return toolResult({ published: true, teams: statuses, instruction: "Do not wait for replies. Teammates will message you back." }, { agentContext: recipients });
 			},
 		}),
 	);
@@ -2125,6 +2251,7 @@ export default function (pi: ExtensionAPI) {
 			async execute(_toolCallId, params) {
 				const team = resolveTeam(owner, params.team);
 				const teammates = [...team.members.values()].map(teammateReference);
+				const stoppedContext = [...team.members.values()].map(agentContext);
 				const droppedUpdates = [...team.members.values()].flatMap((teammate) => {
 					const heldUpdate = teammate.processRecord?.heldUpdate;
 					return heldUpdate ? [{ ...teammateReference(teammate), settings: describeSettings(heldUpdate) }] : [];
@@ -2135,7 +2262,7 @@ export default function (pi: ExtensionAPI) {
 				return toolResult({
 					...teamIdentity(team), stopped: true, teammates,
 					...(droppedUpdates.length > 0 ? { droppedUpdates, instruction: "These held settings updates were not applied. Pass them in teammateUpdates when you resume the team." } : {}),
-				});
+				}, { agentContext: stoppedContext });
 			},
 		}),
 	);

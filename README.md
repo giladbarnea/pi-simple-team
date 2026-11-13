@@ -128,7 +128,7 @@ Your main agent calls `team_status` and understands exactly what is going on. Ma
 
 Teammates know how much free context they have left.
 
-Main agent knows its own and everyone else's too.
+Main agent knows its own and everyone else's too. You see it as well: team tool results show the last reported context use beside each teammate they involve, such as `Team Send → builder ▆72% context`.
 
 They will hand off work autonomously when it's time to say goodbye.
 
@@ -170,6 +170,8 @@ This means **teammates (and thus, teams) survive shutdown.**
 Have a teammate do work, exit Pi entirely, come back tomorrow in a brand-new session, and ask main to get you that teammate by its Pi session id. Everything it learned stays intact.
 
 You can even `/resume` a teammate session directly if you ever want a cozy one-on-one, or run `pi --session <teammate-session-id>`.
+
+Every teammate session records which main session and team started it, in one `pi-simple-team-teammate` custom entry that the model and the TUI never see. Its `sessionId` is the session it was written in, so a later `pi --fork` of a teammate carries a copy you can tell is inherited.
 
 ## 🪾 It’s teams all the way down (optionally)
 
@@ -233,6 +235,8 @@ Kept minimal:
 
 Startup delivers `commonPrompt` inside `<team-system-message>` and each teammate's `systemPrompt` inside `<your-specific-system-message>`. These are labels in the custom team message, not system-role overrides. The briefing also contains the teammate's identity and coordination guidance.
 
+When main quits, reloads or crashes, its teams stop. When that main session starts again, Simple Team reattaches the teammates that were running, idle and in their own conversations, without sending them anything or making a model request. Main gets one message listing them and which were working, so it can tell those to continue. Teams stopped with `team_shutdown`, or left by switching main to another session, stay stopped. After a crash, a Herdr pane teammate may still be running in its pane, so it is listed instead of reattached.
+
 Resume appends a custom briefing with the team identity, current time, and last recorded model activity. Optional `resumptionPrompt` instructions follow that briefing without changing saved definitions. With `startIdle: true`, the briefing waits in context for the next turn.
 
 Existing teammates can be selected by name or Pi session ID in the same input field. Messages, logs, and context usage share a `targets` list. Select a team for all its teammates, or select individual teammates across your teams. Ambiguous names return IDs you can use instead.
@@ -240,6 +244,8 @@ Existing teammates can be selected by name or Pi session ID in the same input fi
 `team_update_teammates` changes a live teammate's model, thinking level or extensions in its own conversation. An idle teammate restarts at once, in its pane if it has one; a busy one keeps working and is updated when its run settles, or at once with `interrupt: true`. A managing teammate is never held: while it or any of its own teammates works, the call fails and tells main to ask it to soft-pause them, and the same call succeeds once they are idle. The restarted teammate gets a message with its new settings and the teams its restart stopped, so it can resume them. Main gets a message when a held update applies; `team_shutdown` lists any it drops. `team_resume` takes the same changes in `teammateUpdates` for the teammates it resumes. Instructions and `forkContext` stay as created.
 
 `team_list` shows active teams as short rows, newest created first, 20 per page by default (`limit` up to 100, then `cursor`). Pass `includeDormantTeams: true` to include dormant teams, or `team` for one team's full records. Pages follow creation order, so a team that changes state or activity between pages is neither repeated nor skipped.
+
+Reminders are recorded in the session, so they survive `/reload` and restarts of that session. One that fell due while Pi was not running fires on start and says how late it is.
 
 `list_reminders` shows this session's pending reminders with their IDs, slugs and times. `cancel_reminders` cancels reminders by ID or slug, or every pending one with `all: true`; a call with neither cancels nothing.
 

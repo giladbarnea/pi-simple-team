@@ -33,6 +33,7 @@ type TeamExtension = (api: ExtensionAPI) => void;
 class ExtensionHost {
 	readonly tools = new Map<string, RegisteredTool>();
 	readonly mainMessages: string[] = [];
+	readonly mainMessageRecords: Array<{ customType: string; content: string; display: boolean; options?: JsonRecord }> = [];
 	private readonly sessionStartHandlers: ExtensionEventHandler[] = [];
 	private readonly sessionShutdownHandlers: ExtensionEventHandler[] = [];
 
@@ -50,16 +51,19 @@ class ExtensionHost {
 			registerTool: (tool: RegisteredTool) => this.tools.set(tool.name, tool),
 			getActiveTools: () => [...this.tools.keys()],
 			setActiveTools: () => undefined,
-			sendMessage: (message: { content: string }) => this.mainMessages.push(message.content),
+			sendMessage: (message: { customType: string; content: string; display: boolean }, options?: JsonRecord) => {
+				this.mainMessages.push(message.content);
+				this.mainMessageRecords.push({ ...message, options });
+			},
 		} as unknown as ExtensionAPI;
 
 		teamExtension(api);
 	}
 
-	async start(): Promise<void> {
+	async start(reason = "startup"): Promise<void> {
 		for (const handler of this.sessionStartHandlers) {
 			// Pi reports extension event-handler errors without crashing the session; the harness mirrors that.
-			await Promise.resolve(handler({ type: "session_start", reason: "startup" }, this.context)).catch(() => undefined);
+			await Promise.resolve(handler({ type: "session_start", reason }, this.context)).catch(() => undefined);
 		}
 	}
 
@@ -69,9 +73,9 @@ class ExtensionHost {
 		return tool.execute("test-call", params, new AbortController().signal, undefined, this.context);
 	}
 
-	async shutdown(): Promise<void> {
+	async shutdown(reason = "quit"): Promise<void> {
 		for (const handler of this.sessionShutdownHandlers) {
-			await handler({ type: "session_shutdown", reason: "quit" }, this.context);
+			await handler({ type: "session_shutdown", reason }, this.context);
 		}
 	}
 }
@@ -105,6 +109,7 @@ type FakePiInvocation = {
 	sessionId: string;
 	sessionFile: string;
 	canManageOwnTeams: boolean;
+	parentSession: [string | undefined, string | undefined];
 };
 
 type FakePiTurn = {
@@ -142,6 +147,7 @@ fs.appendFileSync(
 		sessionId,
 		sessionFile,
 		canManageOwnTeams: process.env.PI_SIMPLE_TEAM_CAN_MANAGE_OWN_TEAMS === "1",
+		parentSession: [process.env.PI_SIMPLE_TEAM_PARENT_SESSION_ID, process.env.PI_SIMPLE_TEAM_PARENT_SESSION_FILE],
 	}) + "\n",
 );
 const sessionStartHandlers = [];
@@ -161,6 +167,7 @@ const extensionApi = {
 	registerTool: (tool) => registeredTools.set(tool.name, tool),
 	getActiveTools: () => [...registeredTools.keys()],
 	setActiveTools: () => undefined,
+	appendEntry: () => undefined,
 	// Custom-message work starts without a user-prompt lifecycle hook.
 	sendMessage: (message, options) => {
 		if (options.triggerTurn === false) return;
@@ -199,6 +206,7 @@ const extensionContext = {
 		getSessionFile: () => sessionFile,
 		getSessionId: () => sessionId,
 		getBranch: () => [],
+		getEntries: () => [],
 	},
 };
 if ((member === "resume-fails" && sequence > 1) || member === "add-fails") {
@@ -1594,6 +1602,198 @@ test("team_list reports each member's live runtime state", async () => {
 		restoreAgentDirectory();
 		fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
+});
+
+/** Main runs team "durable" with an idle teammate and a working one, and has stopped team "parked" on purpose. Both durable teammates have saved conversations. */
+async function startDurableTeams(host: ExtensionHost, root: string): Promise<{ idlerFile: string; workerFile: string }> {
+	await host.execute("team_spawn", { teamName: "durable", startIdle: true, commonPrompt: "Work.", teammates: [{ name: "idler", systemPrompt: "Wait.", model: "fake/fake-model" }, { name: "worker", systemPrompt: "Work.", model: "fake/fake-model" }] });
+	await host.execute("team_spawn", { teamName: "parked", startIdle: true, commonPrompt: "Wait.", teammates: [{ name: "parker", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+	await host.execute("team_shutdown", { team: "parked" });
+	const sessionFile = (member: string) => readFakePiInvocations(root).find((invocation) => invocation.member === member)!.sessionFile;
+	for (const member of ["idler", "worker"]) fs.writeFileSync(sessionFile(member), `${JSON.stringify({ type: "session" })}\n`);
+	await host.execute("team_send_message", { targets: ["worker"], message: "Work." });
+	await waitForFakePiTurns(root, 1);
+	const deadline = Date.now() + 3_000;
+	while (listedMember(await host.execute("team_list", {}), "main-restart-durable", "worker")?.active !== true) {
+		if (Date.now() > deadline) throw new Error("Expected main to see the worker's run start.");
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	return { idlerFile: sessionFile("idler"), workerFile: sessionFile("worker") };
+}
+
+/** A temporary registry and fake Pi, and the hosts a test starts, all removed afterwards. */
+async function withDurableRegistry(body: (root: string, projectDirectory: string, teamExtension: TeamExtension, hosts: ExtensionHost[]) => Promise<void>): Promise<void> {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-team-durable-"));
+	const agentDirectory = path.join(root, "agent");
+	const projectDirectory = path.join(root, "project");
+	fs.mkdirSync(agentDirectory);
+	fs.mkdirSync(projectDirectory);
+	const restoreAgentDirectory = useEnvironment({ PI_CODING_AGENT_DIR: agentDirectory });
+	const restoreFakePi = installFakePi(root);
+	const hosts: ExtensionHost[] = [];
+	try {
+		const { default: teamExtension } = await import("../index.ts");
+		await body(root, projectDirectory, teamExtension, hosts);
+	} finally {
+		for (const host of hosts.reverse()) await host.shutdown("new");
+		restoreFakePi();
+		restoreAgentDirectory();
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+}
+
+const reattachedIntroduction = "Simple Team reattached the teammates that were running when your session last stopped. They resumed idle, and nothing was sent to them.";
+
+for (const [shutdownReason, startReason] of [["quit", "startup"], ["reload", "reload"]] as const) {
+	test(`after main's ${shutdownReason}, its ${startReason} reattaches the teammates it ran idle, sends them nothing, and tells main once`, async () => {
+		await withDurableRegistry(async (root, projectDirectory, teamExtension, hosts) => {
+			const first = new ExtensionHost(teamExtension, makeContext("main-restart", projectDirectory));
+			await first.start();
+			const { idlerFile, workerFile } = await startDurableTeams(first, root);
+			await first.shutdown(shutdownReason);
+			const invocationsBefore = readFakePiInvocations(root).length;
+
+			const second = new ExtensionHost(teamExtension, makeContext("main-restart", projectDirectory));
+			hosts.push(second);
+			await second.start(startReason);
+			assert.deepEqual(readFakePiInvocations(root).slice(invocationsBefore).map((invocation) => [invocation.member, invocation.args.slice(0, 4)]), [
+				["idler", ["--mode", "rpc", "--session", idlerFile]],
+				["worker", ["--mode", "rpc", "--session", workerFile]],
+			], "Only the teammates that were running restart, in their own conversations; the team stopped on purpose stays stopped.");
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			assert.equal(readFakePiTurns(root).length, 1, "Reattaching starts no turn.");
+			assert.equal((await second.execute("team_log", { kind: ["send"] })).details?.returned, 0, "Reattaching delivers no startup prompt.");
+			const listed = await second.execute("team_list", { includeDormantTeams: true });
+			assert.deepEqual((listedTeam(listed, "main-restart-durable")?.teammates as JsonRecord[]).map(({ name, live, active }) => ({ name, live, active })), [
+				{ name: "idler", live: true, active: false },
+				{ name: "worker", live: true, active: false },
+			]);
+			assert.equal(listedTeam(listed, "main-restart-parked")?.state, "dormant");
+			assert.deepEqual(second.mainMessageRecords, [{
+				customType: "pi-simple-team-reattached",
+				display: true,
+				options: { deliverAs: "nextTurn" },
+				content: `${reattachedIntroduction}\nTeam "durable" (team ID: main-restart-durable): idler, worker.\n\nThese were working when your session stopped: worker (team "durable"). Message each one to continue.`,
+			}]);
+		});
+	});
+}
+
+test("after main's process dies without shutting down, its next start reattaches the teammates that were running, except Herdr pane teammates", async () => {
+	await withDurableRegistry(async (root, projectDirectory, teamExtension, hosts) => {
+		const first = new ExtensionHost(teamExtension, makeContext("main-restart", projectDirectory));
+		hosts.push(first);
+		await first.start();
+		const { workerFile } = await startDurableTeams(first, root);
+		const registryPrefix = path.join(root, "agent", "pi-simple-team", "teams-v2", encodeURIComponent("main-restart-durable"));
+		const liveManifest = JSON.parse(fs.readFileSync(`${registryPrefix}.json`, "utf8")) as { members: JsonRecord[] };
+		const liveLease = JSON.parse(fs.readFileSync(`${registryPrefix}.lease`, "utf8")) as JsonRecord;
+		// The teammates' processes end with main's; the registry keeps what main last recorded, under a lease of a dead process.
+		await first.execute("team_shutdown", { team: "durable" });
+		const inPane = { ...liveManifest, members: liveManifest.members.map((member) => member.name === "idler" ? { ...member, showOnHerdrPane: true } : member) };
+		fs.writeFileSync(`${registryPrefix}.json`, JSON.stringify(inPane));
+		fs.writeFileSync(`${registryPrefix}.lease`, JSON.stringify({ ...liveLease, processId: 2_147_483_647 }));
+		const invocationsBefore = readFakePiInvocations(root).length;
+
+		const second = new ExtensionHost(teamExtension, makeContext("main-restart", projectDirectory));
+		hosts.push(second);
+		await second.start();
+		assert.deepEqual(readFakePiInvocations(root).slice(invocationsBefore).map((invocation) => [invocation.member, invocation.args.slice(0, 4)]), [["worker", ["--mode", "rpc", "--session", workerFile]]]);
+		assert.equal(readFakePiTurns(root).length, 1, "Reattaching starts no turn.");
+		const listed = await second.execute("team_list", {});
+		assert.deepEqual((listedTeam(listed, "main-restart-durable")?.teammates as JsonRecord[]).map(({ name, live }) => ({ name, live })), [{ name: "idler", live: false }, { name: "worker", live: true }]);
+		assert.deepEqual(second.mainMessages, [
+			`${reattachedIntroduction}\nTeam "durable" (team ID: main-restart-durable): worker.\n\nThese were working when your session stopped: worker (team "durable"). Message each one to continue.\n\nNot reattached, because a Herdr pane teammate may still be running in its pane: idler (team "durable"). Check its pane before you use team_resume.`,
+		]);
+	});
+});
+
+for (const ending of ["quit", "crash"] as const) {
+	test(`after a ${ending}, the main that was running a team reattaches it, not the main that created it and stopped it`, async () => {
+		await withDurableRegistry(async (root, projectDirectory, teamExtension, hosts) => {
+			const creator = new ExtensionHost(teamExtension, makeContext("main-creator", projectDirectory));
+			hosts.push(creator);
+			await creator.start();
+			await creator.execute("team_spawn", { teamName: "handed", startIdle: true, commonPrompt: "Wait.", teammates: [{ name: "keeper", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+			await creator.execute("team_shutdown", { team: "handed" });
+			await creator.shutdown();
+			const successor = new ExtensionHost(teamExtension, makeContext("main-successor", projectDirectory));
+			await successor.start();
+			await successor.execute("team_resume", { team: "handed", startIdle: true });
+			const registryPrefix = path.join(root, "agent", "pi-simple-team", "teams-v2", encodeURIComponent("main-creator-handed"));
+			if (ending === "quit") await successor.shutdown();
+			else {
+				const liveManifest = fs.readFileSync(`${registryPrefix}.json`, "utf8");
+				const liveLease = JSON.parse(fs.readFileSync(`${registryPrefix}.lease`, "utf8")) as JsonRecord;
+				await successor.execute("team_shutdown", { team: "handed" });
+				fs.writeFileSync(`${registryPrefix}.json`, liveManifest);
+				fs.writeFileSync(`${registryPrefix}.lease`, JSON.stringify({ ...liveLease, processId: 2_147_483_647 }));
+			}
+			const invocationsBefore = readFakePiInvocations(root).length;
+
+			const creatorAgain = new ExtensionHost(teamExtension, makeContext("main-creator", projectDirectory));
+			hosts.push(creatorAgain);
+			await creatorAgain.start();
+			assert.equal(readFakePiInvocations(root).length, invocationsBefore, "The creator stopped the team on purpose, so its restart revives nothing.");
+			assert.deepEqual(creatorAgain.mainMessages, []);
+
+			const successorAgain = new ExtensionHost(teamExtension, makeContext("main-successor", projectDirectory));
+			hosts.push(successorAgain);
+			await successorAgain.start();
+			assert.deepEqual(readFakePiInvocations(root).slice(invocationsBefore).map((invocation) => invocation.member), ["keeper"], "The main that was running the team gets its teammate back.");
+			assert.deepEqual(successorAgain.mainMessages, [`${reattachedIntroduction}\nTeam "handed" (team ID: main-creator-handed): keeper.`]);
+		});
+	});
+}
+
+test("switching main's process to another session releases its teams, so a later start reattaches nothing", async () => {
+	await withDurableRegistry(async (root, projectDirectory, teamExtension, hosts) => {
+		const first = new ExtensionHost(teamExtension, makeContext("main-restart", projectDirectory));
+		await first.start();
+		await startDurableTeams(first, root);
+		await first.shutdown("new");
+		const invocationsBefore = readFakePiInvocations(root).length;
+		const second = new ExtensionHost(teamExtension, makeContext("main-restart", projectDirectory));
+		hosts.push(second);
+		await second.start();
+		assert.equal(readFakePiInvocations(root).length, invocationsBefore);
+		assert.deepEqual(second.mainMessages, []);
+		assert.equal(listedTeam(await second.execute("team_list", { includeDormantTeams: true }), "main-restart-durable")?.state, "dormant");
+	});
+});
+
+test("Team Send and Team Shutdown results carry each involved teammate's last reported context use for their renderers (issue 16)", async () => {
+	await withDurableRegistry(async (_root, projectDirectory, teamExtension, hosts) => {
+		const host = new ExtensionHost(teamExtension, makeContext("main-context", projectDirectory));
+		hosts.push(host);
+		await host.start();
+		await host.execute("team_spawn", { teamName: "gauged", startIdle: true, commonPrompt: "Wait.", teammates: [{ name: "builder", systemPrompt: "Wait.", model: "fake/fake-model" }, { name: "scout", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+		const sent = await host.execute("team_send_message", { targets: ["gauged"], message: "Hello." });
+		assert.deepEqual(sent.details?.agentContext, [{ name: "builder", contextPercent: 31.985 }, { name: "scout", contextPercent: 31.985 }]);
+		assert.equal(JSON.parse(sent.content[0]!.text).agentContext, undefined, "The readings are for the renderer, not the model.");
+		const stopped = await host.execute("team_shutdown", { team: "gauged" });
+		assert.deepEqual(stopped.details?.agentContext, [{ name: "builder", contextPercent: 31.985 }, { name: "scout", contextPercent: 31.985 }]);
+	});
+});
+
+test("main tells every teammate it starts which main session started it, for the teammate's breadcrumb (issue 35)", async () => {
+	await withDurableRegistry(async (root, projectDirectory, teamExtension, hosts) => {
+		const creator = new ExtensionHost(teamExtension, makeContext("main-crumb", projectDirectory));
+		hosts.push(creator);
+		await creator.start();
+		await creator.execute("team_spawn", { teamName: "crumbs", startIdle: true, commonPrompt: "Wait.", teammates: [{ name: "first", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+		await creator.execute("team_shutdown", { team: "crumbs" });
+		const successor = new ExtensionHost(teamExtension, makeContext("main-successor", projectDirectory));
+		hosts.push(successor);
+		await successor.start();
+		await successor.execute("team_resume", { team: "crumbs", startIdle: true });
+		await successor.execute("team_add_teammates", { team: "crumbs", startIdle: true, teammates: [{ name: "second", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+		assert.deepEqual(readFakePiInvocations(root).map((invocation) => [invocation.member, ...invocation.parentSession]), [
+			["first", "main-crumb", path.join(projectDirectory, "main-crumb.jsonl")],
+			["first", "main-successor", path.join(projectDirectory, "main-successor.jsonl")],
+			["second", "main-successor", path.join(projectDirectory, "main-successor.jsonl")],
+		]);
+	});
 });
 
 test("recovering a stale lease marks the abandoned active manifest dormant", async () => {

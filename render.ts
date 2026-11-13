@@ -33,6 +33,12 @@ export interface TeamStatusView {
 	updated: string;
 }
 
+/** An agent a tool involves, with the context use it last reported when the result carries it. */
+export interface AgentContextView {
+	name: string;
+	contextPercent?: number;
+}
+
 export interface TeamMessageDetails {
 	team: string;
 	from: string;
@@ -316,7 +322,7 @@ export interface TeamListTeamView {
 function teamListMemberName(theme: ThemeLike, teamView: TeamListTeamView, member: TeamListMemberView, roster: string[]): string {
 	const hued = theme.fg(actorHueToken(member.name, roster), member.name);
 	const name = teamView.state === "active" && !member.live ? `${DIM_SGR_OPEN}${hued}${DIM_SGR_CLOSE}` : hued;
-	return [name, inlineFact(theme, "manager", member)].filter((part) => part.length > 0).join(" ");
+	return [name, inlineFact(theme, "context", member), inlineFact(theme, "manager", member)].filter((part) => part.length > 0).join(" ");
 }
 
 function teamListTimestamp(teamView: TeamListTeamView): string {
@@ -367,8 +373,18 @@ function actorList(theme: ThemeLike, names: string[], roster: string[], separato
 	return names.map((name) => theme.fg(actorHueToken(name, roster), name)).join(theme.fg("muted", separator));
 }
 
-function sendTarget(theme: ThemeLike, to: string[], roster: string[] = []): string {
-	const recipients = actorList(theme, to, roster, ", ");
+/** An agent's name in its roster hue, followed by its context reading in the teammate rows' full form when known. */
+function agentWithContext(theme: ThemeLike, agent: AgentContextView, roster: string[]): string {
+	return [theme.fg(actorHueToken(agent.name, roster), agent.name), inlineFact(theme, "context", agent, "full")].filter((part) => part.length > 0).join(" ");
+}
+
+function agentsWithContext(theme: ThemeLike, agents: AgentContextView[], roster: string[], separator: string): string {
+	return agents.map((agent) => agentWithContext(theme, agent, roster)).join(theme.fg("muted", separator));
+}
+
+/** The pending call names the targets as given. A result names each recipient with its context use, which comes before the character count. */
+function sendTarget(theme: ThemeLike, to: string[], roster: string[] = [], agentContext?: AgentContextView[]): string {
+	const recipients = agentContext ? agentsWithContext(theme, agentContext, roster, ", ") : actorList(theme, to, roster, ", ");
 	return `${theme.fg("muted", `${glyphs().arrow} `)}${recipients}`;
 }
 
@@ -381,20 +397,20 @@ function hasInterruption(interrupt: unknown): boolean {
 	return interrupt === true || (Array.isArray(interrupt) && interrupt.length > 0);
 }
 
-function teamSendHeader(theme: ThemeLike, targets: string[], message: string, interrupt: boolean, roster: string[]): string {
-	return headerLine(theme, "Team Send", sendTarget(theme, targets, roster), sendStats(theme, message, interrupt));
+function teamSendHeader(theme: ThemeLike, targets: string[], message: string, interrupt: boolean, roster: string[], agentContext?: AgentContextView[]): string {
+	return headerLine(theme, "Team Send", sendTarget(theme, targets, roster, agentContext), sendStats(theme, message, interrupt));
 }
 
-export function teamSendLines(theme: ThemeLike, options: { targets: string[]; message: string; interrupt: boolean; expanded: boolean }, roster: string[] = []): TeamLine[] {
-	const header = teamSendHeader(theme, options.targets, options.message, options.interrupt, roster);
+export function teamSendLines(theme: ThemeLike, options: { targets: string[]; agentContext?: AgentContextView[]; message: string; interrupt: boolean; expanded: boolean }, roster: string[] = []): TeamLine[] {
+	const header = teamSendHeader(theme, options.targets, options.message, options.interrupt, roster, options.agentContext);
 	const lineLimit = options.expanded ? Number.POSITIVE_INFINITY : SEND_PREVIEW_LINES;
 	return [header, ...quotedBody(theme, options.message, { lineLimit, barToken: "muted" })];
 }
 
-export function teamShutdownLines(theme: ThemeLike, team: string, teammates: string[], roster: string[] = []): string[] {
+export function teamShutdownLines(theme: ThemeLike, team: string, teammates: AgentContextView[], roster: string[] = []): string[] {
 	const header = headerLine(theme, "Team Shutdown", theme.fg("accent", team), [theme.fg("muted", `${plural(teammates.length, "teammate")} stopped`)]);
 	if (teammates.length === 0) return [header];
-	return [header, `${treeConnector(theme, "└")}${actorList(theme, teammates, roster, glyphs().dot)}`];
+	return [header, `${treeConnector(theme, "└")}${agentsWithContext(theme, teammates, roster, glyphs().dot)}`];
 }
 
 function reminderCallBody(theme: ThemeLike, args: Record<string, unknown>): string {
@@ -829,6 +845,7 @@ function resultLinesFor(tool: TeamToolName, theme: ThemeLike, args: Record<strin
 	if (tool === "team_send_message") {
 		return teamSendLines(theme, {
 			targets: (args.targets ?? []) as string[],
+			agentContext: details.agentContext as AgentContextView[] | undefined,
 			message: String(args.message ?? ""),
 			interrupt: hasInterruption(args.interrupt),
 			expanded,
@@ -850,7 +867,7 @@ function resultLinesFor(tool: TeamToolName, theme: ThemeLike, args: Record<strin
 		if (details.nextCursor) lines.push(theme.fg("muted", `  Older events: cursor "${details.nextCursor}"`));
 		return lines;
 	}
-	return teamShutdownLines(theme, String(details.teamName), (details.teammates as Array<{ name: string }>).map((teammate) => teammate.name), roster);
+	return teamShutdownLines(theme, String(details.teamName), (details.agentContext ?? details.teammates) as AgentContextView[], roster);
 }
 
 export function renderTeamToolCall(tool: TeamToolName, args: Record<string, unknown>, theme: ThemeLike, context: ToolRenderContextLike, roster: string[] = []) {
@@ -873,7 +890,7 @@ export function renderTeamToolResult(
 	const details = (result?.details ?? {}) as Record<string, unknown>;
 	if (markdownTheme && tool === "team_send_message") {
 		const message = String(args.message ?? "");
-		const header = teamSendHeader(theme, (args.targets ?? []) as string[], message, hasInterruption(args.interrupt), roster);
+		const header = teamSendHeader(theme, (args.targets ?? []) as string[], message, hasInterruption(args.interrupt), roster, details.agentContext as AgentContextView[] | undefined);
 		const bar = `  ${theme.fg("muted", glyphs().codeBar)} `;
 		return new QuotedMarkdownView(header, message, bar, markdownTheme, options.expanded, theme);
 	}

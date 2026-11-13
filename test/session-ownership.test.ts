@@ -335,22 +335,28 @@ type RecordedMessage = {
 	};
 };
 
+/** A session's custom entries, shared by the hosts that stand for that session's successive Pi processes. */
+type RecordedSession = { id: string; entries: Array<{ type: "custom"; customType: string; data: JsonRecord }> };
+
 class ExtensionHost {
 	readonly messages: RecordedMessage[] = [];
 	readonly shutdownHandlers: ExtensionEventHandler[] = [];
+	readonly sessionStartHandlers: ExtensionEventHandler[] = [];
 	readonly tools = new Map<string, RegisteredTool>();
 	readonly context: ExtensionContext;
 
-	constructor(onMessage: () => void = () => undefined, scopedModels: ScopedModel[] = []) {
+	constructor(onMessage: () => void = () => undefined, scopedModels: ScopedModel[] = [], readonly session: RecordedSession = { id: "session-1", entries: [] }) {
 		this.context = {
 			scopedModels,
 			modelRegistry: { getAvailable: () => fakeAvailableModels, find: () => undefined },
+			sessionManager: { getEntries: () => session.entries, getSessionId: () => session.id },
 			shutdown: () => undefined,
 		} as unknown as ExtensionContext;
 		const api = {
 			on: (event: string, handler: ExtensionEventHandler) => {
 				if (event === "session_shutdown") this.shutdownHandlers.push(handler);
 				// Pi reports extension event-handler errors without crashing the session; the harness mirrors that.
+				if (event === "session_start") this.sessionStartHandlers.push(handler);
 				if (event === "session_start") void Promise.resolve(handler({ reason: "startup" }, this.context)).catch(() => undefined);
 			},
 			registerCommand: () => undefined,
@@ -358,6 +364,7 @@ class ExtensionHost {
 			registerTool: (tool: RegisteredTool) => this.tools.set(tool.name, tool),
 			getActiveTools: () => [...this.tools.keys()],
 			setActiveTools: () => undefined,
+			appendEntry: (customType: string, data: JsonRecord) => session.entries.push({ type: "custom", customType, data }),
 			sendMessage: (message: RecordedMessage, options: RecordedMessage["options"]) => {
 				this.messages.push({ ...message, options });
 				onMessage();
@@ -752,6 +759,139 @@ describe("list_reminders and cancel_reminders", () => {
 				await host.shutdown();
 			}
 		});
+	});
+});
+
+describe("durable reminders", () => {
+	const arm = async (host: ExtensionHost, delayMinutes: number, message: string): Promise<string> => {
+		const armed = await host.executeResult("schedule_reminder", { delayMinutes, message });
+		return /^Armed reminder ([a-z]+-[a-z]+):/.exec(armed.content[0]!.text)![1]!;
+	};
+	const payload = async (host: ExtensionHost, tool: string, params: Record<string, unknown> = {}) => JSON.parse((await host.executeResult(tool, params)).content[0]!.text);
+	/** Stops one Pi process of the session and starts the next on the same session record, as a /reload or restart does. */
+	const restart = async (host: ExtensionHost): Promise<ExtensionHost> => {
+		await host.shutdown();
+		return new ExtensionHost(undefined, [], host.session);
+	};
+	const settle = (milliseconds = 50) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+	test("arming records the reminder in the session with its due time and message", async () => {
+		await atLocalTime("Asia/Jerusalem", "2026-11-07T08:47:00Z", async () => {
+			const host = new ExtensionHost();
+			try {
+				const slug = await arm(host, 30, "Check the team.");
+				assert.deepEqual(host.session.entries, [{
+					type: "custom",
+					customType: "pi-simple-team-reminder",
+					data: { sessionId: "session-1", id: "reminder-1", slug, message: "Check the team.", armedAt: "2026-11-07T08:47:00.000Z", wakeAt: "2026-11-07T09:17:00.000Z", state: "pending" },
+				}]);
+			} finally {
+				await host.shutdown();
+			}
+		});
+	});
+
+	test("session_start re-arms pending reminders, and list_reminders and cancel_reminders read them", async () => {
+		await atLocalTime("Asia/Jerusalem", "2026-11-07T08:47:00Z", async () => {
+			let host = new ExtensionHost();
+			try {
+				const kept = await arm(host, 30, "Kept.");
+				const cancelled = await arm(host, 45, "Cancelled.");
+				const soon = await arm(host, 0.002, "Fires after the restart.");
+				await host.executeResult("cancel_reminders", { reminders: [cancelled] });
+				host = await restart(host);
+				assert.deepEqual((await payload(host, "list_reminders")).reminders.map((reminder: JsonRecord) => [reminder.id, reminder.slug, reminder.wakeAt]), [
+					["reminder-3", soon, "Nov 7, 2026, 10:47am GMT+2 (in 0s)"],
+					["reminder-1", kept, "Nov 7, 2026, 11:17am GMT+2 (in 30m)"],
+				]);
+				await settle(300);
+				assert.deepEqual(host.messages.map((message) => message.content), [`Reminder ${soon} wake up: it's Nov 7, 2026, 10:47am GMT+2 now.\n\nFires after the restart.`], "A re-armed reminder that was not yet due fires on time and is not called late.");
+				assert.match((await host.executeResult("schedule_reminder", { delayMinutes: 5, message: "New." })).content[0]!.text, /^Armed reminder/);
+				assert.deepEqual((await payload(host, "cancel_reminders", { all: true })).results.map((result: JsonRecord) => [result.id, result.result]), [["reminder-1", "cancelled"], ["reminder-4", "cancelled"]], "IDs continue after the restored ones.");
+			} finally {
+				await host.shutdown();
+			}
+		});
+	});
+
+	test("a reminder that fell due while no process ran fires on start and says how late it is", async () => {
+		await atLocalTime("Asia/Jerusalem", "2026-11-07T08:47:00Z", async () => {
+			let host = new ExtensionHost();
+			try {
+				const slug = await arm(host, 30, "Check the team.");
+				await host.shutdown();
+				setSystemTime(new Date("2026-11-07T10:52:00Z"));
+				host = new ExtensionHost(undefined, [], host.session);
+				await settle();
+				assert.deepEqual(host.messages, [{
+					customType: "pi-simple-team-reminder",
+					content: `Reminder ${slug} wake up: it's Nov 7, 2026, 12:52pm GMT+2 now. It is 1h and 35m late: it was due at Nov 7, 2026, 11:17am GMT+2.\n\nCheck the team.`,
+					display: false,
+					options: { deliverAs: "followUp", triggerTurn: true },
+				}]);
+			} finally {
+				await host.shutdown();
+			}
+		});
+	});
+
+	test("firing or cancelling marks the reminder done, so no later start delivers it again", async () => {
+		await atLocalTime("Asia/Jerusalem", "2026-11-07T08:47:00Z", async () => {
+			let host = new ExtensionHost();
+			try {
+				await arm(host, 0.002, "Fired.");
+				const cancelled = await arm(host, 30, "Cancelled.");
+				await arm(host, 45, "Fired late.");
+				await host.executeResult("cancel_reminders", { reminders: [cancelled] });
+				await settle(300);
+				assert.equal(host.messages.length, 1);
+				await host.shutdown();
+				setSystemTime(new Date("2026-11-07T10:52:00Z"));
+				host = new ExtensionHost(undefined, [], host.session);
+				await settle();
+				assert.deepEqual(host.messages.map((message) => message.content!.split("\n\n").at(-1)), ["Fired late."], "Only the reminder that was still pending fires.");
+				for (let start = 0; start < 2; start += 1) {
+					host = await restart(host);
+					await settle();
+					assert.deepEqual(host.messages, [], "A delivered or cancelled reminder is never delivered again.");
+					assert.deepEqual((await payload(host, "list_reminders")).reminders, []);
+				}
+				assert.deepEqual((await payload(host, "cancel_reminders", { reminders: ["reminder-1", "reminder-2", "reminder-3"] })).results.map((result: JsonRecord) => result.result), ["delivered", "cancelled", "delivered"]);
+			} finally {
+				await host.shutdown();
+			}
+		});
+	});
+
+	test("a second session_start on the same extension instance does not deliver a pending reminder twice", async () => {
+		// Pi's RPC switch_session, fork, clone and new_session bind extensions twice, so session_start runs twice on one instance.
+		const host = new ExtensionHost();
+		try {
+			await arm(host, 0.002, "Once.");
+			for (const handler of host.sessionStartHandlers) await handler({ reason: "resume" }, host.context);
+			await settle(300);
+			assert.deepEqual(host.messages.map((message) => message.content!.split("\n\n").at(-1)), ["Once."]);
+		} finally {
+			await host.shutdown();
+		}
+	});
+
+	test("a session forked from another does not re-arm the reminders it copied", async () => {
+		const host = new ExtensionHost();
+		try {
+			await arm(host, 0.002, "Belongs to the original session.");
+			await host.shutdown();
+			const fork = new ExtensionHost(undefined, [], { id: "session-2", entries: [...host.session.entries] });
+			try {
+				await settle(300);
+				assert.deepEqual(fork.messages, []);
+				assert.deepEqual((await payload(fork, "list_reminders")).reminders, []);
+			} finally {
+				await fork.shutdown();
+			}
+		} finally {
+			await host.shutdown();
+		}
 	});
 });
 

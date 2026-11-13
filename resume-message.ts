@@ -37,3 +37,33 @@ export function composeSettingsMessage(settings: string, stoppedTeams: ReadonlyA
 		stoppedTeams.length > 0 && `Your restart stopped the teams you manage: ${stopped}. Their teammates were idle, and their conversations are kept. Resume them with team_resume when you continue.`,
 	].filter(Boolean).join("\n\n");
 }
+
+/** What main's start did with one of its teams that its last stop interrupted. */
+export interface Reattachment {
+	teamName: string;
+	teamId: string;
+	reattached: string[];
+	working: string[];
+	inPanes: string[];
+	error?: string;
+}
+
+/**
+ * Tell main, in one message, which teammates its start reattached, which of them were working, and which it left alone.
+ * @example composeReattachmentMessage([{ teamName: "r", teamId: "m-r", reattached: ["a"], working: [], inPanes: [] }]).endsWith('Team "r" (team ID: m-r): a.') // true
+ */
+export function composeReattachmentMessage(reattachments: readonly Reattachment[]): string {
+	const listed = (pick: (reattachment: Reattachment) => string[]) => reattachments.flatMap((reattachment) => pick(reattachment).map((name) => `${name} (team "${reattachment.teamName}")`)).join(", ");
+	const reattached = reattachments.filter((reattachment) => reattachment.reattached.length > 0);
+	const working = listed((reattachment) => reattachment.working);
+	const inPanes = listed((reattachment) => reattachment.inPanes);
+	return [
+		reattached.length > 0 && [
+			"Simple Team reattached the teammates that were running when your session last stopped. They resumed idle, and nothing was sent to them.",
+			...reattached.map((reattachment) => `Team "${reattachment.teamName}" (team ID: ${reattachment.teamId}): ${reattachment.reattached.join(", ")}.`),
+		].join("\n"),
+		working && `These were working when your session stopped: ${working}. Message each one to continue.`,
+		inPanes && `Not reattached, because a Herdr pane teammate may still be running in its pane: ${inPanes}. Check its pane before you use team_resume.`,
+		...reattachments.filter((reattachment) => reattachment.error).map((reattachment) => `Could not reattach team "${reattachment.teamName}" (team ID: ${reattachment.teamId}): ${reattachment.error} Use team_resume to restart it.`),
+	].filter(Boolean).join("\n\n");
+}
