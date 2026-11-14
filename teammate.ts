@@ -4,7 +4,8 @@ export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhi
 export interface Teammate {
 	name: string;
 	systemPrompt: string;
-	model: string;
+	model?: string;
+	session?: string;
 	thinking?: ThinkingLevel;
 	forkContext?: boolean;
 	canManageOwnTeams?: boolean;
@@ -15,8 +16,9 @@ export interface Teammate {
 /** Settings main can change for an existing teammate. Its instructions and fork choice only matter at creation. */
 export type TeammateUpdate = { teammate: string } & Partial<Pick<Teammate, "model" | "thinking" | "extensionPaths">>;
 
-export type TeammateRecord = Required<Omit<Teammate, "extensionPaths">> & {
+export type TeammateRecord = Required<Omit<Teammate, "extensionPaths" | "session">> & {
 	extensionPaths?: string[];
+	session?: string;
 	teammateId: string;
 	sessionFile: string;
 	live: boolean;

@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { setSystemTime, test } from "bun:test";
-import type { ExtensionAPI, ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type ExtensionAPI, type ExtensionContext, type ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { claimTeamLease, releaseTeamLease, type TeamLease } from "../team-registry.ts";
 import { piModelRegistry } from "./model-registry.ts";
 import { useEnvironment, useFakePiPackage } from "./pi-launch.ts";
@@ -821,6 +821,17 @@ test("an overseeing teammate can discover and resume only teams it created", asy
 		await overseer.start();
 		restoreChildEnvironment();
 
+		const foreignSession = SessionManager.create(projectDirectory, undefined, { id: "foreign-source" });
+		foreignSession.appendMessage({ role: "user", content: "Foreign conversation.", timestamp: Date.now() });
+		const foreignManifestFile = path.join(agentDirectory, "pi-simple-team", "teams-v2", "top-main-session-parent-team.json");
+		const foreignManifest = JSON.parse(fs.readFileSync(foreignManifestFile, "utf8"));
+		foreignManifest.members = [{ name: "foreign", systemPrompt: "Wait.", model: "fake/fake-model", thinking: "low", forkContext: false, canManageOwnTeams: false, showOnHerdrPane: false, live: false, active: false, teammateId: foreignSession.getSessionId(), sessionFile: foreignSession.getSessionFile(), sessionMaterialized: true }];
+		fs.writeFileSync(foreignManifestFile, JSON.stringify(foreignManifest));
+		await assert.rejects(overseer.execute("team_spawn", { teamName: "forbidden-import", startIdle: true, commonPrompt: "Wait.", teammates: [{ name: "imported", systemPrompt: "Wait.", session: foreignSession.getSessionId() }] }), (error: Error) => {
+			assert.match(error.message, /foreign-source.*outside your management scope/);
+			assert.doesNotMatch(error.message, /top-main-session|parent-team/, "A managing teammate must not discover another main's registry through import errors.");
+			return true;
+		});
 		await overseer.execute("team_spawn", { teamName: "owned-team", startIdle: true, commonPrompt: "Owned scope.", teammates: [] });
 		const listed = await overseer.execute("team_list", { includeDormantTeams: true });
 		assert.deepEqual(

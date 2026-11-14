@@ -173,6 +173,10 @@ You can even `/resume` a teammate session directly if you ever want a cozy one-o
 
 Every teammate session records which main session and team started it, in one `pi-simple-team-teammate` custom entry that the model and the TUI never see. Its `sessionId` is the session it was written in, so a later `pi --fork` of a teammate carries a copy you can tell is inherited.
 
+`team_spawn` and `team_add_teammates` can also use a stopped, never-teamed conversation. Set `session` on its teammate definition to an exact current-project ID (resume or create), or an existing absolute JSONL path. Omit model/thinking to keep Pi’s saved settings or defaults. `startIdle` keeps it asleep until you message it.
+
+This first version refuses known team-owned or previously teamed sessions, other projects, and pending reminders, naming the blocking state and where it belongs. Source processes must be stopped first: Pi has no session writer locks, and an ordinary process or surviving pane may be invisible to Simple Team. An unresolved import stays reserved and is not restarted automatically.
+
 ## 🪾 It’s teams all the way down (optionally)
 
 Tell main you want to **have a teammate manage its own team(s).**

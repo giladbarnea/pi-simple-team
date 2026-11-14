@@ -3,10 +3,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import type { SessionAttachment } from "./session-attachment.ts";
 import type { TeammateRecord } from "./teammate.ts";
 
 export interface TeamManifestMember extends TeammateRecord {
 	sessionMaterialized: boolean;
+	importPending?: boolean;
+	needsBriefing?: boolean;
 }
 
 export interface TeamManifest {
@@ -79,6 +82,9 @@ function isManifestMember(value: unknown): value is TeamManifestMember {
 		typeof member.teammateId === "string" &&
 		typeof member.sessionFile === "string" &&
 		typeof member.sessionMaterialized === "boolean" &&
+		(member.importPending === undefined || typeof member.importPending === "boolean") &&
+		(member.needsBriefing === undefined || typeof member.needsBriefing === "boolean") &&
+		(member.session === undefined || typeof member.session === "string") &&
 		(member.contextPercent === undefined || typeof member.contextPercent === "number") &&
 		(member.extensionPaths === undefined || (Array.isArray(member.extensionPaths) && member.extensionPaths.every((value) => typeof value === "string" && path.isAbsolute(value))))
 	);
@@ -157,6 +163,11 @@ export function writeTeamManifest(manifest: TeamManifest): void {
 	fs.renameSync(temporaryPath, filePath);
 }
 
+/** Removes a new import reservation only after its creating runtime has stopped every child. */
+export function discardTeamImportReservation(teamId: string): void {
+	fs.rmSync(manifestPath(teamId));
+}
+
 /** Whether a saved attachment file holds this team ID, readable or not. */
 export function teamManifestExists(teamId: string): boolean {
 	return fs.existsSync(manifestPath(teamId));
@@ -198,7 +209,7 @@ export function listTeamManifests(projectDirectory: string): { manifests: TeamMa
 			if ((claimedProjectDirectory(filePath) ?? resolvedProjectDirectory) === resolvedProjectDirectory) unreadable.push({ filePath, error: error instanceof Error ? error.message : String(error) });
 			continue;
 		}
-		if (manifest.state === "dormant" && now >= Date.parse(manifest.expiresAt ?? "")) {
+		if (manifest.state === "dormant" && !manifest.members.some((member) => member.importPending) && now >= Date.parse(manifest.expiresAt ?? "")) {
 			fs.rmSync(leasePath(manifest.id), { force: true });
 			fs.rmSync(filePath);
 			continue;
@@ -206,6 +217,42 @@ export function listTeamManifests(projectDirectory: string): { manifests: TeamMa
 		if (manifest.projectDirectory === resolvedProjectDirectory) manifests.push(manifest);
 	}
 	return { manifests: manifests.sort((left, right) => left.id.localeCompare(right.id)), unreadable };
+}
+
+/** Checks retained ownership and reserves the import batch before any child can load its session. */
+export function reserveSessionImports(destination: TeamManifest, attachments: readonly SessionAttachment[], managing = false): void {
+	const directory = manifestsDirectory();
+	fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+	const lock = path.join(directory, ".session-import-lock");
+	try {
+		fs.mkdirSync(lock, { mode: 0o700 });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+		throw new Error(`Session import reservation is already in progress at ${lock}; sessions ${attachments.map((attachment) => attachment.id).join(", ")} remain unclaimed by team ${destination.id}.`);
+	}
+	try {
+		const manifests = fs.readdirSync(directory).filter((file) => file.endsWith(".json")).map((file) => parseManifest(path.join(directory, file)));
+		const liveLeases = fs.readdirSync(directory).filter((file) => file.endsWith(".lease")).map((file) => parseLease(path.join(directory, file))).filter((lease) => processIsAlive(lease.processId));
+		const canonicalFile = (file: string): string => fs.existsSync(file) ? fs.realpathSync(file) : path.resolve(file);
+		const seen = new Set<string>();
+		for (const attachment of attachments) {
+			if (seen.has(attachment.id)) throw new Error(`Session ${attachment.id} at ${attachment.file ?? destination.projectDirectory} is selected twice for team ${destination.id}.`);
+			seen.add(attachment.id);
+			for (const manifest of manifests) {
+				const member = manifest.members.find((member) => (manifest.projectDirectory === destination.projectDirectory && member.teammateId === attachment.id) || (attachment.file && canonicalFile(member.sessionFile) === attachment.file));
+				const lease = readTeamLeaseState(manifest.id);
+				if (member && managing && manifest.originMainSessionId !== destination.originMainSessionId) throw new Error(`Session ${attachment.id} at ${attachment.file ?? member.sessionFile} is registered outside your management scope. Ask main to handle this session.`);
+				if (member) throw new Error(`Session ${attachment.id} at ${attachment.file ?? member.sessionFile} is ${member.importPending ? "reserved (import pending)" : "listed"} in team ${manifest.id}, main ${lease.mainSessionId ?? manifest.originMainSessionId}, project ${manifest.projectDirectory}${member.showOnHerdrPane && member.live ? "; may still be live in its Herdr pane" : ""}. Use team_resume for registered teammates; attachment does not transfer them.`);
+			}
+			const mainLease = liveLeases.find((lease) => lease.mainSessionId === attachment.id);
+			if (mainLease && managing) throw new Error(`Session ${attachment.id} at ${attachment.file ?? destination.projectDirectory} is live outside your management scope. Ask main to handle this session.`);
+			if (mainLease) throw new Error(`Session ${attachment.id} at ${attachment.file ?? destination.projectDirectory} is live as main of team ${mainLease.teamId} (lease in ${directory}).`);
+			if (attachment.previousTeam) throw new Error(`Session ${attachment.id} at ${attachment.file} was previously a teammate in ${attachment.previousTeam}. This first version only attaches never-teamed sessions.`);
+		}
+		writeTeamManifest(destination);
+	} finally {
+		fs.rmdirSync(lock);
+	}
 }
 
 export function readTeamLeaseState(teamId: string): { state: "unclaimed" | "claimed" | "stale"; mainSessionId?: string } {

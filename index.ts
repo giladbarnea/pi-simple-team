@@ -10,12 +10,16 @@ import { defineTool, type ContextUsage, type ExtensionAPI, type ExtensionContext
 import { formatContextWindowReport, requireKnownContextUsage, type KnownContextUsage } from "./context-window.ts";
 import { useModelNames } from "./model-names.ts";
 import { formatScopedModelGuidance, validateTeammateModels, type ModelReference } from "./model-preflight.ts";
+import { latestReminderRecords, reminderType, type ReminderRecord } from "./reminder-records.ts";
+import { resolveSessionAttachment } from "./session-attachment.ts";
 import { composeTeamBriefing } from "./team-briefing.ts";
 import { composeReattachmentMessage, composeResumptionMessage, composeSettingsMessage, type Reattachment } from "./resume-message.ts";
 import { callParent, isInertTeamCopy, readChildRuntimeConfig, registerChildTools } from "./child-tools.ts";
 import {
 	canonicalProjectDirectory,
 	claimTeamLease,
+	reserveSessionImports,
+	discardTeamImportReservation,
 	dormantManifestRetentionMilliseconds,
 	listTeamManifests,
 	teamManifestExists,
@@ -79,6 +83,10 @@ interface TeammateState {
 	sessionId?: string;
 	sessionFile?: string;
 	sessionMaterialized: boolean;
+	session?: string;
+	contextRestored?: boolean;
+	importPending?: boolean;
+	needsBriefing?: boolean;
 	lastModelActivityAt?: string;
 	process?: ChildProcess;
 	processRecord?: ProcessRecord;
@@ -182,21 +190,11 @@ function decodeTeamListCursor(cursor: string): TeamListCursor {
 	return decoded as TeamListCursor;
 }
 
-interface Reminder {
-	sessionId: string;
-	id: string;
-	slug: string;
-	message: string;
+interface Reminder extends Omit<ReminderRecord, "armedAt" | "wakeAt"> {
 	armedAt: Date;
 	wakeAt: Date;
 	timer?: ReturnType<typeof setTimeout>;
-	state: "pending" | "delivered" | "cancelled";
 }
-
-/** A reminder as its session records it. A reminder's latest record holds its current state. */
-type ReminderRecord = Omit<Reminder, "armedAt" | "wakeAt" | "timer"> & { armedAt: string; wakeAt: string };
-
-const reminderType = "pi-simple-team-reminder";
 
 const reminderSlugWords = {
 	adjectives: ["amber", "brisk", "calm", "clever", "dusty", "eager", "fuzzy", "gentle", "golden", "hollow", "jolly", "lively", "mellow", "misty", "nimble", "plucky", "quiet", "rapid", "rusty", "silver", "steady", "sunny", "swift", "witty"],
@@ -265,6 +263,7 @@ function teammateRecord(teammate: TeammateState): TeammateRecord {
 		showOnHerdrPane: teammate.transport === "herdr",
 		contextPercent: teammate.contextPercent,
 		sessionFile: teammate.sessionFile!,
+		...(teammate.session ? { session: teammate.session } : {}),
 		...(teammate.extensionPaths.length > 0 ? { extensionPaths: teammate.extensionPaths } : {}),
 	};
 }
@@ -519,14 +518,18 @@ function recordQuit(team: TeamState, teammate: TeammateState, signal: unknown): 
 
 async function kickoffTeammates(team: TeamState, teammates: TeammateState[], startIdle: boolean, resumption?: { instructions?: string; emptyRestarts: TeammateState[]; settings?: ReadonlyMap<string, TeammateUpdate> }): Promise<void> {
 	const outcomes = await Promise.allSettled(teammates.map((teammate) => {
-		const initialize = !resumption || resumption.emptyRestarts.includes(teammate);
+		const initialize = !resumption || resumption.emptyRestarts.includes(teammate) || teammate.needsBriefing;
 		const message = [
 			initialize && composeTeamBriefing(team.name, team.teamPrompt, teammate.name, teammate.prompt, [...team.members.keys()], teammate.canManageOwnTeams),
 			resumption && composeResumptionMessage(team.name, teammate.name, teammate.lastModelActivityAt, resumption.instructions),
 			resumption?.settings?.has(teammate.name) && composeSettingsMessage(describeSettings(resumption.settings.get(teammate.name)!), []),
 		].filter(Boolean).join("\n\n");
-		return queueDelivery(team, "main", teammate, message, false, !startIdle);
+		return queueDelivery(team, "main", teammate, message, false, !startIdle).then(() => {
+			teammate.needsBriefing = undefined;
+			teammate.importPending = undefined;
+		});
 	}));
+	persistActiveTeamManifest(team);
 	const completed = teammates.filter((_teammate, index) => outcomes[index].status === "fulfilled").map((teammate) => teammate.name);
 	const errors = outcomes.flatMap((outcome, index) => {
 		if (outcome.status === "fulfilled") return [];
@@ -660,7 +663,7 @@ function validateExtensionPaths(extensionPaths: readonly string[]): void {
 	}
 }
 
-function createTeammateState(teammateSpec: Teammate): TeammateState {
+function createTeammateState(teammateSpec: Teammate, attachment?: ReturnType<typeof resolveSessionAttachment>, projectDirectory?: string): TeammateState {
 	const teammateName = compactName(teammateSpec.name);
 	const thinking = teammateSpec.thinking ?? defaultThinkingLevel;
 	const extensionPaths = teammateSpec.extensionPaths ?? [];
@@ -675,13 +678,19 @@ function createTeammateState(teammateSpec: Teammate): TeammateState {
 	return {
 		name: teammateName,
 		prompt: teammateSpec.systemPrompt,
-		model: teammateSpec.model,
+		model: teammateSpec.model ?? "",
 		thinking,
 		forkContext: Boolean(teammateSpec.forkContext),
 		canManageOwnTeams: Boolean(teammateSpec.canManageOwnTeams),
 		extensionPaths,
 		transport: teammateSpec.showOnHerdrPane ? "herdr" : "rpc",
-		sessionMaterialized: false,
+		sessionMaterialized: Boolean(attachment?.file),
+		needsBriefing: true,
+		...(attachment ? {
+			session: attachment.id, sessionId: attachment.id,
+			sessionFile: attachment.file ?? SessionManager.create(projectDirectory!, undefined, { id: attachment.id }).getSessionFile(),
+			contextRestored: Boolean(attachment.file), importPending: true,
+		} : {}),
 		ready,
 		resolveReady,
 		rejectReady,
@@ -728,6 +737,7 @@ function appendSpawnLog(team: TeamState, teammate: TeammateState): void {
 
 interface ChildStartOptions {
 	sessionFile?: string;
+	restoreSettings?: boolean;
 	restartEmpty?: boolean;
 	signal?: AbortSignal;
 	/** New settings, recorded once the previous process has ended and before the next one starts. */
@@ -739,20 +749,27 @@ interface ChildStartOptions {
  * @example launchSettingArguments({ model: "openai-codex/gpt-6-luna", thinking: "xhigh" }, { sessionFile: "/sessions/a.jsonl" }) // ["--thinking", "xhigh"]
  */
 function launchSettingArguments(teammate: Pick<TeammateState, "model" | "thinking">, options: ChildStartOptions): string[] {
+	if (options.restoreSettings) return [
+		...(options.settings?.model ? ["--model", options.settings.model] : []),
+		...(options.settings?.thinking ? ["--thinking", options.settings.thinking] : []),
+	];
 	const thinkingArguments = ["--thinking", teammate.thinking];
 	return options.sessionFile ? thinkingArguments : ["--model", teammate.model, ...thinkingArguments];
 }
 
+/** @example launchSessionArguments({}, { forkContext: false }, { sessionFile: "/sessions/a.jsonl" }) // ["--session", "/sessions/a.jsonl"] */
+function launchSessionArguments(team: Pick<TeamState, "mainSessionFile">, teammate: Pick<TeammateState, "session" | "sessionId" | "forkContext">, options: ChildStartOptions): string[] {
+	if (options.sessionFile) return ["--session", options.sessionFile];
+	if (teammate.session) return ["--session-id", teammate.sessionId!];
+	if (teammate.forkContext && !options.restartEmpty) return ["--fork", team.mainSessionFile!];
+	return [];
+}
+
 function attachRpcTeammate(team: TeamState, teammate: TeammateState, participants: string[], options: ChildStartOptions): void {
-	const sessionArgs = options.sessionFile
-		? ["--session", options.sessionFile]
-		: teammate.forkContext && !options.restartEmpty
-			? ["--fork", team.mainSessionFile!]
-			: [];
 	const args = [
 		"--mode",
 		"rpc",
-		...sessionArgs,
+		...launchSessionArguments(team, teammate, options),
 		"-e",
 		teamLiteExtensionPath,
 		...teammate.extensionPaths.flatMap(extensionPath => ["-e", extensionPath]),
@@ -838,7 +855,7 @@ function restartWithSettings(team: TeamState, teammate: TeammateState, update: T
 	});
 	teammate.deliveryQueue = restart.then(() => undefined, () => undefined);
 	return restart.then(async ({ sessionFile, stoppedTeams }) => {
-		if (sessionFile === undefined) await kickoffTeammates(team, [teammate], true);
+		if (sessionFile === undefined || teammate.needsBriefing) await kickoffTeammates(team, [teammate], true);
 		await queueDelivery(team, "main", teammate, composeSettingsMessage(describeSettings(update), stoppedTeams), false, false);
 	});
 }
@@ -911,11 +928,6 @@ async function attachHerdrTeammate(
 	options: ChildStartOptions,
 ): Promise<void> {
 	const environment = childEnvironmentOverrides(team, teammate, participants);
-	const sessionArgs = options.sessionFile
-		? ["--session", options.sessionFile]
-		: teammate.forkContext && !options.restartEmpty
-			? ["--fork", team.mainSessionFile!]
-			: [];
 	const args = ["pane", "split", "--pane", herdrParentPaneId, "--direction", "right", "--no-focus", "--cwd", team.projectDirectory ?? process.cwd()];
 	for (const [name, value] of Object.entries(environment)) {
 		if (value !== undefined) args.push("--env", `${name}=${value}`);
@@ -925,7 +937,7 @@ async function attachHerdrTeammate(
 	await runCommand("herdr", ["pane", "rename", teammate.paneId, teammate.name]);
 	const command = [
 		...team.parentPiCommand,
-		...sessionArgs,
+		...launchSessionArguments(team, teammate, options),
 		"-e",
 		teamLiteExtensionPath,
 		...teammate.extensionPaths.flatMap(extensionPath => ["-e", extensionPath]),
@@ -984,12 +996,23 @@ function manifestMemberFromTeammate(teammate: TeammateState): TeamManifestMember
 	return {
 		...teammateRecord(teammate),
 		sessionMaterialized: teammate.sessionMaterialized,
+		...(teammate.importPending ? { importPending: true } : {}),
+		...(teammate.needsBriefing ? { needsBriefing: true } : {}),
 	};
 }
 
-/** A teammate that is still starting has no session identity yet. It joins the manifest after it registers, so it cannot fail bookkeeping for its siblings. */
+/** Fresh teammates join the manifest after registration; imports reserve their selected identity before startup. */
 function registeredManifestMembers(team: TeamState): TeamManifestMember[] {
 	return [...team.members.values()].filter((teammate) => teammate.sessionId).map(manifestMemberFromTeammate);
+}
+
+function createTeamManifest(team: TeamState): TeamManifest {
+	const timestamp = new Date().toISOString();
+	return {
+		version: 2, id: team.id!, name: team.name, originMainSessionId: team.parentSession!.id,
+		projectDirectory: team.projectDirectory!, teamPrompt: team.teamPrompt, showOnHerdrPanes: team.showOnHerdrPanes,
+		members: registeredManifestMembers(team), state: "active", createdAt: team.manifest?.createdAt ?? timestamp, updatedAt: timestamp,
+	};
 }
 
 function persistActiveTeamManifest(team: TeamState): void {
@@ -1051,7 +1074,7 @@ function interruptedTeammates(team: TeamState): TeamManifest["interrupted"] {
 	return { mainSessionId: team.lease.mainSessionId, teammates: running.map((teammate) => teammate.name), working: running.filter((teammate) => teammateSummary(teammate).active).map((teammate) => teammate.name) };
 }
 
-async function shutdownTeam(team: TeamState, interrupted?: TeamManifest["interrupted"]): Promise<string[]> {
+async function shutdownTeam(team: TeamState, interrupted?: TeamManifest["interrupted"], discardNewAttachment = false): Promise<string[]> {
 	team.stopping = true;
 	const errors: string[] = [];
 	for (const teammate of team.members.values()) {
@@ -1065,6 +1088,18 @@ async function shutdownTeam(team: TeamState, interrupted?: TeamManifest["interru
 			continue;
 		}
 		await stopRpcTeammate(teammate);
+	}
+	for (const teammate of team.members.values()) {
+		if (!teammate.importPending || teammate.transport !== "rpc") continue;
+		if (teammate.processRecord?.registered) {
+			teammate.importPending = undefined;
+			continue;
+		}
+		team.members.delete(teammate.name);
+	}
+	if (team.manifest && discardNewAttachment && registeredManifestMembers(team).length === 0 && [...team.members.values()].every((teammate) => teammate.transport === "rpc" || !teammate.processRecord)) {
+		discardTeamImportReservation(team.manifest.id);
+		team.manifest = undefined;
 	}
 	if (team.manifest) {
 		try {
@@ -1261,6 +1296,11 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 				teammate.rejectReady?.(failure);
 				throw failure;
 			}
+			if (teammate.session && sessionId !== teammate.sessionId) {
+				const failure = new Error(`Session ${teammate.sessionId} registered as ${sessionId} at ${sessionFile}; refusing replacement identity.`);
+				teammate.rejectReady?.(failure);
+				throw failure;
+			}
 			teammate.sessionId = sessionId;
 			teammate.sessionFile = sessionFile;
 			teammate.lastModelActivityAt = args.lastModelActivityAt as string | undefined;
@@ -1343,13 +1383,14 @@ function teammateSchema(modelGuidance: string) {
 	return Type.Object({
 		name: Type.String({ description: "Teammate name" }),
 		systemPrompt: Type.String({ description: "Individual teammate instructions, delivered in the custom startup briefing" }),
-		model: Type.String({ description: `Canonical provider/model id for this teammate. ${modelGuidance}` }),
-		thinking: Type.Optional(StringEnum(thinkingLevels, { description: "Thinking level for this teammate. Defaults to xhigh.", default: defaultThinkingLevel })),
+		model: Type.Optional(Type.String({ description: `Canonical provider/model id. Required without session; otherwise omission restores Pi's settings. ${modelGuidance}` })),
+		session: Type.Optional(Type.String({ minLength: 1, description: "Stopped, never-teamed Pi session: exact current-project ID (resume or create), or existing absolute JSONL path. Confirm its original process is stopped. Team-owned sessions and pending reminders are refused." })),
+		thinking: Type.Optional(StringEnum(thinkingLevels, { description: "Thinking level. Defaults to xhigh without session; with session, omission restores Pi's settings." })),
 		forkContext: Type.Optional(Type.Boolean({ description: "Start as a fork of your context window rather than fresh. Defaults to false.", default: false })),
 		canManageOwnTeams: Type.Optional(Type.Boolean({ description: "Allow this teammate to create and manage teams of its own. Defaults to false.", default: false })),
 		showOnHerdrPane: Type.Optional(Type.Boolean({ description: "Open a visible Herdr pane for this teammate. Defaults to false.", default: false })),
 		extensionPaths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true, description: "Trusted extension files or directories to load alongside the team runtime. Use existing absolute paths. Saved for later resume; discovered extensions also load." })),
-	}, { additionalProperties: false });
+	}, { additionalProperties: false, anyOf: [{ required: ["model"] }, { required: ["session"] }] });
 }
 
 function teammateUpdateSchema() {
@@ -1359,6 +1400,13 @@ function teammateUpdateSchema() {
 		thinking: Type.Optional(StringEnum(thinkingLevels, { description: "New thinking level." })),
 		extensionPaths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true, description: "New list of trusted extension files or directories, replacing the saved list. Use existing absolute paths." })),
 	}, { additionalProperties: false });
+}
+
+/** Unknown startup remains reserved until child exit is known. @example pendingImportError({ members: [] } as TeamManifest) // undefined */
+function pendingImportError(manifest: TeamManifest): string | undefined {
+	const pending = manifest.members.filter((member) => member.importPending);
+	if (pending.length === 0) return undefined;
+	return `Session(s) ${pending.map((member) => `${member.teammateId} at ${member.sessionFile}`).join(", ")}: import pending in team ${manifest.id}, main ${manifest.originMainSessionId}, project ${manifest.projectDirectory}. Previous child startup is unresolved; not resumed.`;
 }
 
 function restoreTeamState(owner: symbol, ownerPi: ExtensionAPI, parentPiCommand: string[], manifest: TeamManifest, lease: TeamLease): TeamState {
@@ -1384,6 +1432,9 @@ function restoreTeamState(owner: symbol, ownerPi: ExtensionAPI, parentPiCommand:
 		teammate.sessionId = member.teammateId;
 		teammate.sessionFile = member.sessionFile;
 		teammate.sessionMaterialized = member.sessionMaterialized;
+		teammate.session = member.session;
+		teammate.importPending = member.importPending;
+		teammate.needsBriefing = member.needsBriefing;
 		teammate.contextPercent = member.contextPercent;
 		teammate.alive = false;
 		team.members.set(teammate.name, teammate);
@@ -1470,6 +1521,17 @@ export default function (pi: ExtensionAPI) {
 		);
 	}
 
+	function resolveAttachments(specs: readonly Teammate[], context: ExtensionContext, projectDirectory: string) {
+		return specs.map((spec) => {
+			if (spec.session === undefined) return undefined;
+			if (spec.forkContext) throw new Error(`session ${spec.session} conflicts with forkContext: true; attach the conversation or fork main, not both.`);
+			if (!context.sessionManager?.getSessionId?.() || !projectDirectory) throw new Error(`Attaching session ${spec.session} requires a persistent main and project directory.`);
+			const attachment = resolveSessionAttachment(spec.session, projectDirectory);
+			if ([context.sessionManager.getSessionId(), childRuntimeConfig?.parentSessionId].includes(attachment.id)) throw new Error(`Session ${attachment.id} at ${attachment.file ?? projectDirectory} is your current main or ancestor session; it cannot be its own teammate.`);
+			return attachment;
+		});
+	}
+
 	/** Stored dormant teammates of resumable current-project teams whose name or session ID is `identifier`. */
 	function dormantTeammateMatches(context: ExtensionContext, identifier: string): DormantTeammateMatch[] {
 		const name = identifier.trim();
@@ -1521,8 +1583,9 @@ export default function (pi: ExtensionAPI) {
 				team.statuses.set(name, status("idle", interrupted.working.includes(name) ? "Reattached; was working when main stopped" : "Reattached"));
 			}
 			persistActiveTeamManifest(team);
-			// A teammate whose conversation was never saved restarts empty, so it gets its briefing back, staged without a turn.
-			await kickoffTeammates(team, emptyRestarts, true, { emptyRestarts });
+			// Uninitialized teammates get their first team briefing staged without a turn.
+			const uninitialized = interrupted.teammates.map((name) => team!.members.get(name)!).filter((teammate) => teammate.needsBriefing || emptyRestarts.includes(teammate));
+			await kickoffTeammates(team, uninitialized, true, { emptyRestarts });
 			return { ...reattachment, reattached: interrupted.teammates, working: interrupted.working };
 		} catch (error) {
 			if (team) await shutdownTeam(team);
@@ -1541,6 +1604,11 @@ export default function (pi: ExtensionAPI) {
 			const lease = manifest.state === "active" ? readTeamLeaseState(manifest.id) : undefined;
 			const crashed = lease?.state === "stale" && lease.mainSessionId === mainSessionId;
 			if (!crashed && manifest.interrupted?.mainSessionId !== mainSessionId) continue;
+			const pending = pendingImportError(manifest);
+			if (pending) {
+				reattachments.push({ teamName: manifest.name, teamId: manifest.id, reattached: [], working: [], inPanes: [], error: pending });
+				continue;
+			}
 			const running = manifest.members.filter((member) => member.live);
 			// A Herdr pane teammate is not main's child, so it can outlive main's crash; a second process on its session would corrupt it.
 			const [inPanes, reattachable] = [running.filter((member) => member.showOnHerdrPane), running.filter((member) => !member.showOnHerdrPane)];
@@ -1560,9 +1628,7 @@ export default function (pi: ExtensionAPI) {
 		reminders.clear();
 		const sessionId = context.sessionManager?.getSessionId?.();
 		// A forked session copies its origin's records, which stay that session's reminders.
-		const records = new Map((context.sessionManager?.getEntries?.() ?? [])
-			.flatMap((entry) => entry.type === "custom" && entry.customType === reminderType && (entry.data as ReminderRecord).sessionId === sessionId ? [entry.data as ReminderRecord] : [])
-			.map((record) => [record.id, record]));
+		const records = latestReminderRecords(context.sessionManager?.getEntries?.() ?? [], sessionId);
 		reminderCount = records.size;
 		for (const record of records.values()) {
 			const reminder: Reminder = { ...record, armedAt: new Date(record.armedAt), wakeAt: new Date(record.wakeAt) };
@@ -1596,18 +1662,19 @@ export default function (pi: ExtensionAPI) {
 					const showOnHerdrPanes = Boolean(params.showOnHerdrPanes);
 					const teammateSpecs: Teammate[] = params.teammates.map((teammate) => ({ ...teammate, showOnHerdrPane: params.showOnHerdrPanes ?? teammate.showOnHerdrPane ?? false }));
 					const herdrParentPaneId = showOnHerdrPanes || teammateSpecs.some((teammate) => teammate.showOnHerdrPane) ? await validateHerdrAvailability() : undefined;
+					const rawProjectDirectory = context.sessionManager?.getCwd?.() ?? context.cwd;
+					const projectDirectory = rawProjectDirectory ? canonicalProjectDirectory(rawProjectDirectory) : undefined;
+					const attachments = resolveAttachments(teammateSpecs, context, projectDirectory!);
 					const teammateNames = teammateSpecs.map((teammate) => compactName(teammate.name));
 					const duplicateNames = teammateNames.filter((name, index) => teammateNames.indexOf(name) !== index);
 					if (duplicateNames.length > 0) throw new Error(`Duplicate teammate name(s): ${[...new Set(duplicateNames)].join(", ")}`);
 					if (teammateNames.includes("main")) throw new Error('"main" is reserved');
 
-					validateTeammateModels(teammateSpecs, context.modelRegistry.getAvailable());
+					validateTeammateModels(teammateSpecs.filter((spec) => spec.model !== undefined) as Array<Teammate & { model: string }>, context.modelRegistry.getAvailable());
 					const forksContext = teammateSpecs.some((teammate) => Boolean(teammate.forkContext));
 					const mainSessionFile = forksContext ? context.sessionManager.getSessionFile() : undefined;
 					if (forksContext && !mainSessionFile) throw new Error("forkContext requires a saved main session. Use a saved main session or retry with forkContext: false.");
 					const originMainSessionId = context.sessionManager?.getSessionId?.();
-					const rawProjectDirectory = context.sessionManager?.getCwd?.() ?? context.cwd;
-					const projectDirectory = rawProjectDirectory ? canonicalProjectDirectory(rawProjectDirectory) : undefined;
 					const teamId = originMainSessionId && projectDirectory ? `${originMainSessionId}-${teamName}` : undefined;
 					const runtimeTeamId = teamId ?? teamName;
 					if (teams.has(runtimeTeamId)) throw new Error(`Team already exists: ${runtimeTeamId}`);
@@ -1650,39 +1717,38 @@ export default function (pi: ExtensionAPI) {
 
 					teams.set(runtimeTeamId, team);
 					try {
-						for (const teammateSpec of teammateSpecs) {
-							const teammate = createTeammateState(teammateSpec);
+						for (const [index, spec] of teammateSpecs.entries()) {
+							const teammate = createTeammateState(spec, attachments[index], projectDirectory);
 							team.members.set(teammate.name, teammate);
 							team.statuses.set(teammate.name, status("idle", "Spawned"));
-							await startTeammate(team, teammate, teammateNames, herdrParentPaneId, { signal });
+						}
+						if (attachments.some(Boolean)) {
+							const manifest = createTeamManifest(team);
+							reserveSessionImports(manifest, attachments.filter((attachment) => attachment !== undefined), Boolean(childRuntimeConfig));
+							team.manifest = manifest;
+						}
+						for (const [index, teammateSpec] of teammateSpecs.entries()) {
+							const attachment = attachments[index];
+							const teammate = team.members.get(compactName(teammateSpec.name))!;
+							await startTeammate(team, teammate, teammateNames, herdrParentPaneId, {
+								signal, sessionFile: attachment?.file, restoreSettings: Boolean(attachment),
+								settings: attachment ? { teammate: teammate.name, model: teammateSpec.model, thinking: teammateSpec.thinking } : undefined,
+							});
 						}
 						signal?.throwIfAborted();
 
 						if (teamId && originMainSessionId && projectDirectory) {
-							const timestamp = new Date().toISOString();
-							const manifest: TeamManifest = {
-								version: 2,
-								id: teamId,
-								name: team.name,
-								originMainSessionId,
-								projectDirectory,
-								teamPrompt: team.teamPrompt,
-								showOnHerdrPanes: team.showOnHerdrPanes,
-								members: [...team.members.values()].map(manifestMemberFromTeammate),
-								state: "active",
-								createdAt: timestamp,
-								updatedAt: timestamp,
-							};
+							const manifest = createTeamManifest(team);
 							writeTeamManifest(manifest);
 							team.manifest = manifest;
 						}
 					} catch (error) {
-						await shutdownTeam(team);
+						await shutdownTeam(team, undefined, true);
 						closeCallbackServerIfUnused();
 						throw error;
 					}
 					await kickoffTeammates(team, [...team.members.values()], Boolean(params.startIdle));
-					return toolResult(lifecycleResult(team));
+					return toolResult({ ...lifecycleResult(team), teammates: [...team.members.values()].map((teammate) => ({ ...teammateRecord(teammate), ...(teammate.session ? { contextRestored: teammate.contextRestored } : {}) })) });
 				},
 			}),
 		);
@@ -1837,7 +1903,6 @@ export default function (pi: ExtensionAPI) {
 			renderResult: (result, options, theme, context) => renderTeamToolResult("team_resume", result, options, theme, context, undefined, sessionTeammateRoster),
 			parameters: Type.Object({
 				team: Type.String({ description: "Team name or persistent ID" }),
-				// TODO: Should allow defining new teammates or even existing teammates (any Pi session ID belonging to this project) from other teams and sessions for maximum flexibility.
 				teammates: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: "Teammate names or Pi session IDs within this team. Omit to resume all stopped teammates." })),
 				showOnHerdrPanes: Type.Optional(Type.Boolean({ default: false, description: "Open visible Herdr panes for selected teammates. Defaults to false." })),
 				startIdle: Type.Optional(Type.Boolean({ default: false, description: "Start resumed teammates idle." })),
@@ -1848,6 +1913,8 @@ export default function (pi: ExtensionAPI) {
 				signal?.throwIfAborted();
 				const manifest = resolveTeamIdentifier(resumableTeamManifests(context, "team_resume"), params.team);
 				if (!manifest) throw new Error(`Unknown current-project team: ${JSON.stringify(params.team)}. Call team_list with includeDormantTeams: true and pass a listed teamId or unique teamName in the team parameter.`);
+				const pending = pendingImportError(manifest);
+				if (pending) throw new Error(pending);
 				const members = manifest.members;
 				const requestedNames = resolveTeammates(members, params.teammates ?? members.map((member) => member.teammateId)).map((member) => member.name);
 				const showOnHerdrPanes = Boolean(params.showOnHerdrPanes);
@@ -1950,8 +2017,7 @@ export default function (pi: ExtensionAPI) {
 			renderResult: (result, options, theme, context) => renderTeamToolResult("team_add_teammates", result, options, theme, context, getMarkdownTheme(), sessionTeammateRoster),
 			parameters: Type.Object({
 				team: Type.Optional(Type.String({ description: "Team name or persistent ID. Omit when exactly one owned active team exists." })),
-				// TODO: Accept existing current-project Pi session IDs as well as new teammate definitions.
-				teammates: Type.Array(teammateSchema(""), { minItems: 1, description: "New teammate definitions to add. Existing Pi sessions cannot yet be attached." }),
+				teammates: Type.Array(teammateSchema(""), { minItems: 1, description: "Teammate definitions to add, optionally using a stopped, never-teamed session." }),
 				startIdle: Type.Optional(Type.Boolean({ default: false, description: "Start added teammates idle." })),
 			}, { additionalProperties: false }),
 			async execute(_toolCallId, params, signal, _onUpdate, context) {
@@ -1974,14 +2040,20 @@ export default function (pi: ExtensionAPI) {
 					throw new Error(`Duplicate teammate name(s): ${[...new Set(duplicateNames)].join(", ")}`);
 				}
 				if (teammateNames.includes("main")) throw new Error('"main" is reserved');
-				validateTeammateModels(teammateSpecs, context.modelRegistry.getAvailable());
+				validateTeammateModels(teammateSpecs.filter((spec) => spec.model !== undefined) as Array<Teammate & { model: string }>, context.modelRegistry.getAvailable());
 
 				const forksContext = teammateSpecs.some((teammate) => Boolean(teammate.forkContext));
 				const mainSessionFile = forksContext ? context.sessionManager.getSessionFile() : undefined;
 				if (forksContext && !mainSessionFile) throw new Error("forkContext requires a saved main session. Use a saved main session or retry with forkContext: false.");
 				if (mainSessionFile) team.mainSessionFile = mainSessionFile;
 
-				const addedTeammates = teammateSpecs.map(createTeammateState);
+				const attachments = resolveAttachments(teammateSpecs, context, team.projectDirectory!);
+				const addedTeammates = teammateSpecs.map((spec, index) => createTeammateState(spec, attachments[index], team.projectDirectory));
+				if (attachments.some(Boolean)) {
+					const manifest = { ...team.manifest, members: [...registeredManifestMembers(team), ...addedTeammates.filter((teammate) => teammate.session).map(manifestMemberFromTeammate)] };
+					reserveSessionImports(manifest, attachments.filter((attachment) => attachment !== undefined), Boolean(childRuntimeConfig));
+					team.manifest = manifest;
+				}
 				for (const teammate of addedTeammates) {
 					team.members.set(teammate.name, teammate);
 					team.statuses.set(teammate.name, status("idle", "Spawned"));
@@ -1990,7 +2062,10 @@ export default function (pi: ExtensionAPI) {
 				sessionTeammateRoster.push(...teammateNames.filter((name) => !sessionTeammateRoster.includes(name)));
 
 				try {
-					for (const teammate of addedTeammates) await startTeammate(team, teammate, participantNames, herdrParentPaneId, { signal });
+					for (const [index, teammate] of addedTeammates.entries()) await startTeammate(team, teammate, participantNames, herdrParentPaneId, {
+						signal, sessionFile: attachments[index]?.file, restoreSettings: Boolean(attachments[index]),
+						settings: attachments[index] ? { teammate: teammate.name, model: teammateSpecs[index].model, thinking: teammateSpecs[index].thinking } : undefined,
+					});
 					signal?.throwIfAborted();
 					persistActiveTeamManifest(team);
 				} catch (error) {
@@ -1999,6 +2074,11 @@ export default function (pi: ExtensionAPI) {
 						else await stopRpcTeammate(teammate);
 					}
 					for (const teammate of addedTeammates) {
+						if (teammate.session && teammate.processRecord?.registered && teammate.transport === "rpc") {
+							teammate.importPending = undefined;
+							continue;
+						}
+						if (teammate.importPending && teammate.transport === "herdr" && teammate.processRecord) continue;
 						team.members.delete(teammate.name);
 						team.statuses.delete(teammate.name);
 					}
@@ -2009,7 +2089,7 @@ export default function (pi: ExtensionAPI) {
 				await kickoffTeammates(team, addedTeammates, Boolean(params.startIdle));
 				return toolResult({
 					...lifecycleResult(team),
-					teammates: [...team.members.values()].map(teammateSummary),
+					teammates: [...team.members.values()].map((teammate) => ({ ...teammateSummary(teammate), ...(addedTeammates.includes(teammate) && teammate.session ? { sessionFile: teammate.sessionFile, contextRestored: teammate.contextRestored } : {}) })),
 					status: formatStatus(team),
 				}, { addedTeammates: addedTeammates.map(teammateRecord) });
 			},

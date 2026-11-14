@@ -64,6 +64,6 @@ export function composeReattachmentMessage(reattachments: readonly Reattachment[
 		].join("\n"),
 		working && `These were working when your session stopped: ${working}. Message each one to continue.`,
 		inPanes && `Not reattached, because a Herdr pane teammate may still be running in its pane: ${inPanes}. Check its pane before you use team_resume.`,
-		...reattachments.filter((reattachment) => reattachment.error).map((reattachment) => `Could not reattach team "${reattachment.teamName}" (team ID: ${reattachment.teamId}): ${reattachment.error} Use team_resume to restart it.`),
+		...reattachments.filter((reattachment) => reattachment.error).map((reattachment) => `Could not reattach team "${reattachment.teamName}" (team ID: ${reattachment.teamId}): ${reattachment.error} Inspect the blocking state before resuming.`),
 	].filter(Boolean).join("\n\n");
 }

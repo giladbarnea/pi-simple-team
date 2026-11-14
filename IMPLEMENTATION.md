@@ -1,5 +1,5 @@
 ---
-updated: 2026-11-03
+updated: 2026-11-14
 status: working
 ---
 
@@ -15,7 +15,7 @@ There is no inbox, polling loop, explicit done primitive, or message broker. The
 
 The implementation uses child CLI processes rather than Pi SDK sessions. Children stay alive while idle. Ordinary delivery uses `pi.sendMessage` with `deliverAs: "steer"` and `triggerTurn: true`. Idle resumption instructions use `triggerTurn: false` to record context without starting work. Interrupt delivery aborts the active turn before the message lands.
 
-Spawn, resume, and add start the affected batch after all members register and the manifest is saved. `kickoffTeammates` shares the ordinary publication queue and waits for all delivery outcomes. It reports partial starts without tearing down work that already started. `startIdle` suppresses execution for all three lifecycle tools while still staging their custom briefings. `team-briefing.ts` supplies startup definitions and coordination guidance without a system-prompt override or roster hook. Actual restores inherit that briefing; only never-materialized sessions need initialization again. Resume appends its identity/time briefing. `resume-message.ts` selects unambiguous model activity from the restored branch and composes that briefing, followed by optional new instructions.
+Spawn, resume, and add start the affected batch after all members register and the manifest is saved. `kickoffTeammates` shares the ordinary publication queue and waits for all delivery outcomes. It reports partial starts without tearing down work that already started. `startIdle` suppresses execution for all three lifecycle tools while still staging their custom briefings. `team-briefing.ts` supplies startup definitions and coordination guidance without a system-prompt override or roster hook. Initialized restores inherit that briefing. Empty restarts and registered imports whose initial briefing never arrived receive their definitions before work. Resume appends its identity/time briefing. `resume-message.ts` selects unambiguous model activity from the restored branch and composes that briefing, followed by optional new instructions.
 
 `teammateId` is the Pi session ID. Every input identifying an existing teammate accepts its name or ID in the same field. Messages, context usage, and logs use one `targets` list that also accepts whole teams. The shared resolver handles ambiguity and overlapping selections.
 
@@ -41,7 +41,9 @@ Manifest expiry never deletes Pi session files. Pi session JSONL files remain th
 
 The process-local `team_log` is not durable. The extension persists no separate parent-runtime log.
 
-`team_add_teammates` creates new sessions for a running team owned by the current main session. Individual teammates can request Herdr panes. It does not attach existing Pi sessions.
+`team_add_teammates` creates new sessions for a running team owned by the current main session. Individual teammates can request Herdr panes. Its shared `session` selector can reuse stopped, never-teamed conversations; see ARCHITECTURE.md’s import contract.
+
+`session-attachment.ts` resolves exact IDs/paths and reads import eligibility without Pi’s writable file loader. `reminder-records.ts` selects the same reminder state for preflight and normal restoration. `reserveSessionImports` checks retained registry ownership under one short mutex and writes pending destination membership before launch; lifecycle persistence keeps that marker until briefing succeeds or the registered RPC process is confirmed stopped. `needsBriefing` separately tracks undelivered initial instructions, so ordinary resume can initialize a retained import without resetting its attachment.
 
 `team_update_teammates` restarts a live teammate, background or Herdr pane, through `startTeammate`, which ends the previous process or closes its pane first. Between the two, `SessionManager` appends the model and thinking-level changes. A busy teammate's update waits on its process record until `handleChildEvent` sees its `agent_settled`, so it ends with that process; a managing teammate is never held. The call fails early while the manager works or while a teammate in one of its running teams (active manifest, lease held by a living process) is active. After the restart, the teammate receives its new settings and the teams the restart stopped, through the same message path as `team_resume`, which adds the settings to its resumption message. The restart queues behind the teammate's pending deliveries, so later messages reach the new runtime, and it keeps the teammate's status. `team_shutdown` and the end notice report a held update that never applied.
 

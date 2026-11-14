@@ -1,5 +1,5 @@
 ---
-updated: 2026-11-11
+updated: 2026-11-14
 status: current
 audience: AI agents and maintainers
 ---
@@ -59,7 +59,7 @@ The lease protects extension-managed runtimes. Users must still avoid opening a 
 
 ## Team lifecycle operations change attachments and runtimes
 
-### `team_spawn` creates sessions and a live attachment
+### `team_spawn` creates a live attachment
 
 `team_spawn` validates the roster and model patterns, claims the team lease, then starts each teammate.
 
@@ -97,9 +97,17 @@ The tags are ordinary custom-message content. They do not rewrite inherited syst
 
 `team_add_teammates` requires an active team lease owned by the current main session. The team selector can be omitted when exactly one owned active team exists. New teammates can use RPC or individual Herdr panes.
 
-The operation does not attach an existing Pi session. Existing teammates continue their work. New teammates start as one ready batch unless `startIdle` is true. The result includes the complete roster as lightweight name/ID/live/active records and the whole team's statuses.
+A teammate definition can attach a stopped, never-teamed session as described below. Existing teammates continue their work. New teammates start as one ready batch unless `startIdle` is true. The result includes the complete roster as lightweight name/ID/live/active records and the whole team's statuses.
 
 Every delivered message includes the parent's current team-status map. New participant names therefore reach existing members in ordinary messages, without a roster hook or system-prompt rewrite.
+
+### Spawn/add can reuse a stopped, unregistered conversation
+
+Their shared optional `session` field follows `pi --session-id`: an exact current-project ID resumes or creates that ID. An absolute JSONL path must already exist and be valid. It conflicts with `forkContext`. Omitted model/thinking restore Pi’s settings; explicit changes use the existing stopped-session update path. Each accepted import receives the full current team briefing. Returned records include its actual identity/file and `contextRestored`. A never-materialized import keeps its requested ID on restart.
+
+Preflight reads JSONL without Pi’s writable loader, so a refusal cannot repair a newline, migrate history or change settings. Any retained member, own-session teammate breadcrumb, live main lease, foreign project or pending same-session reminder blocks import. Reminder selection is shared with normal restoration: latest records across all entries, not just the active branch. Completed reminders and records copied from another session do not block. Managing teammates still cannot discover foreign team metadata through an import refusal.
+
+A short registry mutex checks and reserves the whole import batch in the destination manifest before child launch. `importPending` remains until the new briefing is accepted. Known-stopped RPC attempts that never registered release their reservations. Already-registered imports keep their attachments after a later sibling fails and recover through `team_resume`, receiving their missing initial briefing before work. Uncertain startup remains reserved, does not expire and cannot resume or auto-reattach. Closing a Herdr pane is not proof that its process exited, so uncertain pane imports stay reserved. This is not a general writer lock: callers must stop source processes, including ordinary Pi sessions or surviving panes Simple Team cannot see. Team transfers and cross-project discovery remain outside this first version.
 
 ### `team_shutdown` makes the team dormant
 
@@ -135,7 +143,7 @@ Pi assigns an idle child a session ID and session file path before it creates th
 
 If the file exists, resume uses it. If the file once materialized but is now missing, resume fails instead of replacing conversation history.
 
-If the teammate never materialized its provisional file, resume starts a new empty session and replaces the provisional identity. Only this existing restart-empty path stages the same initial tagged briefing again, followed by the dated resume grounding.
+If the teammate never materialized its provisional file, resume starts a new empty session and replaces the provisional identity. An empty restart, or a registered import whose first team briefing never arrived, stages the initial tagged briefing before the dated resume grounding.
 
 ## Recursive management stays session-scoped
 
