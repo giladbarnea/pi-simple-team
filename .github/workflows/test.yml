@@ -10,6 +10,12 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pi: ["1.4.0", "1.5.2"]
+    env:
+      PI_VERSION: ${{ matrix.pi }}
     steps:
       - uses: actions/checkout@v6
 
@@ -20,5 +26,26 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - run: npm ci
+      - name: Install test dependencies
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false \
+            "@earendil-works/pi-ai@$PI_VERSION" \
+            "@earendil-works/pi-coding-agent@$PI_VERSION" \
+            "@earendil-works/pi-tui@$PI_VERSION"
+
+      - name: Verify Pi versions
+        run: |
+          node --version
+          bun --version
+          node <<'NODE'
+          for (const name of ["pi-ai", "pi-coding-agent", "pi-tui"]) {
+            const actual = require(`./node_modules/@earendil-works/${name}/package.json`).version;
+            console.log(`${name}: ${actual}`);
+            if (actual !== process.env.PI_VERSION) {
+              throw new Error(`Expected ${name} ${process.env.PI_VERSION}, got ${actual}`);
+            }
+          }
+          NODE
+
       - run: bun test
