@@ -40,7 +40,7 @@ async function startMain(directory: string) {
 	} });
 	fs.writeFileSync(path.join(agentDirectory, "models.json"), JSON.stringify({ providers: { local: {
 		baseUrl: `http://127.0.0.1:${provider.port}/v1`, api: "openai-completions", apiKey: "local-fixture",
-		models: ["a", "b"].map((id) => ({ id, name: id, reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32000, maxTokens: 1000 })),
+		models: ["a", "b"].map((id) => ({ id, name: id, reasoning: true, thinkingLevelMap: { xhigh: "xhigh" }, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32000, maxTokens: 1000 })),
 	} } }));
 	fs.writeFileSync(path.join(agentDirectory, "settings.json"), JSON.stringify({ defaultProvider: "local", defaultModel: "a", defaultThinkingLevel: "medium", compaction: { enabled: false }, retry: { enabled: false } }));
 	const executable = Bun.which("pi");
@@ -94,6 +94,37 @@ function ordinarySession(projectDirectory: string, id: string): SessionManager {
 }
 
 const attachmentTest = test.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1");
+
+for (const operation of ["spawn", "add"] as const) attachmentTest(`${operation} creates fresh and inherited-context teammates with a model and no session selector`, async () => {
+	await withMain(async (main, directory) => {
+		const parent = ordinarySession(main.projectDirectory, "schema-parent");
+		fs.copyFileSync(parent.getSessionFile()!, path.join(directory, "main.jsonl"));
+		const source = fs.readFileSync(parent.getSessionFile()!);
+		if (operation === "add") await main.spawn([]);
+		const teammates = [
+			{ name: "fresh", systemPrompt: "FRESH_ASSIGNMENT", model: "local/a" },
+			{ name: "fork", systemPrompt: "FORK_ASSIGNMENT", model: "local/b", thinking: "high", forkContext: true },
+		];
+		const result = operation === "spawn" ? await main.spawn(teammates) : await main.execute("team_add_teammates", { startIdle: true, teammates });
+		assert.equal(main.requests.length, 0, "Idle creation must not start model work.");
+		assert.equal(result.details.started, false);
+		const listing = await main.execute("team_list", { team: "imported" });
+		const members = (listing.details.teams as Array<{ teammates: Array<Member & JsonRecord> }>)[0].teammates;
+		assert.deepEqual(members.map((member) => [member.name, member.model, member.forkContext, member.canManageOwnTeams, member.showOnHerdrPane]), [
+			["fresh", "local/a", false, false, false], ["fork", "local/b", true, false, false],
+		]);
+		assert.equal(members[0].thinking, "xhigh", "Fresh creation keeps the existing default thinking level, not the parent's low or Pi's medium default.");
+		assert.equal(members[1].thinking, "high", "An explicit fork thinking level must override inherited settings.");
+		for (const name of ["fresh", "fork"]) {
+			await main.execute("team_send_message", { targets: [name], message: `Continue ${name}.` });
+			await main.waitFor(() => main.requests.length === (name === "fresh" ? 1 : 2));
+		}
+		assert.doesNotMatch(JSON.stringify(main.requests[0].messages), /violet telescope/, "Fresh creation must not inherit main's conversation.");
+		assert.match(JSON.stringify(main.requests[1].messages), /violet telescope[\s\S]*FORK_ASSIGNMENT/, "A new fork must inherit context and receive its own assignment without session.");
+		assert.deepEqual([main.requests[1].model, main.requests[1].reasoning_effort], ["b", "high"]);
+		assert.deepEqual(fs.readFileSync(parent.getSessionFile()!), source, "Fork creation must not rewrite the source conversation.");
+	});
+}, 20000);
 
 attachmentTest("completed reminders and inherited records permit non-idle attachment, whose first request has the new assignment", async () => {
 	await withMain(async (main) => {

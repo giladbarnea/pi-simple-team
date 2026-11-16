@@ -1390,7 +1390,7 @@ function teammateSchema(modelGuidance: string) {
 		canManageOwnTeams: Type.Optional(Type.Boolean({ description: "Allow this teammate to create and manage teams of its own. Defaults to false.", default: false })),
 		showOnHerdrPane: Type.Optional(Type.Boolean({ description: "Open a visible Herdr pane for this teammate. Defaults to false.", default: false })),
 		extensionPaths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true, description: "Trusted extension files or directories to load alongside the team runtime. Use existing absolute paths. Saved for later resume; discovered extensions also load." })),
-	}, { additionalProperties: false, anyOf: [{ required: ["model"] }, { required: ["session"] }] });
+	}, { additionalProperties: false, if: { required: ["session"] }, else: { required: ["model"] } });
 }
 
 function teammateUpdateSchema() {
