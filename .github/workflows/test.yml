@@ -49,3 +49,82 @@ jobs:
           NODE
 
       - run: bun test
+
+  real-pi:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pi: ["1.4.0", "1.5.2"]
+    env:
+      PI_VERSION: ${{ matrix.pi }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install test dependencies
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false \
+            "@earendil-works/pi-ai@$PI_VERSION" \
+            "@earendil-works/pi-coding-agent@$PI_VERSION" \
+            "@earendil-works/pi-tui@$PI_VERSION"
+
+      - name: Verify Pi versions
+        run: |
+          node --version
+          bun --version
+          node <<'NODE'
+          for (const name of ["pi-ai", "pi-coding-agent", "pi-tui"]) {
+            const actual = require(`./node_modules/@earendil-works/${name}/package.json`).version;
+            console.log(`${name}: ${actual}`);
+            if (actual !== process.env.PI_VERSION) {
+              throw new Error(`Expected ${name} ${process.env.PI_VERSION}, got ${actual}`);
+            }
+          }
+          NODE
+
+      - name: Prepare the real-Pi environment
+        run: |
+          sandbox="$RUNNER_TEMP/pi-sandbox"
+          mkdir "$sandbox"
+          echo "PI_SANDBOX=$sandbox" >> "$GITHUB_ENV"
+          echo "PI_RUNTIME_LOG=$RUNNER_TEMP/pi-runtime.log" >> "$GITHUB_ENV"
+          echo "$GITHUB_WORKSPACE/node_modules/.bin" >> "$GITHUB_PATH"
+          # Every Pi CLI process, the tests' and their teammates', records the Pi version it runs and exits 97 on a mismatch.
+          cat > "$RUNNER_TEMP/pi-runtime-preload.cjs" <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const marker = "/node_modules/@earendil-works/pi-coding-agent/";
+          const entry = process.argv[1] ? fs.realpathSync(process.argv[1]) : "";
+          const index = entry.indexOf(marker);
+          if (index >= 0) {
+            const packageDirectory = entry.slice(0, index + marker.length);
+            const version = JSON.parse(fs.readFileSync(path.join(packageDirectory, "package.json"), "utf8")).version;
+            fs.appendFileSync(process.env.PI_RUNTIME_LOG, `${process.pid} ${version} ${process.ppid} ${packageDirectory}\n`);
+            if (version !== process.env.PI_VERSION) {
+              process.stderr.write(`Pi ${version} ran instead of ${process.env.PI_VERSION}: ${packageDirectory}\n`);
+              process.exit(97);
+            }
+          }
+          NODE
+          echo "NODE_OPTIONS=--require $RUNNER_TEMP/pi-runtime-preload.cjs" >> "$GITHUB_ENV"
+
+      - name: Run the real-Pi suite
+        run: |
+          echo "pi: $(command -v pi)"
+          HOME="$PI_SANDBOX" PI_CODING_AGENT_DIR="$PI_SANDBOX" PI_SIMPLE_TEAM_TEST_REAL_PI=1 bun test
+
+      - name: Verify the Pi version that ran
+        if: success() || failure()
+        run: |
+          test -s "$PI_RUNTIME_LOG" || { echo "No Pi CLI process ran."; exit 1; }
+          echo "Pi CLI processes by version: $(awk '{print $2}' "$PI_RUNTIME_LOG" | sort | uniq -c)"
+          echo "Of them, started by another Pi CLI process: $(awk 'NR == FNR { pi[$1] = 1; next } $3 in pi' "$PI_RUNTIME_LOG" "$PI_RUNTIME_LOG" | wc -l)"
+          ! awk -v expected="$PI_VERSION" '$2 != expected' "$PI_RUNTIME_LOG" | grep .
