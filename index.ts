@@ -129,6 +129,7 @@ const teamLiteExtensionPath = fileURLToPath(import.meta.url);
 const thinkingLevels = ["low", "medium", "high", "xhigh", "max"] as const;
 const defaultThinkingLevel = "xhigh" satisfies ThinkingLevel;
 const deliveryTimeoutMilliseconds = 30_000;
+const onlySenderSelectedError = "These targets select no teammate other than yourself. Use send_main_message to message main.";
 const defaultRpcShutdownGraceMilliseconds = 1_000;
 /** Time for main's own shutdown to mark its teams before an exit notice is sent, for signals that reach main and its teammates together. */
 const exitNoticeGraceMilliseconds = 2_000;
@@ -1338,9 +1339,9 @@ async function handleCallbackRequest(request: http.IncomingMessage, response: ht
 			const selections = resolveTargets(candidates, args.targets as string[]);
 			const message = String(args.message ?? "");
 			const interrupted = interruptedTeammateIds(candidates, selections, args.interrupt as boolean | string[] | undefined);
-			for (const selection of selections) {
-				for (const recipient of selection.teammates) enqueueDelivery(team, from, team.members.get(recipient.name)!, message, interrupted.has(recipient.teammateId));
-			}
+			const recipients = selections.flatMap((selection) => selection.teammates).filter((recipient) => recipient.name !== from);
+			if (recipients.length === 0) throw new Error(onlySenderSelectedError);
+			for (const recipient of recipients) enqueueDelivery(team, from, team.members.get(recipient.name)!, message, interrupted.has(recipient.teammateId));
 			writeJson(response, 200, { published: true, teams: [{ ...teamIdentity(team), status: formatStatus(team) }], instruction: "Do not wait for replies. Teammates will message you back." });
 			return;
 		}
@@ -2167,12 +2168,15 @@ export default function (pi: ExtensionAPI) {
 				const candidates = [...ownedTargetTeams(owner), ...(parent ? [parent] : [])];
 				const unknownTarget = findUnknownTarget(candidates, params.targets);
 				if (unknownTarget !== undefined) throw new Error(unknownTargetMessage(unknownTarget, candidates, dormantTeammateMatches(context, unknownTarget)));
-				const selections = resolveTargets(candidates, params.targets);
-				const interrupted = interruptedTeammateIds(candidates, selections, params.interrupt);
+				const selected = resolveTargets(candidates, params.targets);
+				const interrupted = interruptedTeammateIds(candidates, selected, params.interrupt);
+				const selections = selected.map((selection) => selection.team === parent ? { ...selection, teammates: selection.teammates.filter((teammate) => teammate.name !== childRuntimeConfig!.teammateName) } : selection);
+				if (selected.some((selection) => selection.team === parent) && selections.every((selection) => selection.teammates.length === 0)) throw new Error(onlySenderSelectedError);
 				const statuses: JsonRecord[] = [];
 				const recipients: Array<{ name: string; contextPercent?: number }> = [];
 				for (const selection of selections) {
 					if (selection.team === parent) {
+						if (selection.teammates.length === 0) continue;
 						const result = await callParent(childRuntimeConfig!, "team_send_message", {
 							targets: selection.teammates.map((teammate) => teammate.teammateId), message: params.message,
 							interrupt: selection.teammates.filter((teammate) => interrupted.has(teammate.teammateId)).map((teammate) => teammate.teammateId),
