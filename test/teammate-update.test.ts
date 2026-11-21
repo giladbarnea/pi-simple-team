@@ -129,6 +129,22 @@ function writeToolExtension(directory: string, toolName: string): string {
 	return file;
 }
 
+/** A tiny extension file that records its Pi process's ID at session start, so a test can signal exactly the teammate it started. */
+function writeProcessIdRecorder(directory: string): { extensionPath: string; processIdFile: string } {
+	const extensionPath = path.join(directory, "process-id-recorder.ts");
+	const processIdFile = path.join(directory, "teammate.pid");
+	fs.writeFileSync(extensionPath, `import * as fs from "node:fs";\nexport default function (pi) { pi.on("session_start", () => { fs.writeFileSync(${JSON.stringify(processIdFile)}, String(process.pid)); }); }\n`);
+	return { extensionPath, processIdFile };
+}
+
+/** SIGKILLs the recorded teammate process after checking that it is still a child of this test process. */
+function killOwnTeammate(processIdFile: string): void {
+	const processId = Number(fs.readFileSync(processIdFile, "utf8"));
+	const parentId = Number(execFileSync("ps", ["-o", "ppid=", "-p", String(processId)], { encoding: "utf8" }));
+	assert.equal(parentId, process.pid, `Process ${processId} must be this test's own teammate.`);
+	process.kill(processId, "SIGKILL");
+}
+
 /**
  * A team the managing teammate's own session created, with one teammate, as its manifest and lease record it.
  * `lease: "live"` holds the lease for a living process of the manager; `"stale"` leaves it to a process that died, as an abrupt manager death does;
@@ -286,12 +302,13 @@ realPi("a held update never outlives its teammate's process or its team", () => 
 	});
 
 	test("a teammate that dies with a held update reports it, and a resume with newer settings is not overridden", async () => {
-		await withMain(async (main) => {
-			await main.spawn(false);
+		await withMain(async (main, directory) => {
+			const recorder = writeProcessIdRecorder(directory);
+			await main.spawn(false, [{ name: "x", extensionPaths: [recorder.extensionPath] }]);
 			await finishFirstTurns(main);
 			await holdBusyRun(main);
 			await main.execute("team_update_teammates", { teammates: [{ teammate: "x", model: "local/b" }] });
-			execFileSync("pkill", ["-KILL", "-f", path.resolve(import.meta.dir, "..", "index.ts")]);
+			killOwnTeammate(recorder.processIdFile);
 			await main.waitFor("the end notice", () => main.notices.some((notice) => /held settings update \(model: local\/b\) was not applied/.test(notice)));
 			main.release();
 			await main.execute("team_resume", { team: teamName, teammateUpdates: [{ teammate: "x", thinking: "high" }], resumptionPrompt: "Back." });
