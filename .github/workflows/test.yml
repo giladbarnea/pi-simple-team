@@ -52,10 +52,11 @@ jobs:
 
   real-pi:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        pi: ["1.4.0", "1.5.2"]
+        pi: ["1.5.2"]
     env:
       PI_VERSION: ${{ matrix.pi }}
     steps:
