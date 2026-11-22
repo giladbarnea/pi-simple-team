@@ -84,9 +84,9 @@ async function sendAsModel(main: MainSession, targets: string[]): Promise<{ firs
 	return { firstRequest: requests[0], toolResult: { text: result.content.map((block) => block.type === "text" ? block.text : "").join(""), isError: result.isError } };
 }
 
-/** The tools a request offers the model: request-level tools, or those its system messages add (Pi 1.4+). */
+/** The tools a request offers the model: those its system messages add. */
 function offeredTools(context: Context): Array<{ name: string; description: string }> {
-	return [...(context.tools ?? []), ...context.messages.flatMap((message) => message.role === "system" ? (message as { toolsAdded?: Array<{ name: string; description: string }> }).toolsAdded ?? [] : [])];
+	return context.messages.flatMap((message) => message.role === "system" ? (message as { toolsAdded?: Array<{ name: string; description: string }> }).toolsAdded ?? [] : []);
 }
 
 describe("team_spawn description", () => {

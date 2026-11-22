@@ -38,7 +38,7 @@ Not scheduling a meeting.
 
 ## Install
 
-Requires Pi 1.4.0 or newer.
+Requires Pi 1.5.0 or newer.
 
 ```sh
 pi install npm:@giladbarnea/pi-simple-team
