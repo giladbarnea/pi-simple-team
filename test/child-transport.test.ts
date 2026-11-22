@@ -213,6 +213,7 @@ const server = http.createServer(async (request, response) => {
   if (settlements[body.args.message]) {
     await parent("event", { event: { type: "agent_start" } });
     await parent("event", { event: { type: "agent_settled", ...settlements[body.args.message] } });
+    record({ type: "settlement_acknowledged" });
     response.end(JSON.stringify({ accepted: true }));
     return;
   }
@@ -848,22 +849,23 @@ describe("unified child runtime", () => {
 		const host = new ExtensionHost();
 		const probeStatus = async (): Promise<JsonRecord> => ((await host.execute("team_status", { team: "failed-run" })).details?.status as Record<string, JsonRecord>).probe;
 		const logRows = async (): Promise<JsonRecord[]> => (await host.execute("team_log", { targets: ["failed-run"], limit: 100 })).details?.entries as JsonRecord[];
-		const settlements = (): number => lines(fake.eventsPath).filter((entry) => entry.type === "parent" && entry.tool === "event" && ((entry.args as JsonRecord).event as JsonRecord).type === "agent_settled").length;
+		// The fixture logs outgoing events before sending them; wait until main has processed each settlement.
+		const acknowledgedSettlements = (): number => lines(fake.eventsPath).filter((entry) => entry.type === "settlement_acknowledged").length;
 		try {
 			await host.execute("team_spawn", { teamName: "failed-run", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "probe", systemPrompt: "Wait.", model: "fake/fake-model" }] });
 			await host.execute("team_send_message", { targets: ["probe"], message: "fail-this-run" });
-			await waitFor(() => settlements() === 1);
+			await waitFor(() => acknowledgedSettlements() === 1);
 			const failed = await probeStatus();
 			assert.deepEqual({ word: failed.word, phrase: failed.phrase }, { word: "error", phrase: "400: quota fixture" }, "A failed run must show as an error status carrying the provider's message.");
 			const errorRows = (await logRows()).filter((entry) => entry.kind === "error");
 			assert.deepEqual(errorRows.map((entry) => entry.summary), ["probe run failed: 400: quota fixture"], "The log must record the failed run once with the provider's message.");
 			assert.deepEqual(host.messages.map((message) => message.content), [`Teammate "probe" on team "failed-run" (team ID: fake-main-session-id-failed-run) ended its latest run on an error.\nCause: 400: quota fixture\nEarlier steps of that run may have completed. Check the teammate's status and team_log before sending it more work.`], "A failed run must wake main once with the provider's message.");
 			await host.execute("team_send_message", { targets: ["probe"], message: "cancel-this-run" });
-			await waitFor(() => settlements() === 2);
+			await waitFor(() => acknowledgedSettlements() === 2);
 			assert.deepEqual(await probeStatus(), failed, "A cancelled run must neither clear the failure nor replace its message.");
 			assert.equal((await logRows()).filter((entry) => entry.kind === "error").length, 1, "A cancelled run must not add an error row.");
 			await host.execute("team_send_message", { targets: ["probe"], message: "complete-this-run" });
-			await waitFor(() => settlements() === 3);
+			await waitFor(() => acknowledgedSettlements() === 3);
 			const recovered = await probeStatus();
 			assert.deepEqual({ word: recovered.word, phrase: recovered.phrase }, { word: "idle", phrase: "Spawned" }, "A completed run must restore the status the failure replaced.");
 			assert.equal((await logRows()).filter((entry) => entry.kind === "error").length, 1, "A completed run must not add error rows.");
