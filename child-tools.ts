@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { formatContextWindowReport, requireKnownContextUsage } from "./context-window.ts";
 import { formatModelReference } from "./model-preflight.ts";
 import { lastRecordedModelActivity } from "./resume-message.ts";
-import { renderTeamMessage } from "./render.ts";
+import { renderTeamMessage, renderTeamToolCall, renderTeamToolResult } from "./render.ts";
 import { targetDescription, interruptDescription } from "./team-selection.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -380,6 +380,10 @@ function startChildRuntime(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
 }
 
 export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
+	/** A teammate's status always targets its parent team, so its rows name that team. */
+	const parentTeamView = (args: { gerund?: string; phrase?: string }): JsonRecord => ({ ...args, team: config.teamName });
+	/** A message to main renders as a Team Send addressed to main. */
+	const mainSendView = (args: { message: string }): JsonRecord => ({ targets: ["main"], message: args.message });
 	pi.registerMessageRenderer(teamMessageType, (message, options, theme) => renderTeamMessage(message, options, theme, getMarkdownTheme(), config.participants));
 	startChildRuntime(pi, config);
 
@@ -401,6 +405,9 @@ export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig)
 			name: "team_send_message",
 			label: "Team Send",
 			description: "Message teammates in your team. Use send_main_message to message main.",
+			renderShell: "self",
+			renderCall: (args, theme, context) => renderTeamToolCall("team_send_message", args, theme, context, config.participants),
+			renderResult: (result, options, theme, context) => renderTeamToolResult("team_send_message", result, options, theme, context, getMarkdownTheme(), config.participants),
 			parameters: Type.Object({
 				targets: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: targetDescription }),
 				message: Type.String({ description: "Message to send" }),
@@ -417,6 +424,9 @@ export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig)
 			name: "send_main_message",
 			label: "Team Main",
 			description: "Send a message to the main agent.",
+			renderShell: "self",
+			renderCall: (args, theme, context) => renderTeamToolCall("team_send_message", mainSendView(args), theme, context, config.participants),
+			renderResult: (result, options, theme, context) => renderTeamToolResult("team_send_message", result, options, theme, { ...context, args: mainSendView(context.args) }, getMarkdownTheme(), config.participants),
 			parameters: Type.Object({
 				message: Type.String({ description: "Message to send to the main agent" }),
 			}, { additionalProperties: false }),
@@ -431,6 +441,9 @@ export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig)
 			name: "team_status",
 			label: "Team Status",
 			description: "Set your public status and read everyone's public status.",
+			renderShell: "self",
+			renderCall: (args, theme, context) => renderTeamToolCall("team_status", parentTeamView(args), theme, context, config.participants),
+			renderResult: (result, options, theme, context) => renderTeamToolResult("team_status", result, options, theme, { ...context, args: parentTeamView(context.args) }, undefined, config.participants),
 		// TODO: If this typing system supports it, I want gerund and phrase optionality to be a XOR
 			parameters: Type.Object({
 				gerund: Type.Optional(Type.String({ description: "One-word gerund status." })),

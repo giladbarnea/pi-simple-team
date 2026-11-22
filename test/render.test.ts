@@ -3,9 +3,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Container, type TUI } from "@earendil-works/pi-tui";
-import { initTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
+import { initTheme, ToolExecutionComponent, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { MarkdownTheme } from "@earendil-works/pi-tui";
 
+import { registerChildTools } from "../child-tools.ts";
 import { stableRenderWidth, stripAnsi, visibleLength } from "../render-support/ansi.ts";
 import { GLYPHS, recordProjectTrust } from "../render-support/glyphs.ts";
 import {
@@ -1264,5 +1265,100 @@ describe("markdown views in a narrow terminal", () => {
 		composed.addChild(send);
 		composed.addChild(spawn);
 		assertLinesFit(composed.render(VERY_NARROW), VERY_NARROW);
+	});
+});
+
+describe("teammate pane (issue 51)", () => {
+	/** The tools a plain teammate (no canManageOwnTeams) registers, keyed by name. */
+	function plainTeammateTools(): Map<string, ToolDefinition> {
+		const tools = new Map<string, ToolDefinition>();
+		const api = {
+			on: () => undefined,
+			registerMessageRenderer: () => undefined,
+			registerTool: (tool: ToolDefinition) => tools.set(tool.name, tool),
+		} as unknown as ExtensionAPI;
+		registerChildTools(api, {
+			callbackUrl: "http://127.0.0.1:1/callback",
+			callbackToken: "unused",
+			teamName: "context-engineering",
+			teammateName: "context-engineer",
+			processId: "test-process",
+			participants: ["context-engineer", "reviewer", "main"],
+			canManageOwnTeams: false,
+		});
+		return tools;
+	}
+
+	type PaneResult = { text: string; details?: Record<string, unknown>; isError: boolean };
+
+	/** What Pi's own tool row draws in the teammate's pane: the pending call, or the call with its result. */
+	function teammatePane(toolName: string, args: Record<string, unknown>, result?: PaneResult): string {
+		const component = new ToolExecutionComponent(
+			toolName,
+			`${toolName}-call`,
+			args,
+			undefined,
+			plainTeammateTools().get(toolName),
+			{ requestRender() {} } as unknown as TUI,
+			process.cwd(),
+		);
+		component.markExecutionStarted();
+		if (result) component.updateResult({ content: [{ type: "text", text: result.text }], details: result.details ?? {}, isError: result.isError });
+		return component.render(120).map(stripAnsi).join("\n");
+	}
+
+	const jsonResult = (payload: Record<string, unknown>): PaneResult => ({ text: JSON.stringify(payload, null, 2), details: payload, isError: false });
+	const statusArgs = { gerund: "mapping", phrase: "Working with Gilad" };
+
+	test("a teammate's team_status result renders as Team Status, not as its raw JSON", () => {
+		const payload = {
+			teamName: "context-engineering",
+			teamId: "01a1ed71-context-engineering",
+			status: {
+				"context-engineer": { word: "mapping", phrase: "Working with Gilad", updated: new Date().toISOString() },
+				main: { word: "available", phrase: "Main agent", updated: new Date().toISOString() },
+			},
+		};
+
+		const pane = teammatePane("team_status", statusArgs, jsonResult(payload));
+
+		expect(pane).toContain("Team Status context-engineering");
+		expect(pane).toContain("Working with Gilad");
+		expect(pane).not.toContain('"teamName"');
+	});
+
+	test("a teammate's pending team_status names its parent team, the only team it can act on", () => {
+		const pane = teammatePane("team_status", statusArgs);
+
+		expect(pane).toContain("Team Status context-engineering");
+		expect(pane).not.toContain("all teams");
+	});
+
+	test("a teammate's failed team_status names its parent team beside the error", () => {
+		const pane = teammatePane("team_status", statusArgs, { text: "team runtime rejected team_status: 500 Timed out", isError: true });
+
+		expect(pane).toContain("Team Status context-engineering");
+		expect(pane).toContain("team runtime rejected team_status: 500 Timed out");
+		expect(pane).not.toContain("all teams");
+	});
+
+	test("a teammate's team_send_message result renders as Team Send, not as its raw JSON", () => {
+		const payload = { published: true, teams: [{ teamName: "context-engineering", teamId: "01a1ed71-context-engineering", status: {} }], instruction: "Do not wait for replies. Teammates will message you back." };
+
+		const pane = teammatePane("team_send_message", { targets: ["reviewer"], message: "Please review the atlas." }, jsonResult(payload));
+
+		expect(pane).toContain(`Team Send ${g.arrow} reviewer`);
+		expect(pane).toContain("Please review the atlas.");
+		expect(pane).not.toContain('"published"');
+	});
+
+	test("a teammate's send_main_message result renders as a send to main, not as its raw JSON", () => {
+		const payload = { teamName: "context-engineering", teamId: "01a1ed71-context-engineering", published: true, status: {}, instruction: "Do not wait for a reply." };
+
+		const pane = teammatePane("send_main_message", { message: "The atlas is ready." }, jsonResult(payload));
+
+		expect(pane).toContain(`Team Send ${g.arrow} main`);
+		expect(pane).toContain("The atlas is ready.");
+		expect(pane).not.toContain('"published"');
 	});
 });
