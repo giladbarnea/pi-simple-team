@@ -361,6 +361,9 @@ function formatTeammateMessage(team: TeamState, from: string, message: string): 
 	return [`[from ${from} on team ${team.name}]`, message, "", "Current team status:", JSON.stringify(formatStatus(team), null, 2)].join("\n");
 }
 
+/** Main stopped waiting for the acknowledgment, but the request was sent: a busy teammate, such as a fork rendering a large context, can still take the message and start. */
+class DeliveryUnconfirmedError extends Error {}
+
 async function deliverMessage(team: TeamState, from: string, recipient: TeammateState, message: string, formattedMessage: string, interrupt: boolean, triggerTurn = true): Promise<void> {
 	if (!recipient.alive || !recipient.deliveryUrl) throw new Error(`Teammate ${recipient.name} is not ready`);
 	const controller = new AbortController();
@@ -381,7 +384,7 @@ async function deliverMessage(team: TeamState, from: string, recipient: Teammate
 		if (!result.accepted) throw new Error(`Teammate ${recipient.name} did not accept delivery`);
 		appendTeamLog(team, { team: team.name, teammate: recipient.name, direction: "runtime", kind: "ack", summary: "message accepted" });
 	} catch (error) {
-		if (controller.signal.aborted) throw new Error(`Timed out waiting for teammate ${recipient.name} delivery`);
+		if (controller.signal.aborted) throw new DeliveryUnconfirmedError(`Teammate ${recipient.name} did not confirm delivery within ${deliveryTimeoutMilliseconds / 1000} seconds; the message may still arrive, so check team_log before retrying`);
 		throw error;
 	} finally {
 		clearTimeout(timeout);
@@ -539,10 +542,17 @@ async function kickoffTeammates(team: TeamState, teammates: TeammateState[], sta
 		const message = cause instanceof Error ? cause.message : String(cause);
 		team.statuses.set(teammate.name, status("error", message));
 		appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "error", summary: message });
-		return [`${teammate.name}: ${message}`];
+		return [{ unconfirmed: cause instanceof DeliveryUnconfirmedError, line: `${teammate.name}: ${message}` }];
 	});
 	if (errors.length === 0) return;
-	throw new Error(`Team "${team.name}" (team ID: ${team.id ?? team.name}) remains active. ${startIdle ? "Instructions recorded for" : "Work started for"}: ${JSON.stringify(completed)}. Failed teammates: ${errors.join("; ")}. Inspect team_status before retrying; do not spawn the team again.`);
+	const unconfirmed = errors.filter((error) => error.unconfirmed).map((error) => error.line);
+	const failed = errors.filter((error) => !error.unconfirmed).map((error) => error.line);
+	throw new Error([
+		`Team "${team.name}" (team ID: ${team.id ?? team.name}) remains active. ${startIdle ? "Instructions recorded for" : "Work started for"}: ${JSON.stringify(completed)}.`,
+		unconfirmed.length > 0 && `Unconfirmed teammates: ${unconfirmed.join("; ")}.`,
+		failed.length > 0 && `Failed teammates: ${failed.join("; ")}.`,
+		"Inspect team_status before retrying; do not spawn the team again.",
+	].filter(Boolean).join(" "));
 }
 
 /** @example resolveTeamIdentifier([{ id: "main-review", name: "review" }], "review")?.id // "main-review" */
