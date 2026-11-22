@@ -400,6 +400,25 @@ async function waitFor(predicate: () => boolean, timeoutMilliseconds = 2_000): P
 	assert.ok(predicate(), "Timed out waiting for fake Herdr activity");
 }
 
+/** Holds the fake teammate's delivery until released, as a teammate too busy to take a message would. */
+function startHeldDeliveryGate(): { release: () => void; stop: () => void } {
+	let release = (): void => undefined;
+	const released = new Promise<void>((resolve) => { release = resolve; });
+	const gate = Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 60, async fetch(): Promise<Response> { await released; return new Response("continue"); } });
+	const restoreEnvironment = useEnvironment({ PI_SIMPLE_TEAM_TEST_DELIVERY_GATE: `http://127.0.0.1:${gate.port}` });
+	return { release, stop: () => { gate.stop(true); restoreEnvironment(); } };
+}
+
+async function teamLogRows(host: ExtensionHost, team: string): Promise<JsonRecord[]> {
+	return (await host.execute("team_log", { targets: [team], limit: 100 })).details?.entries as JsonRecord[];
+}
+
+async function waitForAsync(predicate: () => Promise<boolean>, timeoutMilliseconds: number): Promise<void> {
+	const deadline = Date.now() + timeoutMilliseconds;
+	while (!(await predicate()) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+	assert.ok(await predicate(), "Timed out waiting for the expected team activity");
+}
+
 type ChildHandler = (...args: unknown[]) => unknown;
 
 type CallbackRequest = {
@@ -811,35 +830,58 @@ describe("unified child runtime", () => {
 	});
 
 	// A forked teammate with a large context can take longer than main's delivery wait to take its briefing, then start working (#52).
-	test("a kickoff delivery that times out is reported as unconfirmed, not failed, and the teammate can still start", async () => {
+	test("a kickoff delivery that times out is reported as unconfirmed, and the teammate's later start clears its error and briefing", async () => {
 		const fake = installFakeCommands();
 		const host = new ExtensionHost();
-		let release = (): void => undefined;
-		const gatePromise = new Promise<void>((resolve) => { release = resolve; });
-		const gate = Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 60, async fetch(): Promise<Response> { await gatePromise; return new Response("continue"); } });
-		process.env.PI_SIMPLE_TEAM_TEST_DELIVERY_GATE = `http://127.0.0.1:${gate.port}`;
-		process.env.PI_SIMPLE_TEAM_TEST_HOLD_MEMBER = "slow";
+		const gate = startHeldDeliveryGate();
+		process.env.PI_SIMPLE_TEAM_TEST_HOLD_MEMBER = "context-auditor";
 		try {
-			const spawn = host.execute("team_spawn", { teamName: "slow-start", commonPrompt: "Work.", teammates: [
-				{ name: "working", systemPrompt: "Work.", model: "fake/fake-model" },
-				{ name: "slow", systemPrompt: "Work.", model: "fake/fake-model", forkContext: true, showOnHerdrPane: true },
-			] });
+			const spawn = host.execute("team_spawn", { teamName: "context-audit", commonPrompt: "Audit the folded context.", teammates: [{ name: "context-auditor", systemPrompt: "Report what the folds hide.", model: "fake/fake-model", forkContext: true, showOnHerdrPane: true }] });
 			const error = await spawn.then(() => assert.fail("Spawn must report the unconfirmed delivery."), (rejection: unknown) => String(rejection instanceof Error ? rejection.message : rejection));
-			assert.match(error, /started for: \["working"\]/, `The confirmed teammate must still be reported as started. Got: ${error}`);
-			assert.doesNotMatch(error, /failed[^.]*slow/i, `A teammate whose delivery was only unconfirmed must not be reported as failed. Got: ${error}`);
-			assert.match(error, /unconfirmed[^.]*slow/i, `The error must say that the slow teammate's delivery is unconfirmed. Got: ${error}`);
-			assert.match(error, /team_log/, `The error must point to team_log to check whether the teammate started. Got: ${error}`);
-			release();
-			const started = async (): Promise<boolean> => ((await host.execute("team_log", { targets: ["slow-start"], limit: 100 })).details?.entries as JsonRecord[]).some((entry) => entry.teammate === "slow" && entry.kind === "agent_start");
-			const deadline = Date.now() + 5_000;
-			while (!(await started()) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
-			assert.ok(await started(), "The teammate whose delivery was unconfirmed must still be able to start its work.");
+			assert.doesNotMatch(error, /Work started for: \[\]/, `An unconfirmed teammate must not read as "no work started", the phrase that misled the reporter. Got: ${error}`);
+			assert.doesNotMatch(error, /failed/i, `A teammate whose delivery was only unconfirmed must not be reported as failed. Got: ${error}`);
+			assert.match(error, /Confirmed started: \[\]\. Unconfirmed teammates: context-auditor: /, `The summary must separate confirmed from unconfirmed teammates. Got: ${error}`);
+			assert.match(error, /agent_start or status row from context-auditor in team_log/, `The error must say what in team_log confirms the start. Got: ${error}`);
+			assert.match(error, /before you send the message again or resume the teammate/, `The error must say which retries to hold off. Got: ${error}`);
+			gate.release();
+			await waitForAsync(async () => (await teamLogRows(host, "context-audit")).some((entry) => entry.teammate === "context-auditor" && entry.kind === "agent_start"), 5_000);
+			const statusAfterStart = ((await host.execute("team_status", { team: "context-audit" })).details?.status as Record<string, JsonRecord>)["context-auditor"];
+			assert.equal(statusAfterStart.word, "working", `Once the teammate starts, its status must stop saying error. Got: ${JSON.stringify(statusAfterStart)}`);
+			await host.execute("team_shutdown", { team: "context-audit" });
+			await host.execute("team_resume", { team: "context-audit", startIdle: true });
+			const messages = lines(fake.eventsPath).filter((entry) => entry.type === "delivery").map((entry) => String(((entry.body as JsonRecord).args as JsonRecord).message));
+			assert.equal(messages.filter((message) => message.includes("Audit the folded context.")).length, 1, `A teammate that took its briefing late must not get it again on resume. Deliveries: ${JSON.stringify(messages)}`);
 		} finally {
-			release();
+			gate.release();
 			delete process.env.PI_SIMPLE_TEAM_TEST_HOLD_MEMBER;
 			await host.shutdown();
-			gate.stop(true);
-			delete process.env.PI_SIMPLE_TEAM_TEST_DELIVERY_GATE;
+			gate.stop();
+			fake.restore();
+		}
+	}, 45_000);
+
+	test("a team message whose delivery times out is reported to the sender as unconfirmed, and the teammate's later start clears its error", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		const gate = startHeldDeliveryGate();
+		try {
+			await host.execute("team_spawn", { teamName: "slow-message", commonPrompt: "Wait.", startIdle: true, teammates: [{ name: "probe", systemPrompt: "Wait.", model: "fake/fake-model" }] });
+			await host.execute("team_send_message", { targets: ["probe"], message: "hold-until-released" });
+			const findNotice = (): JsonRecord | undefined => host.messages.find((message) => String(message.content).includes("hold-until-released"));
+			await waitForAsync(async () => findNotice() !== undefined, 35_000);
+			const notice = String(findNotice()!.content);
+			assert.doesNotMatch(notice, /delivery failed/i, `A timed-out delivery must not be reported as failed. Got: ${notice}`);
+			assert.match(notice, /^Message delivery to teammate "probe" on team "slow-message" \(team ID: [^)]+\) is unconfirmed\./, `The notice must say the delivery is unconfirmed. Got: ${notice}`);
+			assert.match(notice, /agent_start or status row from probe in team_log/, `The notice must point to team_log, not to the status. Got: ${notice}`);
+			assert.doesNotMatch(notice, /Check the teammate's status/, `The notice must not send the reader to a status that says error. Got: ${notice}`);
+			gate.release();
+			await waitForAsync(async () => (await teamLogRows(host, "slow-message")).some((entry) => entry.teammate === "probe" && entry.kind === "agent_start"), 5_000);
+			const statusAfterStart = ((await host.execute("team_status", { team: "slow-message" })).details?.status as Record<string, JsonRecord>).probe;
+			assert.equal(statusAfterStart.word, "working", `Once the teammate starts, its status must stop saying error. Got: ${JSON.stringify(statusAfterStart)}`);
+		} finally {
+			gate.release();
+			await host.shutdown();
+			gate.stop();
 			fake.restore();
 		}
 	}, 45_000);

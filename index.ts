@@ -99,6 +99,8 @@ interface TeammateState {
 	active: boolean;
 	contextPercent?: number;
 	runFailure?: RunFailure;
+	/** The error status an unconfirmed delivery set. Later work from the teammate replaces it. */
+	unconfirmedDelivery?: TeamStatus;
 	pendingTurnDeliveries: number;
 	deliveryQueue: Promise<void>;
 }
@@ -384,7 +386,7 @@ async function deliverMessage(team: TeamState, from: string, recipient: Teammate
 		if (!result.accepted) throw new Error(`Teammate ${recipient.name} did not accept delivery`);
 		appendTeamLog(team, { team: team.name, teammate: recipient.name, direction: "runtime", kind: "ack", summary: "message accepted" });
 	} catch (error) {
-		if (controller.signal.aborted) throw new DeliveryUnconfirmedError(`Teammate ${recipient.name} did not confirm delivery within ${deliveryTimeoutMilliseconds / 1000} seconds; the message may still arrive, so check team_log before retrying`);
+		if (controller.signal.aborted) throw new DeliveryUnconfirmedError(`Teammate ${recipient.name} did not confirm delivery within ${deliveryTimeoutMilliseconds / 1000} seconds, but the message may still arrive. An agent_start or status row from ${recipient.name} in team_log shows that it did; wait for one before you send the message again or resume the teammate`);
 		throw error;
 	} finally {
 		clearTimeout(timeout);
@@ -422,19 +424,38 @@ function queueDelivery(team: TeamState, from: string, recipient: TeammateState, 
 	return delivery;
 }
 
+/** Shows a delivery error in the recipient's status. An unconfirmed delivery is remembered, so that later work from the teammate can replace the error. */
+function recordDeliveryError(team: TeamState, recipient: TeammateState, error: unknown): string {
+	const errorMessage = error instanceof Error ? error.message : String(error);
+	const failure = status("error", errorMessage);
+	team.statuses.set(recipient.name, failure);
+	if (error instanceof DeliveryUnconfirmedError) recipient.unconfirmedDelivery = failure;
+	return errorMessage;
+}
+
+/** Work from a teammate whose delivery was unconfirmed shows that the delivery arrived, kickoff included. The error status and the pending briefing no longer hold. */
+function confirmLateDelivery(team: TeamState, teammate: TeammateState): void {
+	if (team.statuses.get(teammate.name) === teammate.unconfirmedDelivery) team.statuses.set(teammate.name, status("working", "Took its message after main stopped waiting for it"));
+	teammate.unconfirmedDelivery = undefined;
+	teammate.needsBriefing = undefined;
+	teammate.importPending = undefined;
+}
+
 function enqueueDelivery(team: TeamState, from: string, recipient: TeammateState, message: string, interrupt: boolean): void {
 	void queueDelivery(team, from, recipient, message, interrupt).catch(async (error) => {
-		const errorMessage = error instanceof Error ? error.message : String(error);
-		team.statuses.set(recipient.name, status("error", errorMessage));
+		const errorMessage = recordDeliveryError(team, recipient, error);
+		const unconfirmed = error instanceof DeliveryUnconfirmedError;
 		appendTeamLog(team, {
 			team: team.name,
 			teammate: recipient.name,
 			direction: from === "main" ? "main->teammate" : "teammate->teammate",
 			kind: "error",
-			summary: preview(`delivery to ${recipient.name} failed: ${errorMessage}`),
+			summary: preview(`delivery to ${recipient.name} ${unconfirmed ? "unconfirmed" : "failed"}: ${errorMessage}`),
 			details: { from, to: recipient.name, error: errorMessage },
 		});
-		const notification = `Message delivery failed for teammate "${recipient.name}" on team "${team.name}" (team ID: ${team.id ?? team.name}).\nOriginal message:\n${message}\nCause: ${errorMessage}\nCheck the teammate's status before retrying.`;
+		const notification = unconfirmed
+			? `Message delivery to teammate "${recipient.name}" on team "${team.name}" (team ID: ${team.id ?? team.name}) is unconfirmed.\nOriginal message:\n${message}\n${errorMessage}.`
+			: `Message delivery failed for teammate "${recipient.name}" on team "${team.name}" (team ID: ${team.id ?? team.name}).\nOriginal message:\n${message}\nCause: ${errorMessage}\nCheck the teammate's status before retrying.`;
 		try {
 			if (from === "main") {
 				pushOwnerNotice(team, notification);
@@ -539,8 +560,7 @@ async function kickoffTeammates(team: TeamState, teammates: TeammateState[], sta
 		if (outcome.status === "fulfilled") return [];
 		const teammate = teammates[index];
 		const cause: unknown = outcome.reason;
-		const message = cause instanceof Error ? cause.message : String(cause);
-		team.statuses.set(teammate.name, status("error", message));
+		const message = recordDeliveryError(team, teammate, cause);
 		appendTeamLog(team, { team: team.name, teammate: teammate.name, direction: "runtime", kind: "error", summary: message });
 		return [{ unconfirmed: cause instanceof DeliveryUnconfirmedError, line: `${teammate.name}: ${message}` }];
 	});
@@ -548,7 +568,7 @@ async function kickoffTeammates(team: TeamState, teammates: TeammateState[], sta
 	const unconfirmed = errors.filter((error) => error.unconfirmed).map((error) => error.line);
 	const failed = errors.filter((error) => !error.unconfirmed).map((error) => error.line);
 	throw new Error([
-		`Team "${team.name}" (team ID: ${team.id ?? team.name}) remains active. ${startIdle ? "Instructions recorded for" : "Work started for"}: ${JSON.stringify(completed)}.`,
+		`Team "${team.name}" (team ID: ${team.id ?? team.name}) remains active. ${startIdle ? "Instructions confirmed for" : "Confirmed started"}: ${JSON.stringify(completed)}.`,
 		unconfirmed.length > 0 && `Unconfirmed teammates: ${unconfirmed.join("; ")}.`,
 		failed.length > 0 && `Failed teammates: ${failed.join("; ")}.`,
 		"Inspect team_status before retrying; do not spawn the team again.",
@@ -1263,6 +1283,7 @@ function recordRunOutcome(team: TeamState, teammate: TeammateState, event: JsonR
 
 function handleChildEvent(team: TeamState, teammate: TeammateState, event: JsonRecord): void {
 	if (event.type === "agent_start" || event.type === "work_queued") teammate.active = true;
+	if ((event.type === "agent_start" || event.type === "work_queued") && teammate.unconfirmedDelivery) confirmLateDelivery(team, teammate);
 	if (event.type === "agent_settled" || event.type === "session_shutdown") teammate.active = false;
 	if (event.type === "agent_settled") recordRunOutcome(team, teammate, event);
 	if (event.type === "agent_settled" && teammate.processRecord?.heldUpdate && !teammate.processRecord.stopRequested && !team.stopping && !teammateSummary(teammate).active) applyHeldUpdate(team, teammate);
