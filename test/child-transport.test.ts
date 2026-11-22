@@ -217,7 +217,7 @@ const server = http.createServer(async (request, response) => {
     response.end(JSON.stringify({ accepted: true }));
     return;
   }
-  if (body.args.message === "hold-until-released") await fetch(process.env.PI_SIMPLE_TEAM_TEST_DELIVERY_GATE);
+  if (body.args.message === "hold-until-released" || process.env.PI_SIMPLE_TEAM_TEST_HOLD_MEMBER === body.args.to) await fetch(process.env.PI_SIMPLE_TEAM_TEST_DELIVERY_GATE);
   fs.writeFileSync(sessionFile, JSON.stringify({ type: "session", id: sessionId }) + "\n");
   await parent("event", { event: { type: "agent_start" } });
   await parent("event", { event: { type: "tool_execution_start", toolName: "read", toolCallId: "fake-call", args: { path: "README.md" } } });
@@ -809,6 +809,40 @@ describe("unified child runtime", () => {
 			fake.restore();
 		}
 	});
+
+	// A forked teammate with a large context can take longer than main's delivery wait to take its briefing, then start working (#52).
+	test("a kickoff delivery that times out is reported as unconfirmed, not failed, and the teammate can still start", async () => {
+		const fake = installFakeCommands();
+		const host = new ExtensionHost();
+		let release = (): void => undefined;
+		const gatePromise = new Promise<void>((resolve) => { release = resolve; });
+		const gate = Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 60, async fetch(): Promise<Response> { await gatePromise; return new Response("continue"); } });
+		process.env.PI_SIMPLE_TEAM_TEST_DELIVERY_GATE = `http://127.0.0.1:${gate.port}`;
+		process.env.PI_SIMPLE_TEAM_TEST_HOLD_MEMBER = "slow";
+		try {
+			const spawn = host.execute("team_spawn", { teamName: "slow-start", commonPrompt: "Work.", teammates: [
+				{ name: "working", systemPrompt: "Work.", model: "fake/fake-model" },
+				{ name: "slow", systemPrompt: "Work.", model: "fake/fake-model", forkContext: true, showOnHerdrPane: true },
+			] });
+			const error = await spawn.then(() => assert.fail("Spawn must report the unconfirmed delivery."), (rejection: unknown) => String(rejection instanceof Error ? rejection.message : rejection));
+			assert.match(error, /started for: \["working"\]/, `The confirmed teammate must still be reported as started. Got: ${error}`);
+			assert.doesNotMatch(error, /failed[^.]*slow/i, `A teammate whose delivery was only unconfirmed must not be reported as failed. Got: ${error}`);
+			assert.match(error, /unconfirmed[^.]*slow/i, `The error must say that the slow teammate's delivery is unconfirmed. Got: ${error}`);
+			assert.match(error, /team_log/, `The error must point to team_log to check whether the teammate started. Got: ${error}`);
+			release();
+			const started = async (): Promise<boolean> => ((await host.execute("team_log", { targets: ["slow-start"], limit: 100 })).details?.entries as JsonRecord[]).some((entry) => entry.teammate === "slow" && entry.kind === "agent_start");
+			const deadline = Date.now() + 5_000;
+			while (!(await started()) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+			assert.ok(await started(), "The teammate whose delivery was unconfirmed must still be able to start its work.");
+		} finally {
+			release();
+			delete process.env.PI_SIMPLE_TEAM_TEST_HOLD_MEMBER;
+			await host.shutdown();
+			gate.stop(true);
+			delete process.env.PI_SIMPLE_TEAM_TEST_DELIVERY_GATE;
+			fake.restore();
+		}
+	}, 45_000);
 
 	test("a teammate receives its own peer-delivery failure instead of notifying main", async () => {
 		const fake = installFakeCommands();
