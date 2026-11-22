@@ -5,6 +5,9 @@ import * as path from "node:path";
 import { setSystemTime, test } from "bun:test";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxProviderHandle } from "@earendil-works/pi-ai";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+// Load the extension's modules before the test sets TZ. Their module-level date formatters keep the zone they were built in,
+// and the per-test restore of TZ cannot change them, so later test files would format in Asia/Jerusalem.
+import "../index.ts";
 
 const extensionPath = path.resolve(import.meta.dir, "..", "index.ts");
 

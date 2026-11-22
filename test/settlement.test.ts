@@ -475,7 +475,12 @@ describe.skipIf(process.env.PI_SIMPLE_TEAM_TEST_REAL_PI !== "1")("teammate settl
 	test("a SIGKILL during a run gives one exit notice and no failed-run notice", async () => {
 		const child = await startTeam("held");
 		try {
-			await waitFor(async () => child.requests() === 1 && await child.active(), "the held provider request");
+			// Kill only after every delivery is acknowledged: a kill before the acknowledgment rightly reports the message as undelivered.
+			const everyDeliveryAcknowledged = async (): Promise<boolean> => {
+				const kinds = ((await child.log()).details.entries as TeamLogEntry[]).map((entry) => entry.kind);
+				return kinds.filter((kind) => kind === "ack").length === kinds.filter((kind) => kind === "send").length;
+			};
+			await waitFor(async () => child.requests() === 1 && await child.active() && await everyDeliveryAcknowledged(), "the held provider request with main's message acknowledged");
 			process.kill(child.childPid(), "SIGKILL");
 			await waitFor(async () => ((await child.log()).details.entries as TeamLogEntry[]).some((entry) => entry.kind === "exit"), "the child to exit");
 			await Bun.sleep(exitNoticeGraceMilliseconds + 500);
