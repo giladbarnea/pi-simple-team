@@ -115,9 +115,11 @@ jobs:
             }
           }
           NODE
-          echo "NODE_OPTIONS=--require $RUNNER_TEMP/pi-runtime-preload.cjs" >> "$GITHUB_ENV"
 
       - name: Run the real-Pi suite
+        # GitHub refuses NODE_OPTIONS through GITHUB_ENV, so it is set here; Bun passes it on to every Node child.
+        env:
+          NODE_OPTIONS: --require ${{ runner.temp }}/pi-runtime-preload.cjs
         run: |
           echo "pi: $(command -v pi)"
           HOME="$PI_SANDBOX" PI_CODING_AGENT_DIR="$PI_SANDBOX" PI_SIMPLE_TEAM_TEST_REAL_PI=1 bun test
@@ -127,5 +129,7 @@ jobs:
         run: |
           test -s "$PI_RUNTIME_LOG" || { echo "No Pi CLI process ran."; exit 1; }
           echo "Pi CLI processes by version: $(awk '{print $2}' "$PI_RUNTIME_LOG" | sort | uniq -c)"
-          echo "Of them, started by another Pi CLI process: $(awk 'NR == FNR { pi[$1] = 1; next } $3 in pi' "$PI_RUNTIME_LOG" "$PI_RUNTIME_LOG" | wc -l)"
+          nested=$(awk 'NR == FNR { pi[$1] = 1; next } $3 in pi' "$PI_RUNTIME_LOG" "$PI_RUNTIME_LOG" | wc -l)
+          echo "Of them, started by another Pi CLI process: $nested"
+          test "$nested" -gt 0 || { echo "No Pi CLI process was started by another one."; exit 1; }
           ! awk -v expected="$PI_VERSION" '$2 != expected' "$PI_RUNTIME_LOG" | grep .
