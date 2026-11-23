@@ -2039,6 +2039,61 @@ describe("visible Herdr teammates", () => {
 		}
 	});
 
+	describe("main's quit and restart", () => {
+		const teamId = "fake-main-session-id-reattached-pane";
+		const reattachedMessage = (host: ExtensionHost): string | undefined => host.messages.find((message) => message.customType === "pi-simple-team-reattached")?.content as string | undefined;
+		const savedMembers = (): JsonRecord[] => (JSON.parse(fs.readFileSync(path.join(process.env.PI_CODING_AGENT_DIR!, "pi-simple-team", "teams-v2", `${encodeURIComponent(teamId)}.json`), "utf8")) as { members: JsonRecord[] }).members;
+		async function quitWithPaneAndBackgroundTeammates(): Promise<void> {
+			const originHost = new ExtensionHost();
+			await originHost.execute("team_spawn", { teamName: "reattached-pane", startIdle: true, commonPrompt: "Wait.", teammates: [
+				{ name: "visible", systemPrompt: "Wait.", model: "fake/fake-model", showOnHerdrPane: true },
+				{ name: "background", systemPrompt: "Wait.", model: "fake/fake-model" },
+			] });
+			await originHost.shutdown();
+		}
+
+		test("reattaches a Herdr pane teammate in a new visible pane and keeps its saved pane setting", async () => {
+			const fake = installFakeCommands();
+			let restartedHost: ExtensionHost | undefined;
+			try {
+				await quitWithPaneAndBackgroundTeammates();
+				restartedHost = new ExtensionHost();
+				await waitFor(() => reattachedMessage(restartedHost!) !== undefined, 5_000);
+				assert.match(reattachedMessage(restartedHost)!, /Team "reattached-pane" \(team ID: fake-main-session-id-reattached-pane\): visible, background\./);
+				const paneStarts = lines(fake.logPath).filter((entry) => entry.type === "start");
+				assert.equal(paneStarts.length, 2, `Reattachment must open a new pane for the pane teammate. Herdr starts: ${JSON.stringify(paneStarts)}`);
+				const listed = ((await restartedHost.execute("team_list", {})).details?.teams as JsonRecord[]).find((team) => team.teamId === teamId)!.teammates as JsonRecord[];
+				assert.deepEqual(listed.map(({ name, live, showOnHerdrPane }) => ({ name, live, showOnHerdrPane })), [
+					{ name: "visible", live: true, showOnHerdrPane: true },
+					{ name: "background", live: true, showOnHerdrPane: false },
+				]);
+			} finally {
+				await restartedHost?.shutdown();
+				fake.restore();
+			}
+		});
+
+		test("without Herdr, refuses to reattach a team with a pane teammate, says so, and keeps it as it was saved", async () => {
+			const fake = installFakeCommands();
+			let restartedHost: ExtensionHost | undefined;
+			try {
+				await quitWithPaneAndBackgroundTeammates();
+				const savedBefore = savedMembers();
+				const piStartsBefore = lines(fake.eventsPath).filter((entry) => entry.type === "pi_start").length;
+				delete process.env.HERDR_TAB_ID;
+				restartedHost = new ExtensionHost();
+				await waitFor(() => reattachedMessage(restartedHost!) !== undefined, 5_000);
+				assert.equal(reattachedMessage(restartedHost), 'Could not reattach team "reattached-pane" (team ID: fake-main-session-id-reattached-pane): showOnHerdrPanes requires HERDR_TAB_ID in the main Pi process. Start main inside Herdr to reattach it, or run team_resume to bring it back in the background.');
+				assert.equal(lines(fake.eventsPath).filter((entry) => entry.type === "pi_start").length, piStartsBefore, "No teammate may start headless in place of its pane.");
+				assert.deepEqual(savedMembers(), savedBefore, "The saved team, including its pane setting, must stay as main's quit left it.");
+				assert.equal(savedBefore.find((member) => member.name === "visible")?.showOnHerdrPane, true);
+			} finally {
+				await restartedHost?.shutdown();
+				fake.restore();
+			}
+		});
+	});
+
 	test("resumes a persisted session in visible panes only when explicitly requested", async () => {
 		const fake = installFakeCommands();
 		const originHost = new ExtensionHost();

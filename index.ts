@@ -1594,10 +1594,17 @@ export default function (pi: ExtensionAPI) {
 		closeCallbackServerIfUnused();
 	});
 
-	/** Restarts a team's interrupted teammates idle, in their own conversations, without delivering anything. */
+	/** Restarts a team's interrupted teammates idle, in their own conversations and saved transports, without delivering anything. Without Herdr, a team with a pane teammate stays as saved. */
 	async function reattachTeam(manifest: TeamManifest, interrupted: NonNullable<TeamManifest["interrupted"]>, inPanes: string[], parentSession: NonNullable<TeamState["parentSession"]>): Promise<Reattachment> {
 		const reattachment: Reattachment = { teamName: manifest.name, teamId: manifest.id, reattached: [], working: [], inPanes };
 		let team: TeamState | undefined;
+		const needsHerdr = manifest.members.some((member) => member.showOnHerdrPane && interrupted.teammates.includes(member.name));
+		let herdrParentPaneId: string | undefined;
+		try {
+			herdrParentPaneId = needsHerdr ? await validateHerdrAvailability() : undefined;
+		} catch (error) {
+			return { ...reattachment, error: (error as Error).message, remedy: "Start main inside Herdr to reattach it, or run team_resume to bring it back in the background." };
+		}
 		try {
 			await ensureCallbackServer();
 			team = restoreTeamState(owner, pi, parentPiCommand, manifest, claimTeamLease(manifest.id, parentSession.id));
@@ -1609,8 +1616,8 @@ export default function (pi: ExtensionAPI) {
 			for (const name of interrupted.teammates) {
 				const teammate = team.members.get(name)!;
 				const sessionFile = sessionFileForResume(teammate);
-				prepareTeammateStart(teammate, "rpc");
-				await startTeammate(team, teammate, participantNames, undefined, { sessionFile, restartEmpty: sessionFile === undefined });
+				prepareTeammateStart(teammate, teammate.transport);
+				await startTeammate(team, teammate, participantNames, herdrParentPaneId, { sessionFile, restartEmpty: sessionFile === undefined });
 				if (!sessionFile) emptyRestarts.push(teammate);
 				team.statuses.set(name, status("idle", interrupted.working.includes(name) ? "Reattached; was working when main stopped" : "Reattached"));
 			}
