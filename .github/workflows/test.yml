@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pi: ["1.5.2"]
+        pi: ["1.5.2", "1.6.0"]
     env:
       PI_VERSION: ${{ matrix.pi }}
     steps:
@@ -56,7 +56,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pi: ["1.5.2"]
+        pi: ["1.5.2", "1.6.0"]
     env:
       PI_VERSION: ${{ matrix.pi }}
     steps:
