@@ -71,9 +71,12 @@ type MarkdownTeamLine = { prefix: string; markdown: string; markdownTheme: Markd
 /** A teammate's fact row. Its table shrinks it to fit the width, in collapsed and expanded views alike. */
 type FactTeamLine = { prefix: string; row: FactRow; table: FactTable };
 
-export type TeamLine = string | { prefix: string; text: string } | { left: string; right: string } | MarkdownTeamLine | FactTeamLine;
+/** A row with a right-aligned part. With `rightFrom`, the right part shows only at that width or wider, so it never clips the left part. */
+type RightAlignedTeamLine = { left: string; right: string; rightFrom?: number };
 
-function isRightAlignedTeamLine(line: TeamLine): line is { left: string; right: string } {
+export type TeamLine = string | { prefix: string; text: string } | RightAlignedTeamLine | MarkdownTeamLine | FactTeamLine;
+
+function isRightAlignedTeamLine(line: TeamLine): line is RightAlignedTeamLine {
 	return typeof line !== "string" && "right" in line;
 }
 
@@ -123,6 +126,7 @@ export function clipTeamLines(lines: TeamLine[], width: number): string[] {
 
 function clipTeamLine(line: TeamLine, width: number): string {
 	if (isFactTeamLine(line)) return `${line.prefix}${line.table.fit(line.row, width - visibleLength(line.prefix))}`;
+	if (isRightAlignedTeamLine(line) && width < (line.rightFrom ?? 0)) return clipToWidth(line.left, width);
 	return isRightAlignedTeamLine(line) ? rightAlignedLine(line.left, line.right, width) : clipToWidth(teamLineText(line), width);
 }
 
@@ -957,12 +961,15 @@ function reminderListLines(theme: ThemeLike, details: ReminderListDetails): Team
 	const slugWidth = Math.max(...rows.map((row) => row.slug.length));
 	const idWidth = Math.max(...rows.map((row) => row.id.length));
 	const wakeWidth = Math.max(...rows.map((row) => clockText(row.wake, now.day).length));
-	return [header, ...rows.map((row, index): TeamLine => {
+	const cells = rows.map((row, index) => {
 		const branch = index === rows.length - 1 ? "└" : "├";
 		const wake = `${theme.fg("text", "wakes ")}${theme.bold(padVisible(clockText(row.wake, now.day), wakeWidth))}`;
 		const left = `${treeConnector(theme, branch)}${theme.fg("accent", padVisible(row.slug, slugWidth))}  ${theme.fg("muted", padVisible(row.id, idWidth))}  ${wake}  ${theme.fg("success", row.wake.relative)}`;
 		return { left, right: theme.fg("dim", `armed ${clockText(row.armed, now.day)}, ${row.armed.relative}`) };
-	})];
+	});
+	// The armed column yields as a whole, before any row's wake facts would clip.
+	const rightFrom = Math.max(...cells.map((cell) => visibleLength(cell.left) + 2 + visibleLength(cell.right)));
+	return [header, ...cells.map((cell): TeamLine => ({ ...cell, rightFrom }))];
 }
 
 export function renderReminderListCall(theme: ThemeLike, context: ToolRenderContextLike) {

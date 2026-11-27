@@ -871,6 +871,26 @@ describe("reminder renderers", () => {
 		}
 	});
 
+	test("a narrow list drops the armed column before it clips any wake time, collapsed and expanded", async () => {
+		await atLocalTime("Asia/Jerusalem", "2026-11-27T16:00:00Z", async () => {
+			const host = new ExtensionHost();
+			try {
+				const { today, tomorrow } = await approvedScenario(host);
+				const result = await host.executeResult("list_reminders", {});
+				for (const expanded of [false, true]) {
+					for (const width of [72, 85]) {
+						const lines = host.renderResult("list_reminders", result, {}, { plain: true, width, expanded });
+						const output = lines.join("\n");
+						assert.match(lines[1]!, new RegExp(`^  ├─ ${today} +reminder-1  wakes 6:45pm +in 15m$`), `Expected the full wake facts without the armed time at ${width} columns (expanded: ${expanded}):\n${output}`);
+						assert.match(lines[2]!, new RegExp(`^  └─ ${tomorrow} +reminder-2  wakes Nov 28, 9:00am  in 14h and 30m$`), `Expected the full wake facts without the armed time at ${width} columns (expanded: ${expanded}):\n${output}`);
+					}
+				}
+			} finally {
+				await host.shutdown();
+			}
+		});
+	});
+
 	test("collapsed rows clip to a narrow width and preview a long message; expanded rows wrap all of it", async () => {
 		await atLocalTime("Asia/Jerusalem", "2026-11-27T16:00:00Z", async () => {
 			const host = new ExtensionHost();
