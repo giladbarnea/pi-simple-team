@@ -2,6 +2,8 @@ import { Markdown, type MarkdownTheme, truncateToWidth, wrapTextWithAnsi } from 
 
 import { padVisible, stableRenderWidth, visibleLength } from "./render-support/ansi.ts";
 import { glyphs } from "./render-support/glyphs.ts";
+import { contextHeat } from "./render-support/heat.ts";
+import { parseContextWindowReport } from "./context-window.ts";
 import { stackPrefix, toolLabel, treeConnector, treeStem } from "./render-support/theme.ts";
 import { commandExit, plural, renderPendingCall, textContent } from "./render-support/text.ts";
 import { piModelName } from "./model-names.ts";
@@ -357,8 +359,8 @@ function expandHint(theme: ThemeLike, hidden: number): string {
 	return theme.fg("dim", `${g.ellipsis} ${hidden} more line${hidden === 1 ? "" : "s"}${g.dot}ctrl+o to expand`);
 }
 
-function quotedBody(theme: ThemeLike, message: string, options: { lineLimit: number; barToken: string }): TeamLine[] {
-	const bar = `  ${theme.fg(options.barToken, glyphs().codeBar)} `;
+function quotedBody(theme: ThemeLike, message: string, options: { lineLimit: number; barToken: string; indent?: string }): TeamLine[] {
+	const bar = `${options.indent ?? "  "}${theme.fg(options.barToken, glyphs().codeBar)} `;
 	const lines = message.replace(/\r\n/g, "\n").split("\n");
 	const shown = lines.slice(0, options.lineLimit);
 	const body: TeamLine[] = shown.map((line) => ({ prefix: bar, text: line }));
@@ -919,6 +921,144 @@ export function renderReminderToolResult(
 		}),
 		options.expanded ? "wrap" : "clip",
 	);
+}
+
+interface ReminderClock {
+	day: string;
+	time: string;
+	relative: string;
+}
+
+/**
+ * Splits a reminder tool's time text into its day, its time with zone, and its relative part.
+ * @example reminderClock("Nov 27, 2026, 6:45pm GMT+2 (in 15m)") // { day: "Nov 27", time: "6:45pm GMT+2", relative: "in 15m" }
+ */
+function reminderClock(text: string): ReminderClock {
+	const match = /^(\w+ \d+), \d+, (\S+ \S+)(?: \((.+)\))?$/.exec(text)!;
+	return { day: match[1]!, time: match[2]!, relative: match[3] ?? "" };
+}
+
+/** @example clockText({ day: "Nov 28", time: "9:00am GMT+2", relative: "" }, "Nov 27") // "Nov 28, 9:00am" */
+function clockText(clock: ReminderClock, today: string): string {
+	const time = clock.time.replace(/ \S+$/, "");
+	return clock.day === today ? time : `${clock.day}, ${time}`;
+}
+
+interface ReminderListDetails {
+	now: string;
+	reminders: Array<{ id: string; slug: string; armedAt: string; wakeAt: string }>;
+}
+
+function reminderListLines(theme: ThemeLike, details: ReminderListDetails): TeamLine[] {
+	const now = reminderClock(details.now);
+	const header = headerLine(theme, "List Reminders", "", [theme.fg("muted", `${details.reminders.length} pending`), theme.fg("dim", `now ${now.time}`)]);
+	if (details.reminders.length === 0) return [header, `${treeConnector(theme, "└")}${theme.fg("muted", "no pending reminders")}`];
+	const rows = details.reminders.map((reminder) => ({ ...reminder, wake: reminderClock(reminder.wakeAt), armed: reminderClock(reminder.armedAt) }));
+	const slugWidth = Math.max(...rows.map((row) => row.slug.length));
+	const idWidth = Math.max(...rows.map((row) => row.id.length));
+	const wakeWidth = Math.max(...rows.map((row) => clockText(row.wake, now.day).length));
+	return [header, ...rows.map((row, index): TeamLine => {
+		const branch = index === rows.length - 1 ? "└" : "├";
+		const wake = `${theme.fg("text", "wakes ")}${theme.bold(padVisible(clockText(row.wake, now.day), wakeWidth))}`;
+		const left = `${treeConnector(theme, branch)}${theme.fg("accent", padVisible(row.slug, slugWidth))}  ${theme.fg("muted", padVisible(row.id, idWidth))}  ${wake}  ${theme.fg("success", row.wake.relative)}`;
+		return { left, right: theme.fg("dim", `armed ${clockText(row.armed, now.day)}, ${row.armed.relative}`) };
+	})];
+}
+
+export function renderReminderListCall(theme: ThemeLike, context: ToolRenderContextLike) {
+	return renderPendingCall(callBody(theme, "List Reminders", ""), theme, context, context?.cwd);
+}
+
+export function renderReminderListResult(result: { isError?: boolean; content?: unknown; details?: unknown }, options: { expanded: boolean }, theme: ThemeLike, context: ToolRenderContextLike): TeamLines {
+	const mode = options.expanded ? "wrap" : "clip";
+	if (context?.isError || result?.isError) return new TeamLines(errorLines(theme, callBody(theme, "List Reminders", ""), textContent(result)), mode);
+	return new TeamLines(reminderListLines(theme, result.details as ReminderListDetails), mode);
+}
+
+type CancelOutcome = "cancelled" | "delivered" | "unknown";
+
+interface CancelResultView {
+	reminder?: string;
+	id?: string;
+	slug?: string;
+	result: CancelOutcome;
+	message?: string;
+	wakeAt?: string;
+}
+
+const CANCEL_OUTCOME_TOKENS: Record<CancelOutcome, string> = { cancelled: "success", delivered: "muted", unknown: "warning" };
+const CANCEL_OUTCOME_NOTES: Record<Exclude<CancelOutcome, "cancelled">, string> = { delivered: "already delivered, nothing to cancel", unknown: "no reminder with this ID or slug" };
+
+function cancelCallBody(theme: ThemeLike, args: Record<string, unknown>, counts: string[] = []): string {
+	const requested = args.reminders as string[] | undefined;
+	return callBody(theme, "Cancel Reminders", "", [theme.fg("muted", requested ? `${requested.length} requested` : "all pending"), ...counts]);
+}
+
+function cancelReminderLines(theme: ThemeLike, args: Record<string, unknown>, results: CancelResultView[], expanded: boolean): TeamLine[] {
+	const counts = (Object.keys(CANCEL_OUTCOME_TOKENS) as CancelOutcome[]).flatMap((outcome) => {
+		const count = results.filter((entry) => entry.result === outcome).length;
+		return count > 0 ? [theme.fg(CANCEL_OUTCOME_TOKENS[outcome], `${count} ${outcome}`)] : [];
+	});
+	const header = `${stackPrefix(theme)}${cancelCallBody(theme, args, counts)}`;
+	if (results.length === 0) return [header, `${treeConnector(theme, "└")}${theme.fg("muted", "nothing to cancel")}`];
+	const outcomeWidth = Math.max(...results.map((entry) => entry.result.length));
+	const nameWidth = Math.max(...results.map((entry) => (entry.slug ?? entry.reminder!).length));
+	const idWidth = Math.max(...results.map((entry) => (entry.id ?? "").length));
+	const lineLimit = expanded ? Number.POSITIVE_INFINITY : SEND_PREVIEW_LINES;
+	return [header, ...results.flatMap((entry, index): TeamLine[] => {
+		const branch = index === results.length - 1 ? "└" : "├";
+		const name = entry.slug ? theme.fg("accent", padVisible(entry.slug, nameWidth)) : theme.fg("warning", padVisible(entry.reminder!, nameWidth));
+		const note = entry.result === "cancelled" ? `${theme.fg("text", "was due ")}${theme.bold(clockText(reminderClock(entry.wakeAt!), ""))}` : theme.fg("dim", CANCEL_OUTCOME_NOTES[entry.result]);
+		const row = `${treeConnector(theme, branch)}${theme.fg(CANCEL_OUTCOME_TOKENS[entry.result], padVisible(entry.result, outcomeWidth))}  ${name}  ${theme.fg("muted", padVisible(entry.id ?? "", idWidth))}  ${note}`;
+		if (entry.message === undefined) return [row];
+		return [row, ...quotedBody(theme, entry.message, { lineLimit, barToken: "muted", indent: `${treeStem(theme, branch)}  ` })];
+	})];
+}
+
+export function renderReminderCancelCall(args: Record<string, unknown>, theme: ThemeLike, context: ToolRenderContextLike) {
+	return renderPendingCall(cancelCallBody(theme, args ?? {}), theme, context, context?.cwd);
+}
+
+export function renderReminderCancelResult(result: { isError?: boolean; content?: unknown; details?: unknown }, options: { expanded: boolean }, theme: ThemeLike, context: ToolRenderContextLike): TeamLines {
+	const mode = options.expanded ? "wrap" : "clip";
+	const args = (context?.args ?? {}) as Record<string, unknown>;
+	if (context?.isError || result?.isError) return new TeamLines(errorLines(theme, cancelCallBody(theme, args), textContent(result)), mode);
+	return new TeamLines(cancelReminderLines(theme, args, (result.details as { results: CancelResultView[] }).results, options.expanded), mode);
+}
+
+const USAGE_METER_CELLS = 20;
+
+/** @example tokenCount(1000) // "1M"; tokenCount(272) // "272k" */
+function tokenCount(thousands: number): string {
+	return thousands >= 1000 ? `${Number((thousands / 1000).toFixed(1))}M` : `${thousands}k`;
+}
+
+/** One meter row per agent in a context-window report. The caller's own line is named `selfName`. */
+function contextUsageLines(theme: ThemeLike, report: string, selfName: string, roster: string[]): TeamLine[] {
+	const agents = report.split("\n").map(parseContextWindowReport).map((line) => ({ ...line, name: line.teammate ?? selfName }));
+	const teams = [...new Set(agents.flatMap((agent) => (agent.team ? [agent.team] : [])))];
+	const header = headerLine(theme, "Context Window Usage", teams.map((team) => theme.fg("accent", team)).join(theme.fg("dim", ", ")), [theme.fg("muted", plural(agents.length, "agent"))]);
+	const nameWidth = Math.max(...agents.map((agent) => agent.name.length));
+	const usedWidth = Math.max(...agents.map((agent) => tokenCount(agent.thousandsUsed).length));
+	const windowWidth = Math.max(...agents.map((agent) => tokenCount(agent.thousandsAvailable).length));
+	return [header, ...agents.map((agent, index) => {
+		const branch = index === agents.length - 1 ? "└" : "├";
+		const filled = Math.min(USAGE_METER_CELLS, Math.max(0, Math.round((agent.percent / 100) * USAGE_METER_CELLS)));
+		const meter = `${contextHeat(theme, agent.percent, "━".repeat(filled))}${theme.fg("borderMuted", "─".repeat(USAGE_METER_CELLS - filled))}`;
+		const percent = theme.fg("text", theme.bold(`${agent.percent}%`.padStart(4)));
+		const figures = `${theme.fg("text", tokenCount(agent.thousandsUsed).padStart(usedWidth))}${theme.fg("muted", ` of ${tokenCount(agent.thousandsAvailable).padEnd(windowWidth)}`)}${dimDot(theme)}${theme.fg("text", tokenCount(agent.thousandsAvailable - agent.thousandsUsed))}${theme.fg("muted", " left")}`;
+		return `${treeConnector(theme, branch)}${theme.fg(actorHueToken(agent.name, roster), padVisible(agent.name, nameWidth))}  ${meter} ${percent}  ${figures}`;
+	})];
+}
+
+export function renderContextUsageCall(theme: ThemeLike, context: ToolRenderContextLike) {
+	return renderPendingCall(callBody(theme, "Context Window Usage", ""), theme, context, context?.cwd);
+}
+
+export function renderContextUsageResult(result: { isError?: boolean; content?: unknown }, options: { expanded: boolean }, theme: ThemeLike, context: ToolRenderContextLike, selfName: string, roster: string[]): TeamLines {
+	const mode = options.expanded ? "wrap" : "clip";
+	if (context?.isError || result?.isError) return new TeamLines(errorLines(theme, callBody(theme, "Context Window Usage", ""), textContent(result)), mode);
+	return new TeamLines(contextUsageLines(theme, textContent(result), selfName, roster), mode);
 }
 
 export function renderTeamMessage(message: { details?: unknown }, options: { expanded: boolean }, theme: ThemeLike, markdownTheme?: MarkdownTheme, roster: string[] = []): QuotedMarkdownView | TeamLines | undefined {

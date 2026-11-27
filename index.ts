@@ -31,7 +31,7 @@ import {
 	type TeamManifestMember,
 } from "./team-registry.ts";
 import { appendTeamLog, filterTeamLog, normalizeChildEvent, pageTeamLog, preview, renderTeamLogPage, type TeamLogEntry } from "./teamlog.ts";
-import { renderReminderToolCall, renderReminderToolResult, renderTeamMessage, renderTeamToolCall, renderTeamToolResult, type TeammateView, type TeamMessageDetails } from "./render.ts";
+import { renderContextUsageCall, renderContextUsageResult, renderReminderCancelCall, renderReminderCancelResult, renderReminderListCall, renderReminderListResult, renderReminderToolCall, renderReminderToolResult, renderTeamMessage, renderTeamToolCall, renderTeamToolResult, type TeammateView, type TeamMessageDetails } from "./render.ts";
 import { openTeamOverview, type TeamSnapshot } from "./team-ui.ts";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -1829,6 +1829,9 @@ export default function (pi: ExtensionAPI) {
 		defineTool({
 			name: "list_reminders",
 			label: "List Reminders",
+			renderShell: "self",
+			renderCall: (_args, theme, context) => renderReminderListCall(theme, context),
+			renderResult: (result, options, theme, context) => renderReminderListResult(result, options, theme, context),
 			description: "List your pending reminders in this session: ID, slug, and when each was armed and wakes, in absolute and relative time. Delivered and cancelled reminders are left out.",
 			parameters: Type.Object({}, { additionalProperties: false }),
 			async execute() {
@@ -1850,6 +1853,9 @@ export default function (pi: ExtensionAPI) {
 		defineTool({
 			name: "cancel_reminders",
 			label: "Cancel Reminders",
+			renderShell: "self",
+			renderCall: (args, theme, context) => renderReminderCancelCall(args, theme, context),
+			renderResult: (result, options, theme, context) => renderReminderCancelResult(result, options, theme, context),
 			description: "Cancel your pending reminders in this session, by ID or slug, or all of them with all: true. Each result says cancelled, delivered or unknown; a cancelled one returns its message and wake time, so you can set it again with schedule_reminder.",
 			parameters: Type.Object({
 				reminders: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: "Reminder IDs or slugs to cancel" })),
@@ -2273,6 +2279,9 @@ export default function (pi: ExtensionAPI) {
 		defineTool({
 			name: "get_context_window_usage",
 			label: "Context Window Usage",
+			renderShell: "self",
+			renderCall: (_args, theme, context) => renderContextUsageCall(theme, context),
+			renderResult: (result, options, theme, context) => renderContextUsageResult(result, options, theme, context, childRuntimeConfig?.teammateName ?? "main", sessionTeammateRoster),
 			description: "Get context-window use of selected teammates. Your own window's use is always included.",
 			parameters: Type.Object({
 				targets: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: `${targetDescription} Omit or pass an empty list for only your own usage.` })),

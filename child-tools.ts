@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { formatContextWindowReport, requireKnownContextUsage } from "./context-window.ts";
 import { formatModelReference } from "./model-preflight.ts";
 import { lastRecordedModelActivity } from "./resume-message.ts";
-import { renderTeamMessage, renderTeamToolCall, renderTeamToolResult } from "./render.ts";
+import { renderContextUsageCall, renderContextUsageResult, renderTeamMessage, renderTeamToolCall, renderTeamToolResult } from "./render.ts";
 import { targetDescription, interruptDescription } from "./team-selection.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -391,6 +391,9 @@ export function registerChildTools(pi: ExtensionAPI, config: ChildRuntimeConfig)
 		defineTool({
 			name: "get_context_window_usage",
 			label: "Context Window Usage",
+			renderShell: "self",
+			renderCall: (_args, theme, context) => renderContextUsageCall(theme, context),
+			renderResult: (result, options, theme, context) => renderContextUsageResult(result, options, theme, context, config.teammateName, config.participants),
 			description: "Get your current context-window use.",
 			parameters: Type.Object({}, { additionalProperties: false }),
 			async execute(_toolCallId, _params, _signal, _onUpdate, context) {

@@ -17,3 +17,25 @@ export function formatContextWindowReport(subjectWithVerb: string, usage: KnownC
 	const contextWindow = `${Math.round(usage.contextWindow / 1_000)}k`;
 	return `${subjectWithVerb} used ${tokens} tokens out of ${contextWindow} available (${Math.round(usage.percent)}%).`;
 }
+
+/** One line of a context-window report, read back for display. `teammate` and `team` are absent on the caller's own "You have" line. */
+export interface ContextWindowReportLine {
+	teammate?: string;
+	team?: string;
+	thousandsUsed: number;
+	thousandsAvailable: number;
+	percent: number;
+}
+
+const REPORT_LINE = /^(?:Teammate (.+) \(Pi session ID: \S+\) on team (.+) \(team ID: .+\) has|You have) used (\d+)k tokens out of (\d+)k available \((\d+)%\)\.$/;
+
+/**
+ * Reads one line that `formatContextWindowReport` wrote. Throws on any other text.
+ * @example parseContextWindowReport("You have used 87k tokens out of 272k available (32%).") // { teammate: undefined, team: undefined, thousandsUsed: 87, thousandsAvailable: 272, percent: 32 }
+ */
+export function parseContextWindowReport(line: string): ContextWindowReportLine {
+	const match = REPORT_LINE.exec(line);
+	if (!match) throw new Error(`Not a context-window report line: ${line}`);
+	const [, teammate, team, used, available, percent] = match;
+	return { teammate, team, thousandsUsed: Number(used), thousandsAvailable: Number(available), percent: Number(percent) };
+}

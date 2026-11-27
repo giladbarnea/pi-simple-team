@@ -10,6 +10,7 @@ import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 
 import { registerChildTools } from "../child-tools.ts";
+import { visibleLength } from "../render-support/ansi.ts";
 import teamExtension from "../index.ts";
 import { useEnvironment, useFakePiPackage } from "./pi-launch.ts";
 import { scopedRestore } from "./test-scope.ts";
@@ -41,7 +42,7 @@ type RegisteredTool = {
 		result: ToolResult,
 		options: { expanded: boolean },
 		theme: { bold: (text: string) => string; fg: (token: string, text: string) => string },
-		context: { args: JsonRecord },
+		context: { args: JsonRecord; isError?: boolean },
 	) => RenderedToolResult;
 	execute: (
 		toolCallId: string,
@@ -386,14 +387,14 @@ class ExtensionHost {
 		return tool.execute("test-call", params, new AbortController().signal, undefined, context);
 	}
 
-	renderResult(toolName: string, result: ToolResult, args: JsonRecord): string[] {
+	renderResult(toolName: string, result: ToolResult, args: JsonRecord, view: { expanded?: boolean; width?: number; plain?: boolean; isError?: boolean } = {}): string[] {
 		const tool = this.tools.get(toolName);
 		assert.ok(tool?.renderResult, `Expected ${toolName} to register a result renderer.`);
 		const theme = {
 			bold: (text: string) => text,
-			fg: (token: string, text: string) => `«${token}:${text}»`,
+			fg: (token: string, text: string) => view.plain ? text : `«${token}:${text}»`,
 		};
-		return tool.renderResult(result, { expanded: false }, theme, { args }).render(300);
+		return tool.renderResult(result, { expanded: view.expanded ?? false }, theme, { args, isError: view.isError }).render(view.width ?? 300);
 	}
 
 	async shutdown(): Promise<void> {
@@ -759,6 +760,201 @@ describe("list_reminders and cancel_reminders", () => {
 				await host.shutdown();
 			}
 		});
+	});
+});
+
+describe("reminder renderers", () => {
+	const arm = async (host: ExtensionHost, delayMinutes: number, message: string): Promise<string> => {
+		const armed = await host.executeResult("schedule_reminder", { delayMinutes, message });
+		return /^Armed reminder ([a-z]+-[a-z]+):/.exec(armed.content[0]!.text)![1]!;
+	};
+	/** The approved #58 scenario: at 6:30pm GMT+2 on Nov 27, one reminder wakes at 6:45pm, one at Nov 28 9:00am, and one was already delivered. */
+	const approvedScenario = async (host: ExtensionHost): Promise<{ today: string; tomorrow: string; delivered: string }> => {
+		setSystemTime(new Date("2026-11-27T16:05:00Z"));
+		const today = await arm(host, 40, "Check the checkout retry.");
+		setSystemTime(new Date("2026-11-27T16:10:00Z"));
+		const tomorrow = await arm(host, 890, "Re-run the webhook signature tests after the fixer pushes.");
+		const delivered = await arm(host, 0.002, "Delivered.");
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		setSystemTime(new Date("2026-11-27T16:30:00Z"));
+		return { today, tomorrow, delivered };
+	};
+	const columnOf = (line: string, text: string): number => {
+		const column = line.indexOf(text);
+		assert.notEqual(column, -1, `Expected ${JSON.stringify(text)} in ${JSON.stringify(line)}.`);
+		return column;
+	};
+
+	test("list_reminders renders one aligned row per pending reminder instead of raw JSON", async () => {
+		await atLocalTime("Asia/Jerusalem", "2026-11-27T16:00:00Z", async () => {
+			const host = new ExtensionHost();
+			try {
+				const { today, tomorrow } = await approvedScenario(host);
+				const lines = host.renderResult("list_reminders", await host.executeResult("list_reminders", {}), {}, { plain: true, width: 130 });
+				const output = lines.join("\n");
+
+				assert.equal(lines.length, 3, `Expected a header and two rows. Got:\n${output}`);
+				assert.equal(lines[0], "● List Reminders · 2 pending · now 6:30pm GMT+2");
+				assert.match(lines[1]!, new RegExp(`^  ├─ ${today} +reminder-1  wakes 6:45pm +in 15m +armed 6:05pm, 25m ago$`), "A reminder due today shows its time without a date.");
+				assert.match(lines[2]!, new RegExp(`^  └─ ${tomorrow} +reminder-2  wakes Nov 28, 9:00am +in 14h and 30m +armed 6:10pm, 20m ago$`), "A reminder due another day shows its date.");
+				for (const column of ["reminder-", "wakes ", "in 1"]) {
+					assert.equal(columnOf(lines[1]!, column), columnOf(lines[2]!, column), `Expected the ${JSON.stringify(column)} column aligned:\n${output}`);
+				}
+				assert.equal(lines[1]!.length, lines[2]!.length, `Expected the armed column right-aligned:\n${output}`);
+				assert.doesNotMatch(output, /[{}"]/, `Expected no raw result JSON:\n${output}`);
+			} finally {
+				await host.shutdown();
+			}
+		});
+	});
+
+	test("cancel_reminders renders each outcome with its count, and quotes a cancelled reminder's message", async () => {
+		await atLocalTime("Asia/Jerusalem", "2026-11-27T16:00:00Z", async () => {
+			const host = new ExtensionHost();
+			try {
+				const { tomorrow, delivered } = await approvedScenario(host);
+				const args = { reminders: [tomorrow, delivered, "reminder-9"] };
+				const result = await host.executeResult("cancel_reminders", args);
+				const lines = host.renderResult("cancel_reminders", result, args, { plain: true, width: 130 });
+				const output = lines.join("\n");
+
+				assert.equal(lines.length, 5, `Expected a header, three outcome rows and one quoted message. Got:\n${output}`);
+				assert.equal(lines[0], "● Cancel Reminders · 3 requested · 1 cancelled · 1 delivered · 1 unknown");
+				assert.match(lines[1]!, new RegExp(`^  ├─ cancelled  ${tomorrow} +reminder-2  was due Nov 28, 9:00am$`));
+				assert.equal(lines[2], "  │    ▌ Re-run the webhook signature tests after the fixer pushes.");
+				assert.match(lines[3]!, new RegExp(`^  ├─ delivered  ${delivered} +reminder-3  already delivered, nothing to cancel$`));
+				assert.match(lines[4]!, /^  └─ unknown    reminder-9 +no reminder with this ID or slug$/);
+				assert.equal(columnOf(lines[1]!, "reminder-2"), columnOf(lines[3]!, "reminder-3"), `Expected the ID column aligned:\n${output}`);
+				assert.equal(columnOf(lines[1]!, "was due"), columnOf(lines[4]!, "no reminder"), `Expected the note column aligned:\n${output}`);
+
+				const tagged = host.renderResult("cancel_reminders", result, args);
+				assert.match(tagged[0]!, /«success:1 cancelled».*«muted:1 delivered».*«warning:1 unknown»/, "Each outcome count carries its outcome's color.");
+				assert.match(tagged[4]!, /«warning:reminder-9 *»/, "An unknown identifier is marked as a warning.");
+			} finally {
+				await host.shutdown();
+			}
+		});
+	});
+
+	test("empty results say so, and all: true counts what it cancelled", async () => {
+		await atLocalTime("Asia/Jerusalem", "2026-11-27T16:00:00Z", async () => {
+			const host = new ExtensionHost();
+			try {
+				const { today, tomorrow } = await approvedScenario(host);
+				const all = { all: true };
+				const cancelled = host.renderResult("cancel_reminders", await host.executeResult("cancel_reminders", all), all, { plain: true, width: 130 });
+				assert.equal(cancelled[0], "● Cancel Reminders · all pending · 2 cancelled");
+				assert.match(cancelled[1]!, new RegExp(`^  ├─ cancelled  ${today} +reminder-1  was due Nov 27, 6:45pm$`));
+				assert.match(cancelled[3]!, new RegExp(`^  └─ cancelled  ${tomorrow} +reminder-2  was due Nov 28, 9:00am$`));
+				assert.equal(cancelled[4], "       ▌ Re-run the webhook signature tests after the fixer pushes.", "The last row's quote hangs under a blank stem.");
+
+				const nothing = host.renderResult("cancel_reminders", await host.executeResult("cancel_reminders", all), all, { plain: true });
+				assert.deepEqual(nothing, ["● Cancel Reminders · all pending", "  └─ nothing to cancel"]);
+				const empty = host.renderResult("list_reminders", await host.executeResult("list_reminders", {}), {}, { plain: true });
+				assert.deepEqual(empty, ["● List Reminders · 0 pending · now 6:30pm GMT+2", "  └─ no pending reminders"]);
+			} finally {
+				await host.shutdown();
+			}
+		});
+	});
+
+	test("a failed cancel shows the error beside the call instead of a result", async () => {
+		const host = new ExtensionHost();
+		try {
+			const args = { reminders: ["reminder-1"], all: true };
+			const error = await host.executeResult("cancel_reminders", args).then(() => undefined, (failure: Error) => failure);
+			assert.ok(error, "Expected reminders together with all: true to fail.");
+			const lines = host.renderResult("cancel_reminders", { content: [{ type: "text", text: error.message }] }, args, { plain: true, isError: true });
+			assert.deepEqual(lines, [`● Cancel Reminders · 1 requested · ${error.message}`]);
+		} finally {
+			await host.shutdown();
+		}
+	});
+
+	test("collapsed rows clip to a narrow width and preview a long message; expanded rows wrap all of it", async () => {
+		await atLocalTime("Asia/Jerusalem", "2026-11-27T16:00:00Z", async () => {
+			const host = new ExtensionHost();
+			try {
+				const message = ["Line one of the plan.", "Line two.", "Line three.", "Line four.", "Line five ends here."].join("\n");
+				const slug = await arm(host, 30, message);
+				await arm(host, 60, "Second.");
+				const list = await host.executeResult("list_reminders", {});
+				const args = { reminders: [slug] };
+				const cancel = await host.executeResult("cancel_reminders", args);
+				const width = 28;
+				for (const expanded of [false, true]) {
+					for (const [tool, result, toolArgs] of [["list_reminders", list, {}], ["cancel_reminders", cancel, args]] as const) {
+						for (const line of host.renderResult(tool, result, toolArgs, { plain: true, width, expanded })) {
+							assert.ok(visibleLength(line) <= width, `Expected ${tool} (expanded: ${expanded}) to fit ${width} columns. Got ${visibleLength(line)}: ${JSON.stringify(line)}`);
+						}
+					}
+				}
+				const collapsed = host.renderResult("cancel_reminders", cancel, args, { plain: true }).join("\n");
+				assert.match(collapsed, /▌ Line three\.\n.*▌ … 2 more lines · ctrl\+o to expand$/, `Expected a three-line preview and an expand hint:\n${collapsed}`);
+				const expanded = host.renderResult("cancel_reminders", cancel, args, { plain: true, width, expanded: true }).join("\n");
+				for (const word of ["Line one of", "Line five ends"]) assert.ok(expanded.includes(word), `Expected the expanded message to keep ${JSON.stringify(word)}:\n${expanded}`);
+			} finally {
+				await host.shutdown();
+			}
+		});
+	});
+});
+
+describe("context window usage renderer", () => {
+	/** main's get_context_window_usage text as Simple Team v2.0.38 returned it in a real run (team-context receipt). */
+	const teamReport = [
+		"Teammate fixer (Pi session ID: 01a21dd7-9f40-76f0-8473-8a97c9c8cafc) on team checkout-retry (team ID: 01a21dd7-9f40-750c-8cde-de12d79d779d-checkout-retry) has used 612k tokens out of 1000k available (61%).",
+		"Teammate reviewer (Pi session ID: 01a21dd7-9f40-720c-a2ea-bb6452780ca0) on team checkout-retry (team ID: 01a21dd7-9f40-750c-8cde-de12d79d779d-checkout-retry) has used 231k tokens out of 272k available (85%).",
+		"Teammate scout (Pi session ID: 01a21dd7-9f40-7185-8862-a4950a016e22) on team checkout-retry (team ID: 01a21dd7-9f40-750c-8cde-de12d79d779d-checkout-retry) has used 38k tokens out of 272k available (14%).",
+		"You have used 87k tokens out of 272k available (32%).",
+	].join("\n");
+	const args = { targets: ["checkout-retry"] };
+
+	test("main's result renders one meter row per agent, without the IDs the model receives", async () => {
+		const host = new ExtensionHost();
+		try {
+			const lines = host.renderResult("get_context_window_usage", { content: [{ type: "text", text: teamReport }], details: {} }, args, { plain: true, width: 110 });
+			assert.deepEqual(lines, [
+				"● Context Window Usage checkout-retry · 4 agents",
+				"  ├─ fixer     ━━━━━━━━━━━━────────  61%  612k of 1M   · 388k left",
+				"  ├─ reviewer  ━━━━━━━━━━━━━━━━━───  85%  231k of 272k · 41k left",
+				"  ├─ scout     ━━━─────────────────  14%   38k of 272k · 234k left",
+				"  └─ main      ━━━━━━──────────────  32%   87k of 272k · 185k left",
+			]);
+		} finally {
+			await host.shutdown();
+		}
+	});
+
+	test("main's own usage renders as a single main row from the real result", async () => {
+		const host = new ExtensionHost();
+		try {
+			const context = { ...host.context, getContextUsage: () => ({ tokens: 87_000, contextWindow: 272_000, percent: 32 }) };
+			const result = await host.executeResult("get_context_window_usage", {}, context);
+			assert.equal(result.content[0]!.text, "You have used 87k tokens out of 272k available (32%).", "The model-facing text stays as it was.");
+			assert.deepEqual(result.details, {}, "The stored details stay empty.");
+			assert.deepEqual(host.renderResult("get_context_window_usage", result, {}, { plain: true }), [
+				"● Context Window Usage · 1 agent",
+				"  └─ main  ━━━━━━──────────────  32%  87k of 272k · 185k left",
+			]);
+		} finally {
+			await host.shutdown();
+		}
+	});
+
+	test("a failed query shows the error beside the call, and narrow rows clip", async () => {
+		const host = new ExtensionHost();
+		try {
+			const failed = host.renderResult("get_context_window_usage", { content: [{ type: "text", text: "Teammate scout is not ready" }] }, args, { plain: true, isError: true });
+			assert.deepEqual(failed, ["● Context Window Usage · Teammate scout is not ready"]);
+			for (const expanded of [false, true]) {
+				for (const line of host.renderResult("get_context_window_usage", { content: [{ type: "text", text: teamReport }], details: {} }, args, { plain: true, width: 30, expanded })) {
+					assert.ok(visibleLength(line) <= 30, `Expected rows to fit 30 columns (expanded: ${expanded}). Got ${visibleLength(line)}: ${JSON.stringify(line)}`);
+				}
+			}
+		} finally {
+			await host.shutdown();
+		}
 	});
 });
 

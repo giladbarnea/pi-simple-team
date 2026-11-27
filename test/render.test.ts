@@ -1361,4 +1361,13 @@ describe("teammate pane (issue 51)", () => {
 		expect(pane).toContain("The atlas is ready.");
 		expect(pane).not.toContain('"published"');
 	});
+
+	test("a teammate's get_context_window_usage renders its own meter row under its own name", () => {
+		const pane = teammatePane("get_context_window_usage", {}, { text: "You have used 41k tokens out of 272k available (15%).", details: {}, isError: false });
+
+		expect(pane.split("\n").slice(1)).toEqual([
+			"● Context Window Usage · 1 agent",
+			"  └─ context-engineer  ━━━─────────────────  15%  41k of 272k · 231k left",
+		]);
+	});
 });
